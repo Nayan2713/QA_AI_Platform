@@ -9,9 +9,20 @@ import { BugList } from './BugList';
 interface AppDetailProps {
   appId: number;
   onBack: () => void;
+  activeTestRunId?: number | null;
+  setActiveTestRunId?: (id: number | null) => void;
+  activeTaskId?: string | null;
+  setActiveTaskId?: (id: string | null) => void;
 }
 
-export const AppDetail: React.FC<AppDetailProps> = ({ appId, onBack }) => {
+export const AppDetail: React.FC<AppDetailProps> = ({ 
+  appId, 
+  onBack,
+  activeTestRunId: propActiveTestRunId,
+  setActiveTestRunId: propSetActiveTestRunId,
+  activeTaskId: propActiveTaskId,
+  setActiveTaskId: propSetActiveTaskId
+}) => {
   const [app, setApp] = useState<Application | null>(null);
   const [testCases, setTestCases] = useState<TestCase[]>([]);
   const [bugs, setBugs] = useState<Bug[]>([]);
@@ -20,10 +31,14 @@ export const AppDetail: React.FC<AppDetailProps> = ({ appId, onBack }) => {
   const [activeTab, setActiveTab] = useState<'discovery' | 'tests' | 'bugs'>('discovery');
   
   // Track active execution
-  const [activeTestRunId, setActiveTestRunId] = useState<number | null>(null);
+  const [localActiveTestRunId, setLocalActiveTestRunId] = useState<number | null>(null);
+  const activeTestRunId = propActiveTestRunId !== undefined ? propActiveTestRunId : localActiveTestRunId;
+  const setActiveTestRunId = propSetActiveTestRunId || setLocalActiveTestRunId;
 
   // Task progress tracking
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [localActiveTaskId, setLocalActiveTaskId] = useState<string | null>(null);
+  const activeTaskId = propActiveTaskId !== undefined ? propActiveTaskId : localActiveTaskId;
+  const setActiveTaskId = propSetActiveTaskId || setLocalActiveTaskId;
   const [currentTask, setCurrentTask] = useState<CeleryTask | null>(null);
 
   const fetchAppDetails = async () => {
@@ -57,32 +72,50 @@ export const AppDetail: React.FC<AppDetailProps> = ({ appId, onBack }) => {
       return;
     }
     
+    let errorCount = 0;
+    let isMounted = true;
+    let pollCount = 0;
+    const MAX_POLLS = 400; // Stop polling after 10 minutes (400 * 1.5 sec)
+    
     const fetchTaskStatus = async () => {
+      if (!isMounted || pollCount >= MAX_POLLS) return;
+      
+      pollCount++;
+      
       try {
         const res = await api.get<CeleryTask>(`tasks/${activeTaskId}/`);
+        if (!isMounted) return;
+        
         setCurrentTask(res.data);
+        errorCount = 0; // reset on success
         
         if (res.data.status === 'success') {
-          fetchAppDetails();
+          await fetchAppDetails();
           setTimeout(() => {
-            setActiveTaskId(null);
+            if (isMounted) setActiveTaskId(null);
           }, 3000);
         } else if (res.data.status === 'failed') {
-          fetchAppDetails();
+          await fetchAppDetails();
           setTimeout(() => {
-            setActiveTaskId(null);
+            if (isMounted) setActiveTaskId(null);
           }, 5000);
         }
       } catch (err) {
-        console.error('Failed to poll task status:', err);
-        setActiveTaskId(null);
+        errorCount += 1;
+        console.error(`Failed to poll task status (attempt ${errorCount}):`, err);
+        if (errorCount >= 5) {
+          if (isMounted) setActiveTaskId(null);
+        }
       }
     };
     
     fetchTaskStatus();
     const intervalId = setInterval(fetchTaskStatus, 1500);
     
-    return () => clearInterval(intervalId);
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
   }, [activeTaskId]);
 
   const handleStartDiscovery = async () => {
@@ -115,6 +148,20 @@ export const AppDetail: React.FC<AppDetailProps> = ({ appId, onBack }) => {
       } catch (err) {
         console.error('Failed to delete application environment:', err);
       }
+    }
+  };
+
+  const handleRunTestCase = async (testCaseId: number) => {
+    try {
+      const response = await api.post('test-runs/execute/', { test_case_id: testCaseId });
+      if (response.data.test_run_id) {
+        setActiveTestRunId(response.data.test_run_id);
+        if (response.data.task_id) {
+          setActiveTaskId(response.data.task_id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to execute test run:', err);
     }
   };
 
@@ -404,6 +451,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({ appId, onBack }) => {
             <BugList 
               bugs={bugs} 
               onRefreshBugs={fetchAppDetails}
+              onRunTestCase={handleRunTestCase}
+              activeTaskId={activeTaskId}
             />
           )}
         </div>

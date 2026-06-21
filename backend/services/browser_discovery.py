@@ -101,8 +101,11 @@ class BrowserDiscoveryService:
                 # Find inputs, selects, textareas inside this form
                 inputs = form.locator("input, select, textarea").all()
                 for inp in inputs:
-                    inp_name = inp.get_attribute("name")
                     inp_type = inp.get_attribute("type") or "text"
+                    if inp_type.lower() == "hidden":
+                        continue
+                        
+                    inp_name = inp.get_attribute("name")
                     inp_id = inp.get_attribute("id") or ""
                     
                     # Ignore buttons and hidden fields if not needed, but keep names/IDs for filling
@@ -131,6 +134,9 @@ class BrowserDiscoveryService:
         try:
             buttons = page.locator("button, input[type='button'], input[type='submit']").all()
             for idx, btn in enumerate(buttons):
+                # Skip hidden elements
+                if not btn.is_visible():
+                    continue
                 text = btn.inner_text().strip() or btn.get_attribute("value") or ""
                 if not text:
                     text = btn.get_attribute("title") or f"Button {idx}"

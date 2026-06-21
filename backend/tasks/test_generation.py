@@ -16,15 +16,22 @@ def generate_tests(self, app_id):
     """
     logger.info(f"Starting test generation task for application ID: {app_id}")
     
-    # Create task tracking record
+    # Create/update task tracking record
     task_id = self.request.id or "dummy_task_id"
-    task_record = CeleryTask.objects.create(
+    task_record, created = CeleryTask.objects.get_or_create(
         task_id=task_id,
-        task_type='test_generation',
-        status='progress',
-        progress=10,
-        result={"status_text": "Initializing test generation..."}
+        defaults={
+            'task_type': 'test_generation',
+            'status': 'progress',
+            'progress': 10,
+            'result': {"status_text": "Initializing test generation..."}
+        }
     )
+    if not created:
+        task_record.status = 'progress'
+        task_record.progress = 10
+        task_record.result = {"status_text": "Initializing test generation..."}
+        task_record.save()
     
     try:
         try:

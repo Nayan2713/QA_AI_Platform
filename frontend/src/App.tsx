@@ -3,6 +3,7 @@ import api from './lib/api';
 import { User, Bug } from './lib/types';
 import { Navigation } from './components/Navigation';
 import { Dashboard } from './components/Dashboard';
+import { AppDetail } from './components/AppDetail';
 import { BugList } from './components/BugList';
 import './App.css';
 
@@ -11,6 +12,9 @@ function App() {
   const [username, setUsername] = useState<string>(localStorage.getItem('username') || '');
   const [currentView, setCurrentView] = useState<'dashboard' | 'bugs'>('dashboard');
   const [bugs, setBugs] = useState<Bug[]>([]);
+  const [selectedAppId, setSelectedAppId] = useState<number | null>(null);
+  const [activeTestRunId, setActiveTestRunId] = useState<number | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   
   // Auth Form State
   const [isLogin, setIsLogin] = useState(true);
@@ -43,6 +47,27 @@ function App() {
       setBugs(response.data);
     } catch (err) {
       console.error('Failed to fetch bugs:', err);
+    }
+  };
+
+  const handleRunTestCaseFromGlobal = async (testCaseId: number) => {
+    try {
+      const bug = bugs.find(b => b.test_case_id === testCaseId);
+      const appId = bug?.app_id;
+      
+      const response = await api.post('test-runs/execute/', { test_case_id: testCaseId });
+      if (response.data.test_run_id) {
+        setActiveTestRunId(response.data.test_run_id);
+        if (response.data.task_id) {
+          setActiveTaskId(response.data.task_id);
+        }
+        if (appId) {
+          setSelectedAppId(appId);
+        }
+        setCurrentView('dashboard');
+      }
+    } catch (err) {
+      console.error('Failed to execute test run from global bugs list:', err);
     }
   };
 
@@ -184,15 +209,32 @@ function App() {
       <Navigation 
         username={username} 
         onLogout={handleLogout} 
-        onNavigate={setCurrentView}
+        onNavigate={(view) => {
+          setSelectedAppId(null);
+          setCurrentView(view);
+        }}
         currentView={currentView}
       />
       
       <main className="main-content">
-        {currentView === 'dashboard' ? (
-          <Dashboard onSelectView={setCurrentView} />
+        {selectedAppId !== null ? (
+          <AppDetail 
+            appId={selectedAppId} 
+            onBack={() => setSelectedAppId(null)}
+            activeTestRunId={activeTestRunId}
+            setActiveTestRunId={setActiveTestRunId}
+            activeTaskId={activeTaskId}
+            setActiveTaskId={setActiveTaskId}
+          />
+        ) : currentView === 'dashboard' ? (
+          <Dashboard onSelectView={setCurrentView} onSelectApp={setSelectedAppId} />
         ) : (
-          <BugList bugs={bugs} onRefreshBugs={fetchGlobalBugs} />
+          <BugList 
+            bugs={bugs} 
+            onRefreshBugs={fetchGlobalBugs} 
+            onRunTestCase={handleRunTestCaseFromGlobal}
+            activeTaskId={activeTaskId}
+          />
         )}
       </main>
       

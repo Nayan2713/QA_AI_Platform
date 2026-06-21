@@ -6,11 +6,11 @@ import { AppDetail } from './AppDetail';
 
 interface DashboardProps {
   onSelectView: (view: 'dashboard' | 'bugs') => void;
+  onSelectApp: (appId: number) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ onSelectView }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp }) => {
   const [applications, setApplications] = useState<Application[]>([]);
-  const [selectedAppId, setSelectedAppId] = useState<number | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -35,7 +35,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView }) => {
   const handleAppCreated = (newApp: Application) => {
     setApplications([newApp, ...applications]);
     setShowAddForm(false);
-    setSelectedAppId(newApp.id); // Auto-navigate to details
+    onSelectApp(newApp.id); // Auto-navigate to details
   };
 
   const handleDeleteApp = async (id: number, url: string) => {
@@ -50,17 +50,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView }) => {
     }
   };
 
-  if (selectedAppId !== null) {
-    return (
-      <AppDetail 
-        appId={selectedAppId} 
-        onBack={() => {
-          setSelectedAppId(null);
-          fetchApplications();
-        }}
-      />
-    );
-  }
+
 
   return (
     <div className="dashboard-container">
@@ -112,7 +102,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView }) => {
             <div 
               key={app.id} 
               className="glass-card application-card"
-              onClick={() => setSelectedAppId(app.id)}
+              onClick={() => onSelectApp(app.id)}
             >
               <div className="app-card-header">
                 <h4>{app.url}</h4>

@@ -60,8 +60,8 @@ def detect_bugs(test_run_id):
     
     try:
         with transaction.atomic():
-            # Clear previous bugs for this run to avoid duplicates
-            Bug.objects.filter(test_run=test_run).delete()
+            # Clear previous bugs for this test case to avoid duplicates across runs
+            Bug.objects.filter(test_run__test_case=test_run.test_case).delete()
             
             for result in failed_results:
                 error_msg = result.error or "Unknown error occurred"

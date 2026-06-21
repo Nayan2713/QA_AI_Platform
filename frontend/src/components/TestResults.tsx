@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../lib/api';
 import { TestRun } from '../lib/types';
 
@@ -38,29 +39,49 @@ export const TestResults: React.FC<TestResultsProps> = ({
 
   // Poll status of the test run if it is still running
   useEffect(() => {
-    fetchResults();
     let intervalId: any;
+    let isMounted = true;
+    let pollCount = 0;
+    const MAX_POLLS = 300; // Stop polling after 10 minutes (300 * 2 sec)
 
-    intervalId = setInterval(async () => {
-      try {
-        const response = await api.get<{ status: string; bugs_found: number; data: TestRun }>(`test-runs/${testRunId}/status/`);
-        const status = response.data.status;
-        
-        // Update state
-        setTestRun(response.data.data);
-        
-        if (status === 'COMPLETED' || status === 'FAILED') {
+    const startPolling = async () => {
+      if (!isMounted) return;
+      
+      await fetchResults();
+      
+      intervalId = setInterval(async () => {
+        if (!isMounted || pollCount >= MAX_POLLS) {
           clearInterval(intervalId);
-          fetchResults(); // fetch full results one last time
+          return;
         }
-      } catch (err) {
-        console.error('Polling error:', err);
-        clearInterval(intervalId);
-        setError('Test run was cancelled, completed, or deleted.');
-      }
-    }, 2000);
+        
+        pollCount++;
+        
+        try {
+          const response = await api.get<{ status: string; bugs_found: number; data: TestRun }>(`test-runs/${testRunId}/status/`);
+          if (!isMounted) return;
+          
+          const status = response.data.status;
+          setTestRun(response.data.data);
+          
+          if (status === 'COMPLETED' || status === 'FAILED') {
+            clearInterval(intervalId);
+            await fetchResults(); // fetch full results one last time
+          }
+        } catch (err) {
+          console.error('Polling error:', err);
+          clearInterval(intervalId);
+          if (isMounted) {
+            setError('Test run was cancelled, completed, or deleted.');
+          }
+        }
+      }, 2000);
+    };
+    
+    startPolling();
 
     return () => {
+      isMounted = false;
       if (intervalId) clearInterval(intervalId);
     };
   }, [testRunId]);
@@ -168,7 +189,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
         )}
       </div>
 
-      {selectedScreenshot && (
+      {selectedScreenshot && createPortal(
         <div className="screenshot-modal-overlay" onClick={() => setSelectedScreenshot(null)}>
           <div className="screenshot-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="screenshot-modal-header">
@@ -177,7 +198,8 @@ export const TestResults: React.FC<TestResultsProps> = ({
             </div>
             <img src={selectedScreenshot} alt="Execution Failure Checkpoint" className="failure-screenshot-img" />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

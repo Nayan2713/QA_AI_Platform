@@ -111,11 +111,12 @@ class TestRunSerializer(serializers.ModelSerializer):
 
 class BugSerializer(serializers.ModelSerializer):
     test_case_title = serializers.CharField(source='test_run.test_case.title', read_only=True)
+    test_case_id = serializers.IntegerField(source='test_run.test_case.id', read_only=True)
     app_url = serializers.CharField(source='test_run.test_case.app.url', read_only=True)
 
     class Meta:
         model = Bug
-        fields = ('id', 'test_run', 'test_case_title', 'app_url', 'title', 'description', 'severity', 'created_at')
+        fields = ('id', 'test_run', 'test_case_id', 'test_case_title', 'app_url', 'title', 'description', 'severity', 'created_at')
 
 
 class BugDetailSerializer(serializers.ModelSerializer):

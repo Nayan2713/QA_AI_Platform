@@ -44,15 +44,25 @@ def start_discovery(self, app_id):
     """
     logger.info(f"Starting discovery task for application ID: {app_id}")
     
-    # Create task tracking record (runs in celery thread before Playwright is started)
+    # Create/update task tracking record (runs in celery thread before Playwright is started)
     task_id = self.request.id or "dummy_task_id"
-    task_record = run_in_thread(
-        CeleryTask.objects.create,
-        task_id=task_id,
-        task_type='discovery',
-        status='progress',
-        progress=10
-    )
+    
+    def get_or_create_task():
+        obj, created = CeleryTask.objects.get_or_create(
+            task_id=task_id,
+            defaults={
+                'task_type': 'discovery',
+                'status': 'progress',
+                'progress': 10
+            }
+        )
+        if not created:
+            obj.status = 'progress'
+            obj.progress = 10
+            obj.save()
+        return obj
+
+    task_record = run_in_thread(get_or_create_task)
     
     try:
         app = run_in_thread(Application.objects.get, id=app_id)

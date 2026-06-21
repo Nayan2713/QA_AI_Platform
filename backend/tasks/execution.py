@@ -41,16 +41,27 @@ def execute_test(self, test_run_id):
     """
     logger.info(f"Starting test execution task for TestRun ID: {test_run_id}")
     
-    # Create task tracking record (runs in celery thread before Playwright is started)
+    # Create/update task tracking record (runs in celery thread before Playwright is started)
     task_id = self.request.id or "dummy_task_id"
-    task_record = run_in_thread(
-        CeleryTask.objects.create,
-        task_id=task_id,
-        task_type='execution',
-        status='progress',
-        progress=10,
-        result={"status_text": "Starting test execution run..."}
-    )
+    
+    def get_or_create_task():
+        obj, created = CeleryTask.objects.get_or_create(
+            task_id=task_id,
+            defaults={
+                'task_type': 'execution',
+                'status': 'progress',
+                'progress': 10,
+                'result': {"status_text": "Starting test execution run..."}
+            }
+        )
+        if not created:
+            obj.status = 'progress'
+            obj.progress = 10
+            obj.result = {"status_text": "Starting test execution run..."}
+            obj.save()
+        return obj
+
+    task_record = run_in_thread(get_or_create_task)
     
     try:
         try:
@@ -78,6 +89,7 @@ def execute_test(self, test_run_id):
         total_steps = len(steps)
         passed_steps = 0
         run_failed = False
+        api_logs = []
 
         with sync_playwright() as p:
             try:
@@ -88,6 +100,22 @@ def execute_test(self, test_run_id):
                     ignore_https_errors=True
                 )
                 page = context.new_page()
+                
+                # Register background API response listener
+                def capture_network_api(response):
+                    try:
+                        resource_type = response.request.resource_type
+                        if resource_type in ['xhr', 'fetch']:
+                            api_logs.append({
+                                "method": response.request.method,
+                                "url": response.url,
+                                "status": response.status
+                            })
+                    except Exception as net_err:
+                        logger.error(f"Error logging network response: {net_err}")
+
+                page.on("response", capture_network_api)
+                
                 # Set default timeout to 15 seconds to allow slower websites to load
                 page.set_default_timeout(15000)
                 
@@ -184,6 +212,24 @@ def execute_test(self, test_run_id):
                         logger.warning(f"Aborting execution at step {step_num} due to failure.")
                         break
                     
+                # Inspect background API log calls for status code errors (status >= 400)
+                failed_apis = [log for log in api_logs if log['status'] >= 400]
+                if failed_apis:
+                    run_failed = True
+                    error_details = "\n".join([
+                        f"- {log['method']} {log['url']} -> Status {log['status']}"
+                        for log in failed_apis
+                    ])
+                    def log_api_failures():
+                        TestResult.objects.create(
+                            test_run=test_run,
+                            step_number=total_steps + 1,
+                            status='FAILED',
+                            error=f"API Network Failures Detected:\n{error_details}"
+                        )
+                    run_in_thread(log_api_failures)
+                    total_steps += 1
+
                 browser.close()
                 
             except Exception as global_err:
@@ -208,6 +254,7 @@ def execute_test(self, test_run_id):
             test_run.metadata = {
                 "passed_steps": passed_steps_local,
                 "total_steps": total_steps_local,
+                "api_calls": api_logs
             }
             test_run.save()
 

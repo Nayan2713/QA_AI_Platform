@@ -4,9 +4,16 @@ import { Bug } from '../lib/types';
 interface BugListProps {
   bugs: Bug[];
   onRefreshBugs?: () => void;
+  onRunTestCase?: (testCaseId: number) => void;
+  activeTaskId?: string | null;
 }
 
-export const BugList: React.FC<BugListProps> = ({ bugs, onRefreshBugs }) => {
+export const BugList: React.FC<BugListProps> = ({ 
+  bugs, 
+  onRefreshBugs,
+  onRunTestCase,
+  activeTaskId
+}) => {
   const [selectedBugId, setSelectedBugId] = useState<number | null>(null);
 
   const toggleExpandBug = (id: number) => {
@@ -50,9 +57,54 @@ export const BugList: React.FC<BugListProps> = ({ bugs, onRefreshBugs }) => {
                       <span className="bug-title">{bug.title}</span>
                     </div>
                     
-                    <div className="bug-metadata-block">
+                    <div className="bug-metadata-block" onClick={(e) => e.stopPropagation()}>
                       <span className="bug-app-url">{bug.app_url}</span>
-                      <span className="expand-indicator">{isExpanded ? '▼' : '▶'}</span>
+                      
+                      {bug.test_case_id && onRunTestCase && (
+                        <button
+                          onClick={() => onRunTestCase(bug.test_case_id!)}
+                          disabled={!!activeTaskId}
+                          className="btn-run-test btn-bug-rerun"
+                          title="Run Associated Test Case"
+                          style={{
+                            background: '#dc2626',
+                            color: '#fff',
+                            border: 'none',
+                            padding: '6px 12px',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            fontSize: '0.8rem',
+                            fontWeight: '600',
+                            marginRight: '12px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          ▶ Run Test
+                        </button>
+                      )}
+                      
+                      <button 
+                        onClick={() => toggleExpandBug(bug.id)}
+                        className="btn-bug-expand-toggle"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid var(--border-glass)',
+                          color: 'var(--text-primary)',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          padding: '6px 12px',
+                          fontSize: '0.8rem',
+                          fontWeight: '500',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {isExpanded ? 'Collapse ˄' : 'Expand ˅'}
+                      </button>
                     </div>
                   </div>
 

@@ -31,32 +31,52 @@ export const DiscoveryStatus: React.FC<DiscoveryStatusProps> = ({
   // Poll for status updates while discovery is active
   useEffect(() => {
     let intervalId: any;
+    let isMounted = true;
+    
+    const startPolling = async () => {
+      if (!isMounted) return;
+      
+      setLoading(true);
+      await fetchDiscoveredPages();
+      
+      // Only set interval if still discovering and component is mounted
+      if (appStatus === 'DISCOVERING' && isMounted) {
+        intervalId = setInterval(async () => {
+          if (!isMounted) return;
+          
+          try {
+            const statusRes = await api.get(`applications/${appId}/status/`);
+            if (!isMounted) return;
+            
+            if (statusRes.data.status !== 'DISCOVERING') {
+              setLoading(false);
+              clearInterval(intervalId);
+              onDiscoveryComplete();
+              return;
+            }
+            await fetchDiscoveredPages();
+          } catch (err) {
+            console.error(err);
+            if (isMounted) {
+              setLoading(false);
+              clearInterval(intervalId);
+            }
+          }
+        }, 2000);
+      } else if (appStatus !== 'DISCOVERING' && isMounted) {
+        setLoading(false);
+      }
+    };
     
     if (appStatus === 'DISCOVERING') {
-      setLoading(true);
-      fetchDiscoveredPages();
-      
-      intervalId = setInterval(async () => {
-        try {
-          const statusRes = await api.get(`applications/${appId}/status/`);
-          if (statusRes.data.status !== 'DISCOVERING') {
-            setLoading(false);
-            clearInterval(intervalId);
-            onDiscoveryComplete();
-          }
-          fetchDiscoveredPages();
-        } catch (err) {
-          console.error(err);
-          setLoading(false);
-          clearInterval(intervalId);
-        }
-      }, 2000);
+      startPolling();
     } else {
       setLoading(false);
       fetchDiscoveredPages();
     }
 
     return () => {
+      isMounted = false;
       if (intervalId) clearInterval(intervalId);
     };
   }, [appId, appStatus]);
@@ -128,7 +148,9 @@ export const DiscoveryStatus: React.FC<DiscoveryStatusProps> = ({
                     {page.buttons?.length > 0 && (
                       <span className="badge badge-button">{page.buttons.length} buttons</span>
                     )}
-                    <span className="expand-indicator">{isExpanded ? '▼' : '▶'}</span>
+                    <span className="expand-indicator" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      {isExpanded ? 'Collapse ˄' : 'Expand ˅'}
+                    </span>
                   </div>
                 </div>
 
