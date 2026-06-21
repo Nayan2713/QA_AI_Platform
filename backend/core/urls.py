@@ -10,6 +10,7 @@ from .views import (
     TestCaseViewSet,
     TestRunViewSet,
     BugViewSet,
+    CeleryTaskViewSet,
 )
 
 router = DefaultRouter()
@@ -18,6 +19,7 @@ router.register(r'applications', ApplicationViewSet, basename='application')
 router.register(r'test-cases', TestCaseViewSet, basename='testcase')
 router.register(r'test-runs', TestRunViewSet, basename='testrun')
 router.register(r'bugs', BugViewSet, basename='bug')
+router.register(r'tasks', CeleryTaskViewSet, basename='task')
 
 urlpatterns = [
     # Auth endpoints

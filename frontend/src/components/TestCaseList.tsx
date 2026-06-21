@@ -5,34 +5,43 @@ import { TestCase } from '../lib/types';
 interface TestCaseListProps {
   appId: number;
   testCases: TestCase[];
-  onTestExecuted: (testRunId: number) => void;
+  onTestExecuted: (testRunId: number, taskId?: string) => void;
   onRefreshTests: () => void;
+  onTaskTriggered?: (taskId: string) => void;
+  activeTaskId?: string | null;
 }
 
 export const TestCaseList: React.FC<TestCaseListProps> = ({
   appId,
   testCases,
   onTestExecuted,
-  onRefreshTests
+  onRefreshTests,
+  onTaskTriggered,
+  activeTaskId
 }) => {
   const [generating, setGenerating] = useState(false);
   const [executingTestCaseId, setExecutingTestCaseId] = useState<number | null>(null);
+  const [executingAll, setExecutingAll] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useEffect(() => {
+    if (!activeTaskId) {
+      setGenerating(false);
+      setSuccessMsg('');
+    }
+  }, [activeTaskId]);
 
   const handleGenerateTests = async () => {
     setGenerating(true);
     setError('');
     setSuccessMsg('');
     try {
-      await api.post('test-cases/generate/', { app_id: appId });
+      const res = await api.post('test-cases/generate/', { app_id: appId });
       setSuccessMsg('Test suite generation started! Polling database...');
-      // Wait a moment for generation task to run, then refresh
-      setTimeout(() => {
-        onRefreshTests();
-        setGenerating(false);
-        setSuccessMsg('');
-      }, 5000);
+      if (res.data.task_id && onTaskTriggered) {
+        onTaskTriggered(res.data.task_id);
+      }
     } catch (err: any) {
       console.error(err);
       setError('Failed to trigger AI test case generation.');
@@ -50,13 +59,35 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       
       // Let parent component know a test run has been triggered
       if (response.data.test_run_id) {
-        onTestExecuted(response.data.test_run_id);
+        onTestExecuted(response.data.test_run_id, response.data.task_id);
       }
     } catch (err: any) {
       console.error(err);
       setError('Failed to execute test run.');
     } finally {
       setExecutingTestCaseId(null);
+    }
+  };
+
+  const handleRunAllTests = async () => {
+    if (testCases.length === 0) return;
+    setExecutingAll(true);
+    setError('');
+    setSuccessMsg('');
+    try {
+      setSuccessMsg(`Queueing execution for all ${testCases.length} tests...`);
+      for (const tc of testCases) {
+        const response = await api.post('test-runs/execute/', { test_case_id: tc.id });
+        if (response.data.test_run_id) {
+          onTestExecuted(response.data.test_run_id, response.data.task_id);
+        }
+      }
+      setSuccessMsg(`Successfully queued all ${testCases.length} tests for execution.`);
+    } catch (err: any) {
+      console.error(err);
+      setError('Failed to run all test cases.');
+    } finally {
+      setExecutingAll(false);
     }
   };
 
@@ -67,20 +98,44 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
           <h3>📋 AI-Generated Test Suite</h3>
           <p className="card-subtitle">Complete test plans constructed from discovered page structures</p>
         </div>
-        <button 
-          onClick={handleGenerateTests} 
-          disabled={generating} 
-          className="btn-primary btn-generate"
-        >
-          {generating ? (
-            <div className="loader-container-inline">
-              <div className="spinner-small"></div>
-              <span>Generating Suite...</span>
-            </div>
-          ) : (
-            '✨ Generate Tests with AI'
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {testCases.length > 0 && (
+            <button 
+              onClick={handleRunAllTests} 
+              disabled={executingAll || !!activeTaskId} 
+              className="btn-secondary btn-run-all"
+              style={{
+                backgroundColor: '#10b981',
+                color: '#ffffff',
+                border: 'none',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: '600',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              {executingAll ? 'Starting Runs...' : '▶ Run All Tests'}
+            </button>
           )}
-        </button>
+          
+          <button 
+            onClick={handleGenerateTests} 
+            disabled={generating || !!activeTaskId} 
+            className="btn-primary btn-generate"
+          >
+            {generating ? (
+              <div className="loader-container-inline">
+                <div className="spinner-small"></div>
+                <span>Generating Suite...</span>
+              </div>
+            ) : (
+              '✨ Generate Tests with AI'
+            )}
+          </button>
+        </div>
       </div>
 
       {error && <div className="error-alert">{error}</div>}
@@ -137,7 +192,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
                 <div className="test-case-actions">
                   <button 
                     onClick={() => handleRunTest(tc.id)} 
-                    disabled={executingTestCaseId === tc.id}
+                    disabled={executingTestCaseId === tc.id || !!activeTaskId}
                     className="btn-run-test"
                   >
                     {executingTestCaseId === tc.id ? 'Starting...' : '▶ Run Test'}

@@ -95,3 +95,25 @@ class Bug(models.Model):
 
     def __str__(self):
         return f"[{self.severity.upper()}] {self.title}"
+
+class CeleryTask(models.Model):
+    """Track all celery tasks"""
+    TASK_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('progress', 'In Progress'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+    
+    task_id = models.CharField(max_length=255, unique=True)
+    task_type = models.CharField(max_length=100)  # 'discovery', 'test_gen', etc
+    status = models.CharField(max_length=20, choices=TASK_STATUS_CHOICES)
+    progress = models.IntegerField(default=0)  # 0-100
+    result = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    def __str__(self):
+        return f"{self.task_type} - {self.task_id}"

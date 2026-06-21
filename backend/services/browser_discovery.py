@@ -24,8 +24,8 @@ class BrowserDiscoveryService:
             
             # Common username field selectors
             username_selectors = [
-                "input[type='text']", "input[type='email']", "input[name='username']", 
-                "input[name='email']", "input[id='username']", "input[id='email']"
+                "input[name='username']", "input[name='email']", "input[id='username']", 
+                "input[id='email']", "input[type='email']", "input[type='text']"
             ]
             # Common password field selectors
             password_selectors = [
@@ -105,12 +105,12 @@ class BrowserDiscoveryService:
                     inp_type = inp.get_attribute("type") or "text"
                     inp_id = inp.get_attribute("id") or ""
                     
-                    # Ignore buttons and hidden fields if not needed, but keep names for filling
-                    if inp_name:
+                    # Ignore buttons and hidden fields if not needed, but keep names/IDs for filling
+                    if inp_name or inp_id:
                         fields.append({
-                            "name": inp_name,
+                            "name": inp_name or "",
                             "type": inp_type,
-                            "id": inp_id
+                            "id": inp_id or ""
                         })
                 
                 forms_data.append({
@@ -157,7 +157,7 @@ class BrowserDiscoveryService:
             logger.error(f"Error extracting buttons: {e}")
         return buttons_data
 
-    def discover(self, start_url, login_url=None, username=None, password=None):
+    def discover(self, start_url, login_url=None, username=None, password=None, on_progress=None):
         """
         Performs the complete page discovery using Playwright.
         Returns a dict in the unified format.
@@ -184,6 +184,12 @@ class BrowserDiscoveryService:
                 
                 self.visited_urls.add(current_url)
                 logger.info(f"Crawling page: {current_url}")
+                
+                if on_progress:
+                    try:
+                        on_progress(current_url, len(pages_list))
+                    except Exception as progress_err:
+                        logger.error(f"Error calling progress callback: {progress_err}")
                 
                 try:
                     page.goto(current_url, wait_until="load", timeout=15000)

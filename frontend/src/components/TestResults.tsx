@@ -56,6 +56,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
       } catch (err) {
         console.error('Polling error:', err);
         clearInterval(intervalId);
+        setError('Test run was cancelled, completed, or deleted.');
       }
     }, 2000);
 

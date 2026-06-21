@@ -1,7 +1,10 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug
+from django.core.validators import URLValidator
+from django.core.exceptions import ValidationError as DjangoValidationError
 from urllib.parse import urlparse
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -59,9 +62,35 @@ class PageSerializer(serializers.ModelSerializer):
 
 
 class TestCaseSerializer(serializers.ModelSerializer):
+    steps = serializers.JSONField()
+    
     class Meta:
         model = TestCase
         fields = ('id', 'app', 'title', 'steps', 'expected_result', 'ai_generated', 'created_at')
+    
+    def validate_steps(self, value):
+        """Validate test case steps"""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Steps must be a list")
+        
+        if len(value) == 0:
+            raise serializers.ValidationError("At least one step required")
+        
+        # Validate each step
+        valid_actions = ['navigate', 'fill', 'click', 'wait', 'assert']
+        for i, step in enumerate(value):
+            if not isinstance(step, dict):
+                raise serializers.ValidationError(f"Step {i} must be an object")
+            
+            if 'action' not in step:
+                raise serializers.ValidationError(f"Step {i} missing 'action'")
+            
+            if step['action'] not in valid_actions:
+                raise serializers.ValidationError(
+                    f"Step {i} has invalid action: {step['action']}"
+                )
+        
+        return value
 
 
 class TestResultSerializer(serializers.ModelSerializer):
@@ -87,8 +116,20 @@ class BugSerializer(serializers.ModelSerializer):
     class Meta:
         model = Bug
         fields = ('id', 'test_run', 'test_case_title', 'app_url', 'title', 'description', 'severity', 'created_at')
+
+
 class BugDetailSerializer(serializers.ModelSerializer):
     test_run = TestRunSerializer(read_only=True)
+    
     class Meta:
         model = Bug
         fields = ('id', 'test_run', 'title', 'description', 'severity', 'created_at')
+
+
+class CeleryTaskSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CeleryTask
+        fields = (
+            'id', 'task_id', 'task_type', 'status', 'progress', 
+            'result', 'error', 'created_at', 'updated_at', 'completed_at'
+        )

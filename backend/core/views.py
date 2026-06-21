@@ -5,11 +5,11 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask
 from .serializers import (
     RegisterSerializer, UserSerializer, ApplicationSerializer, 
     PageSerializer, TestCaseSerializer, TestRunSerializer, 
-    TestResultSerializer, BugSerializer, BugDetailSerializer
+    TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer
 )
 
 # Celery task imports - imported inside methods to prevent circular dependency
@@ -34,9 +34,6 @@ class RegisterView(viewsets.GenericViewSet):
 class ApplicationViewSet(viewsets.ModelViewSet):
     serializer_class = ApplicationSerializer
     permission_classes = (permissions.IsAuthenticated,)
-
-    def get_queryset(self):
-        return Application.objects.filter(user=self.request.user).order_dict_by_date()
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -84,7 +81,11 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
 
     def get_queryset(self):
-        return TestCase.objects.filter(app__user=self.request.user).order_by('-created_at')
+        queryset = TestCase.objects.filter(app__user=self.request.user).order_by('-created_at')
+        app_id = self.request.query_params.get('app')
+        if app_id:
+            queryset = queryset.filter(app_id=app_id)
+        return queryset
 
     @action(detail=False, methods=['post'])
     def generate(self, request):
@@ -156,9 +157,20 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
 
     def get_queryset(self):
-        return Bug.objects.filter(test_run__test_case__app__user=self.request.user).order_by('-created_at')
+        queryset = Bug.objects.filter(test_run__test_case__app__user=self.request.user).order_by('-created_at')
+        app_id = self.request.query_params.get('app')
+        if app_id:
+            queryset = queryset.filter(test_run__test_case__app_id=app_id)
+        return queryset
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
             return BugDetailSerializer
         return BugSerializer
+
+
+class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = CeleryTask.objects.all()
+    serializer_class = CeleryTaskSerializer
+    permission_classes = (permissions.IsAuthenticated,)
+    lookup_field = 'task_id'

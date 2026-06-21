@@ -38,6 +38,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView }) => {
     setSelectedAppId(newApp.id); // Auto-navigate to details
   };
 
+  const handleDeleteApp = async (id: number, url: string) => {
+    if (window.confirm(`Are you sure you want to delete "${url}"? All pages, test cases, and bug logs will be permanently deleted.`)) {
+      try {
+        await api.delete(`applications/${id}/`);
+        setApplications(applications.filter(app => app.id !== id));
+      } catch (err) {
+        console.error(err);
+        setError('Failed to delete application environment.');
+      }
+    }
+  };
+
   if (selectedAppId !== null) {
     return (
       <AppDetail 
@@ -104,7 +116,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView }) => {
             >
               <div className="app-card-header">
                 <h4>{app.url}</h4>
-                <span className={`status-dot status-${app.status.toLowerCase()}`}></span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span className={`status-dot status-${app.status.toLowerCase()}`}></span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteApp(app.id, app.url);
+                    }}
+                    title="Delete Application"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#ff4d4d',
+                      cursor: 'pointer',
+                      fontSize: '1rem',
+                      padding: '2px 4px',
+                      borderRadius: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
               <p className="app-card-url">Base: {app.base_url}</p>
               
