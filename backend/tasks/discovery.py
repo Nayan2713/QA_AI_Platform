@@ -87,6 +87,7 @@ def start_discovery(self, app_id):
     # Route discovery
     route = route_discovery(app.id)
     pages_data = []
+    login_successful = None
     
     def set_route_started():
         task_record.progress = 30
@@ -151,9 +152,12 @@ def start_discovery(self, app_id):
                 on_progress=on_crawler_progress
             )
             pages_data = result.get("pages", [])
+            login_successful = result.get("login_successful")
             
             def set_browser_source():
                 app.discovery_source = 'browser'
+                if app.login_url:
+                    app.login_status = 'SUCCESS' if login_successful else 'FAILED'
                 app.save()
             run_in_thread(set_browser_source)
             logger.info(f"Successfully crawled {len(pages_data)} pages using Playwright.")
@@ -161,6 +165,8 @@ def start_discovery(self, app_id):
             logger.error(f"Playwright browser discovery failed: {e}")
             def handle_crawl_error():
                 app.status = 'FAILED'
+                if app.login_url:
+                    app.login_status = 'FAILED'
                 app.save()
                 task_record.status = 'failed'
                 task_record.error = str(e)
@@ -192,6 +198,13 @@ def start_discovery(self, app_id):
                     )
                 
                 app.status = 'DISCOVERED'
+                if app.login_url:
+                    if app.discovery_source == 'browser':
+                        app.login_status = 'SUCCESS' if login_successful else 'FAILED'
+                    else:
+                        app.login_status = 'SUCCESS'
+                else:
+                    app.login_status = 'NOT_ATTEMPTED'
                 app.save()
                 
                 task_record.status = 'success'

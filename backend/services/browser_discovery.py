@@ -9,9 +9,20 @@ class BrowserDiscoveryService:
         self.max_pages = max_pages
         self.discovered_pages = {}
         self.visited_urls = set()
+        self.login_successful = None
 
-    def is_same_domain(self, url, base_url):
-        return urlparse(url).netloc == urlparse(base_url).netloc
+    def is_same_domain(self, url, base_url, login_url=None):
+        netloc1 = urlparse(url).netloc.lower()
+        netloc2 = urlparse(base_url).netloc.lower()
+        if netloc1 == netloc2:
+            return True
+        if netloc1.endswith('.' + netloc2) or netloc2.endswith('.' + netloc1):
+            return True
+        if login_url:
+            netloc3 = urlparse(login_url).netloc.lower()
+            if netloc1 == netloc3 or netloc1.endswith('.' + netloc3) or netloc3.endswith('.' + netloc1):
+                return True
+        return False
 
     def perform_login(self, page, login_url, username, password):
         """
@@ -80,10 +91,32 @@ class BrowserDiscoveryService:
                     logger.info("Pressed Enter as submit fallback.")
 
                 page.wait_for_timeout(3000) # Wait a bit for transition
+                
+                # Heuristic check: URL changed or password input disappeared
+                still_has_password = False
+                for sel in password_selectors:
+                    try:
+                        if page.locator(sel).first.is_visible():
+                            still_has_password = True
+                            break
+                    except Exception:
+                        continue
+                
+                current_url = page.url
+                url_changed = (current_url.split('?')[0].rstrip('/') != login_url.split('?')[0].rstrip('/'))
+                
+                if url_changed or not still_has_password:
+                    self.login_successful = True
+                    logger.info(f"Login successful heuristic passed. Current URL: {current_url}")
+                else:
+                    self.login_successful = False
+                    logger.warning(f"Login failed heuristic triggered. Still on login URL: {current_url}")
             else:
                 logger.warning("Could not identify login fields.")
+                self.login_successful = False
         except Exception as e:
             logger.error(f"Login failed: {e}")
+            self.login_successful = False
 
     def extract_forms(self, page):
         """
@@ -175,13 +208,17 @@ class BrowserDiscoveryService:
             context = browser.new_context()
             page = context.new_page()
             
-            # Optional login phase
-            if login_url and username and password:
-                self.perform_login(page, login_url, username, password)
-            
             # Queue of links to visit
             to_visit = [start_url]
             pages_list = []
+            
+            # Optional login phase
+            if login_url and username and password:
+                self.perform_login(page, login_url, username, password)
+                if self.login_successful:
+                    post_login_url = page.url
+                    if post_login_url not in to_visit:
+                        to_visit.insert(0, post_login_url)
             
             while to_visit and len(pages_list) < self.max_pages:
                 current_url = to_visit.pop(0)
@@ -220,7 +257,7 @@ class BrowserDiscoveryService:
                             absolute_url = urljoin(current_url, href)
                             # Remove query params / hashes for deduplication
                             normalized_url = absolute_url.split('#')[0].split('?')[0]
-                            if (self.is_same_domain(normalized_url, start_url) and 
+                            if (self.is_same_domain(normalized_url, start_url, login_url) and 
                                     normalized_url not in self.visited_urls and 
                                     normalized_url not in to_visit):
                                 to_visit.append(normalized_url)
@@ -231,5 +268,6 @@ class BrowserDiscoveryService:
             browser.close()
             
             return {
-                "pages": pages_list
+                "pages": pages_list,
+                "login_successful": self.login_successful
             }

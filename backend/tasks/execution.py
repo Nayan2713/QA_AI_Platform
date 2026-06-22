@@ -77,6 +77,7 @@ def execute_test(self, test_run_id):
             return {"error": f"TestRun with ID {test_run_id} not found."}
 
         test_case = run_in_thread(lambda: test_run.test_case)
+        app = run_in_thread(lambda: test_case.app)
         
         def init_test_run():
             test_run.status = 'RUNNING'
@@ -91,6 +92,21 @@ def execute_test(self, test_run_id):
         run_failed = False
         api_logs = []
 
+        # Get previous successful run to extract baseline calls for schema regression checks
+        prev_calls = []
+        try:
+            def get_prev_run_calls():
+                prev_run = TestRun.objects.filter(
+                    test_case=test_case,
+                    status='COMPLETED'
+                ).order_by('-created_at').first()
+                if prev_run and isinstance(prev_run.metadata, dict):
+                    return prev_run.metadata.get('api_calls', [])
+                return []
+            prev_calls = run_in_thread(get_prev_run_calls)
+        except Exception as prev_err:
+            logger.error(f"Error fetching baseline run: {prev_err}")
+
         with sync_playwright() as p:
             try:
                 # Launch browser
@@ -101,15 +117,102 @@ def execute_test(self, test_run_id):
                 )
                 page = context.new_page()
                 
+                # Perform login if app has login credentials
+                if app.login_url and app.username and app.password:
+                    logger.info(f"Executing pre-run login for app {app.url} at {app.login_url}")
+                    try:
+                        page.goto(app.login_url, wait_until="networkidle", timeout=10000)
+                        
+                        # Username fields
+                        username_selectors = [
+                            "input[name='username']", "input[name='email']", "input[id='username']", 
+                            "input[id='email']", "input[type='email']", "input[type='text']"
+                        ]
+                        # Password fields
+                        password_selectors = [
+                            "input[type='password']", "input[name='password']", "input[id='password']"
+                        ]
+                        # Submit buttons
+                        submit_selectors = [
+                            "button[type='submit']", "input[type='submit']", "button:has-text('Login')", 
+                            "button:has-text('Sign In')", "button:has-text('Log In')"
+                        ]
+
+                        user_el = None
+                        for sel in username_selectors:
+                            try:
+                                if page.locator(sel).first.is_visible():
+                                    user_el = page.locator(sel).first
+                                    break
+                            except Exception:
+                                continue
+
+                        pass_el = None
+                        for sel in password_selectors:
+                            try:
+                                if page.locator(sel).first.is_visible():
+                                    pass_el = page.locator(sel).first
+                                    break
+                            except Exception:
+                                continue
+
+                        if user_el and pass_el:
+                            user_el.fill(app.username)
+                            pass_el.fill(app.password)
+                            
+                            submitted = False
+                            for sel in submit_selectors:
+                                try:
+                                    if page.locator(sel).first.is_visible():
+                                        page.locator(sel).first.click()
+                                        submitted = True
+                                        break
+                                except Exception:
+                                    continue
+                            if not submitted:
+                                pass_el.press("Enter")
+                            page.wait_for_timeout(3000)
+                            logger.info("Pre-run login completed successfully.")
+                        else:
+                            logger.warning("Pre-run login fields not found.")
+                    except Exception as login_err:
+                        logger.error(f"Pre-run login failed: {login_err}")
+                
                 # Register background API response listener
+                request_timestamps = {}
+
+                def capture_network_request(request):
+                    try:
+                        if request.resource_type in ['xhr', 'fetch']:
+                            import time
+                            request_timestamps[request.url] = time.time()
+                    except Exception:
+                        pass
+
+                page.on("request", capture_network_request)
+
                 def capture_network_api(response):
                     try:
                         resource_type = response.request.resource_type
                         if resource_type in ['xhr', 'fetch']:
+                            import time
+                            start_time = request_timestamps.get(response.url)
+                            latency = int((time.time() - start_time) * 1000) if start_time else 0
+
+                            body_text = ""
+                            try:
+                                content_type = response.headers.get("content-type", "").lower()
+                                if any(t in content_type for t in ["json", "text", "javascript", "xml"]):
+                                    body_text = response.text()
+                            except Exception:
+                                pass
+
                             api_logs.append({
                                 "method": response.request.method,
                                 "url": response.url,
-                                "status": response.status
+                                "status": response.status,
+                                "body": body_text,
+                                "latency": latency
                             })
                     except Exception as net_err:
                         logger.error(f"Error logging network response: {net_err}")
@@ -229,6 +332,31 @@ def execute_test(self, test_run_id):
                         )
                     run_in_thread(log_api_failures)
                     total_steps += 1
+
+                # Inspect background API logs for response quality warnings/errors
+                try:
+                    from services.quality_analyzer import ResponseQualityAnalyzer
+                    quality_issues = ResponseQualityAnalyzer.analyze_response_quality(api_logs, prev_calls)
+                    # Filter out latency warnings from being fatal errors (they are performance warnings)
+                    fatal_quality_issues = [q for q in quality_issues if q['type'] in ['content_error', 'schema_regression']]
+                    
+                    if fatal_quality_issues:
+                        run_failed = True
+                        quality_details = "\n".join([
+                            f"- {q['method']} {q['url']}\n  Issue [{q['type'].upper()}]: {q['issue']}"
+                            for q in fatal_quality_issues
+                        ])
+                        def log_quality_failures():
+                            TestResult.objects.create(
+                                test_run=test_run,
+                                step_number=total_steps + 1,
+                                status='FAILED',
+                                error=f"API Response Quality Failures Detected:\n{quality_details}"
+                            )
+                        run_in_thread(log_quality_failures)
+                        total_steps += 1
+                except Exception as qual_err:
+                    logger.error(f"Error executing response quality analyzer: {qual_err}")
 
                 browser.close()
                 

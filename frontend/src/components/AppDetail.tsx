@@ -290,6 +290,31 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             <span className="metric-tag">📄 {app.page_count} Pages Discovered</span>
             <span className="metric-tag">📋 {app.test_case_count} Test Cases</span>
             <span className="metric-tag bug-metric">🐞 {app.bug_count} Bugs Detected</span>
+            {app.login_url && (
+              <span className={`metric-tag login-status-tag ${
+                app.login_status === 'SUCCESS' ? 'login-success' : 
+                app.login_status === 'FAILED' ? 'login-failed' : 
+                'login-pending'
+              }`}
+              style={{
+                borderColor: 
+                  app.login_status === 'SUCCESS' ? 'rgba(34, 197, 94, 0.4)' : 
+                  app.login_status === 'FAILED' ? 'rgba(239, 68, 68, 0.4)' : 
+                  'rgba(234, 179, 8, 0.4)',
+                color: 
+                  app.login_status === 'SUCCESS' ? '#22c55e' : 
+                  app.login_status === 'FAILED' ? '#ef4444' : 
+                  '#eab308',
+                backgroundColor: 
+                  app.login_status === 'SUCCESS' ? 'rgba(34, 197, 94, 0.1)' : 
+                  app.login_status === 'FAILED' ? 'rgba(239, 68, 68, 0.1)' : 
+                  'rgba(234, 179, 8, 0.1)'
+              }}>
+                {app.login_status === 'SUCCESS' ? '🔑 Authenticated' : 
+                 app.login_status === 'FAILED' ? '⚠️ Login Failed' : 
+                 '🔑 Auth Pending'}
+              </span>
+            )}
           </div>
         </div>
         

@@ -39,9 +39,9 @@ class ApplicationSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'user', 'url', 'base_url', 'login_url', 
             'username', 'password', 'status', 'discovery_source', 
-            'page_count', 'test_case_count', 'bug_count', 'created_at'
+            'login_status', 'page_count', 'test_case_count', 'bug_count', 'created_at'
         )
-        read_only_fields = ('base_url', 'status', 'discovery_source')
+        read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status')
 
     def get_bug_count(self, obj):
         # Count bugs associated with all test runs of this application's test cases
@@ -50,8 +50,34 @@ class ApplicationSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         url = attrs.get('url')
         if url:
-            parsed = urlparse(url)
+            from django.db.models import Q
+            # Normalize URL by removing trailing slash
+            normalized_url = url.rstrip('/')
+            parsed = urlparse(normalized_url)
             attrs['base_url'] = f"{parsed.scheme}://{parsed.netloc}"
+            
+            # Check if this user has already registered this URL (handling trailing slashes too)
+            request = self.context.get('request')
+            if request and request.user:
+                user = request.user
+                exists = Application.objects.filter(user=user).filter(
+                    Q(url=normalized_url) | Q(url=normalized_url + '/')
+                )
+                if self.instance:
+                    exists = exists.exclude(id=self.instance.id)
+                if exists.exists():
+                    raise serializers.ValidationError({"url": "You have already registered this application URL."})
+
+        # Validate that login credentials are provided if login_url is specified
+        login_url = attrs.get('login_url')
+        username = attrs.get('username')
+        password = attrs.get('password')
+        if login_url and (not username or not password):
+            raise serializers.ValidationError({
+                "username": "Username and password are required if login URL is specified.",
+                "password": "Username and password are required if login URL is specified."
+            })
+            
         return attrs
 
 

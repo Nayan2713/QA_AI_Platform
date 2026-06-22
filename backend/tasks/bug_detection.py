@@ -9,20 +9,20 @@ logger = logging.getLogger(__name__)
 def classify_severity(error_message):
     """
     Classifies bug severity based on keywords present in the error message.
-    - critical: crash, error, timeout, 500, exception, failed to load
-    - high: invalid, not found, unexpected, wrong, assertion
+    - critical: crash, error, timeout, 500, exception, failed to load, network failure
+    - high: invalid, not found, unexpected, wrong, assertion, regression, schema regression, quality failure
     - medium: missing, slow, layout, display, visible
     - low: typo, spacing, color
     """
     err = error_message.lower()
     
     # Critical keywords
-    critical_kws = ['crash', 'error', 'timeout', '500', 'exception', 'failed to load', 'not reachable']
+    critical_kws = ['crash', 'error', 'timeout', '500', 'exception', 'failed to load', 'not reachable', 'network failures']
     if any(kw in err for kw in critical_kws):
         return 'critical'
         
     # High keywords
-    high_kws = ['invalid', 'not found', 'unexpected', 'wrong', 'assertion']
+    high_kws = ['invalid', 'not found', 'unexpected', 'wrong', 'assertion', 'regression', 'schema regression', 'quality failures']
     if any(kw in err for kw in high_kws):
         return 'high'
         
@@ -84,17 +84,34 @@ def detect_bugs(test_run_id):
                 # Build bug info
                 title = f"Step {step_num} Failed: '{action.upper()}' action issue"
                 
+                # Check for virtual API steps to set more descriptive titles/descriptions
+                is_virtual_api_step = False
+                if "API Network Failures Detected" in error_msg:
+                    action = "api network"
+                    title = "API Network Failures Detected"
+                    is_virtual_api_step = True
+                elif "API Response Quality Failures Detected" in error_msg:
+                    action = "api response quality"
+                    title = "API Response Quality Failures Detected"
+                    is_virtual_api_step = True
+
                 details_parts = []
                 if selector: details_parts.append(f"selector '{selector}'")
                 if target: details_parts.append(f"target '{target}'")
                 if value: details_parts.append(f"value '{value}'")
                 details_str = ", ".join(details_parts)
                 
-                description = (
-                    f"During the execution of test step {step_num} doing '{action}', an error occurred.\n"
-                    f"Action details: {details_str if details_str else 'none'}\n"
-                    f"Error output:\n{error_msg}"
-                )
+                if is_virtual_api_step:
+                    description = (
+                        f"An automated quality assertion check failed for background API requests during the test run.\n"
+                        f"Validation details:\n{error_msg}"
+                    )
+                else:
+                    description = (
+                        f"During the execution of test step {step_num} doing '{action}', an error occurred.\n"
+                        f"Action details: {details_str if details_str else 'none'}\n"
+                        f"Error output:\n{error_msg}"
+                    )
                 
                 # Create Bug
                 Bug.objects.create(

@@ -9,6 +9,12 @@ class Application(models.Model):
         ('FAILED', 'Failed'),
     ]
     
+    LOGIN_STATUS_CHOICES = [
+        ('NOT_ATTEMPTED', 'Not Attempted'),
+        ('SUCCESS', 'Success'),
+        ('FAILED', 'Failed'),
+    ]
+    
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='applications')
     url = models.URLField(max_length=500)
     base_url = models.URLField(max_length=500)
@@ -17,6 +23,7 @@ class Application(models.Model):
     password = models.CharField(max_length=255, blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='IDLE')
     discovery_source = models.CharField(max_length=20, blank=True, null=True) # 'mcp' or 'browser'
+    login_status = models.CharField(max_length=20, choices=LOGIN_STATUS_CHOICES, default='NOT_ATTEMPTED')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
