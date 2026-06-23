@@ -5,6 +5,7 @@ import { DiscoveryStatus } from './DiscoveryStatus';
 import { TestCaseList } from './TestCaseList';
 import { TestResults } from './TestResults';
 import { BugList } from './BugList';
+import QualityDashboard from './QualityDashboard/QualityDashboard';
 
 interface AppDetailProps {
   appId: number;
@@ -28,7 +29,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [bugs, setBugs] = useState<Bug[]>([]);
   const [loading, setLoading] = useState(true);
   const [discovering, setDiscovering] = useState(false);
-  const [activeTab, setActiveTab] = useState<'discovery' | 'tests' | 'bugs'>('discovery');
+  const [activeTab, setActiveTab] = useState<'discovery' | 'tests' | 'bugs' | 'quality'>('discovery');
   
   // Track active execution
   const [localActiveTestRunId, setLocalActiveTestRunId] = useState<number | null>(null);
@@ -442,6 +443,12 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           >
             🐞 App Bugs ({bugs.length})
           </button>
+          <button 
+            className={`tab-btn ${activeTab === 'quality' ? 'active' : ''}`}
+            onClick={() => setActiveTab('quality')}
+          >
+            📊 Quality Dashboard
+          </button>
         </div>
 
         <div className="tab-content">
@@ -479,6 +486,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               onRunTestCase={handleRunTestCase}
               activeTaskId={activeTaskId}
             />
+          )}
+
+          {activeTab === 'quality' && (
+            <QualityDashboard applicationId={app.id.toString()} />
           )}
         </div>
       </div>
