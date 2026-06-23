@@ -65,6 +65,18 @@ def detect_bugs(test_run_id):
             
             for result in failed_results:
                 error_msg = result.error or "Unknown error occurred"
+                
+                # Exclude test automation harness/script issues from being logged as application bugs
+                test_harness_keywords = [
+                    'syntaxerror', 'not a valid selector', 'waiting for locator',
+                    'playwright execution crash', 'timeout exceeded', 'strict mode violation',
+                    'locator.click: timeout', 'locator.fill: timeout'
+                ]
+                err_msg_lower = error_msg.lower()
+                if any(kw in err_msg_lower for kw in test_harness_keywords):
+                    logger.info(f"Skipping application bug ticket creation for test-harness/selector error: {error_msg[:120]}...")
+                    continue
+                
                 step_num = result.step_number
                 
                 # Fetch step information if possible

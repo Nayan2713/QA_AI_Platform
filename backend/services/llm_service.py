@@ -71,17 +71,30 @@ Supported actions for each test step:
 2. "fill": Populate form input fields. Parameter keys: "selector" (CSS selector of input), "value" (text to type). "target" should be empty.
 3. "click": Click interactive elements. Parameter keys: "selector" (CSS selector of button/element). "target" and "value" should be empty.
 4. "wait": Pause execution. Parameter keys: "value" (millisecond duration string like "1000"). "selector" and "target" should be empty.
-5. "assert": Verify content/element existence. Parameter keys: "selector" (selector of text container or container element), "value" (text expected to be present). "target" should be empty.
+5. "assert": Verify content/element existence. Parameter keys: "selector" (selector of text container or container element, optional), "value" (text expected to be present). "target" should be empty.
+6. "hover": Hover mouse over element. Parameter keys: "selector" (CSS selector of element). "target" and "value" should be empty.
+7. "scroll": Scroll the page or scroll element into view. Parameter keys: "selector" (selector of element to scroll into view, optional) or "value" (vertical pixel count to scroll down, e.g. "500"). "target" should be empty.
+8. "select": Select option in dropdown. Parameter keys: "selector" (CSS selector of select element), "value" (value or label to select). "target" should be empty.
+9. "screenshot": Manually capture screenshot checkpoint. Parameter keys: "value" (screenshot label, optional). "selector" and "target" should be empty.
 
-Generate a JSON array containing 3 to 5 comprehensive test cases. Each test case MUST follow this schema exactly:
+CRITICAL INSTRUCTIONS FOR SELECTORS & DATA VALIDATION:
+- You MUST only use the exact page URLs, form input field selectors/names/IDs, and button selectors that are listed in the JSON context above. Do not invent or hallucinate any selectors or URLs.
+- If a form field has an ID (e.g. "email"), use its ID selector (e.g., "#email"). If it only has a name, use its name attribute selector (e.g., "[name='email']").
+- When generating "fill" actions, the "value" you provide MUST be contextually valid for the field type:
+  - If the field is an email input (contains 'email' in name/id/type), you MUST fill it with a valid email format, e.g., "testuser@example.com".
+  - If the field is a phone number input (contains 'phone', 'mobile', 'tel' in name/id/type), you MUST fill it with a valid numeric phone format, e.g., "1234567890".
+  - If the field is a password input, use a valid password like "Secr3tP@ss123".
+  - Do NOT fill email fields with personal names, or phone fields with generic text.
+
+Generate a JSON array containing 5 to 8 comprehensive test cases. Each test case MUST follow this schema exactly:
 {{
   "title": "Descriptive test case title",
   "steps": [
     {{
-      "action": "navigate | fill | click | wait | assert",
+      "action": "navigate | fill | click | wait | assert | hover | scroll | select | screenshot",
       "selector": "CSS selector or locator if applicable, else empty string",
       "target": "target url for navigate action, else empty string",
-      "value": "value for fill, wait, assert actions, else empty string"
+      "value": "value for fill, wait, assert, scroll, select actions, else empty string"
     }}
   ],
   "expected_result": "Descriptive expected result statement"
@@ -117,7 +130,7 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                     clean_steps = []
                     for step in steps:
                         action = step.get("action")
-                        if action in ["navigate", "fill", "click", "wait", "assert"]:
+                        if action in ["navigate", "fill", "click", "wait", "assert", "hover", "scroll", "select", "screenshot"]:
                             clean_steps.append({
                                 "action": action,
                                 "selector": step.get("selector", ""),
@@ -182,15 +195,22 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                     else:
                         selector = f"input[name='{name}']"
                         
-                    # Compute dummy values
-                    if "email" in name or inp_type == "email":
+                    # Compute dummy values case-insensitively checking name, id, and type
+                    name_lower = (name or "").lower()
+                    id_lower = (inp_id or "").lower()
+                    
+                    if "email" in name_lower or "email" in id_lower or inp_type == "email":
                         val = "testuser@example.com"
-                    elif "password" in name or inp_type == "password":
+                    elif "password" in name_lower or "password" in id_lower or "pass" in name_lower or "pass" in id_lower or inp_type == "password":
                         val = "Secr3tP@ss123"
-                    elif "phone" in name or inp_type == "tel":
+                    elif "phone" in name_lower or "phone" in id_lower or "mobile" in name_lower or "mobile" in id_lower or "tel" in name_lower or "tel" in id_lower or inp_type == "tel":
                         val = "1234567890"
-                    elif inp_type == "number":
+                    elif "number" in inp_type or "quantity" in name_lower or "amount" in name_lower:
                         val = "42"
+                    elif "message" in name_lower or "message" in id_lower or "comment" in name_lower or "comment" in id_lower or "feedback" in name_lower or "feedback" in id_lower:
+                        val = "This is an automated test message from the browser agent."
+                    elif "subject" in name_lower or "subject" in id_lower:
+                        val = "Automated Test Inquiry"
                     else:
                         val = "Automated Test Input"
                         

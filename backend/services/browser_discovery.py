@@ -184,7 +184,12 @@ class BrowserDiscoveryService:
                 elif btn_name:
                     selector = f"[name='{btn_name}']"
                 elif btn_class:
-                    selector = f".{btn_class.replace(' ', '.')}"
+                    # Strip classes containing colons (e.g. Tailwind modifiers like hover:, focus:, md:)
+                    classes = [c for c in btn_class.split() if ':' not in c]
+                    if classes:
+                        selector = f".{'.'.join(classes)}"
+                    else:
+                        selector = f"button:has-text('{text}')" if text else f"button >> nth={idx}"
                 else:
                     selector = f"button:has-text('{text}')" if text else f"button >> nth={idx}"
 

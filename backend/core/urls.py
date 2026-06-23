@@ -25,7 +25,7 @@ urlpatterns = [
     # Auth endpoints
     path('auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    
+    path('quality/', include('api.urls')),
     # ViewSets
     path('', include(router.urls)),
 ]

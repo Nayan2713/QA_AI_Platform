@@ -21,6 +21,7 @@ app.conf.imports = (
     'tasks.test_generation',
     'tasks.execution',
     'tasks.bug_detection',
+    'tasks.quality_check',
 )
 
 

@@ -247,55 +247,103 @@ def execute_test(self, test_run_id):
                     error_msg = None
                     screenshot_b64 = None
                     
-                    try:
-                        if action == "navigate":
-                            if not target:
-                                raise ValueError("Navigation action requires a target URL")
-                            page.goto(target, wait_until="load")
-                            
-                        elif action == "fill":
-                            if not selector:
-                                raise ValueError("Fill action requires a selector")
-                            # Ensure visibility before filling
-                            page.locator(selector).first.wait_for(state="visible", timeout=5000)
-                            page.locator(selector).first.fill(value)
-                            
-                        elif action == "click":
-                            if not selector:
-                                raise ValueError("Click action requires a selector")
-                            page.locator(selector).first.wait_for(state="visible", timeout=5000)
-                            page.locator(selector).first.click()
-                            
-                        elif action == "wait":
-                            wait_ms = int(value) if value.isdigit() else 1000
-                            page.wait_for_timeout(wait_ms)
-                            
-                        elif action == "assert":
-                            # If a selector is provided, look in it. Otherwise look in the entire body.
-                            if selector:
-                                page.locator(selector).first.wait_for(state="visible", timeout=5000)
-                                content = page.locator(selector).first.inner_text()
-                            else:
-                                content = page.locator("body").inner_text()
-                                
-                            if value.lower() not in content.lower():
-                                raise AssertionError(f"Assertion failed: Expected '{value}' to be present, but found: '{content[:100]}...'")
-                        
-                        else:
-                            raise ValueError(f"Unknown action type: {action}")
-                            
-                    except Exception as e:
-                        step_passed = False
-                        run_failed = True
-                        error_msg = str(e)
-                        logger.error(f"Step {step_num} failed: {error_msg}")
-                        
-                        # Capture screenshot on failure
+                    max_attempts = 2
+                    for attempt in range(max_attempts):
+                        step_passed = True
+                        error_msg = None
                         try:
-                            screenshot_bytes = page.screenshot(type="png", full_page=False)
-                            screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
-                        except Exception as screenshot_err:
-                            logger.error(f"Failed to capture screenshot: {screenshot_err}")
+                            if action == "navigate":
+                                if not target:
+                                    raise ValueError("Navigation action requires a target URL")
+                                page.goto(target, wait_until="load")
+                                # Wait for network to stabilize
+                                try:
+                                    page.wait_for_load_state("networkidle", timeout=3000)
+                                except Exception:
+                                    pass  # Networkidle timeout is non-fatal for navigation
+                                
+                            elif action == "fill":
+                                if not selector:
+                                    raise ValueError("Fill action requires a selector")
+                                # Ensure visibility before filling
+                                page.locator(selector).first.wait_for(state="visible", timeout=4000)
+                                page.locator(selector).first.fill(value)
+                                
+                            elif action == "click":
+                                if not selector:
+                                    raise ValueError("Click action requires a selector")
+                                page.locator(selector).first.wait_for(state="visible", timeout=4000)
+                                page.locator(selector).first.click()
+                                # Brief wait to let transitions or state updates settle
+                                page.wait_for_timeout(500)
+                                
+                            elif action == "wait":
+                                wait_ms = int(value) if value.isdigit() else 1000
+                                page.wait_for_timeout(wait_ms)
+                                
+                            elif action == "assert":
+                                # If a selector is provided, look in it. Otherwise look in the entire body.
+                                if selector:
+                                    page.locator(selector).first.wait_for(state="visible", timeout=4000)
+                                    content = page.locator(selector).first.inner_text()
+                                else:
+                                    content = page.locator("body").inner_text()
+                                    
+                                if value.lower() not in content.lower():
+                                    raise AssertionError(f"Assertion failed: Expected '{value}' to be present, but found: '{content[:120]}...'")
+                            
+                            elif action == "hover":
+                                if not selector:
+                                    raise ValueError("Hover action requires a selector")
+                                page.locator(selector).first.wait_for(state="visible", timeout=4000)
+                                page.locator(selector).first.hover()
+                                page.wait_for_timeout(200)
+                                
+                            elif action == "scroll":
+                                # Scroll down by pixel value or scroll an element into view
+                                if selector:
+                                    page.locator(selector).first.scroll_into_view_if_needed()
+                                else:
+                                    scroll_y = int(value) if value.isdigit() else 500
+                                    page.evaluate(f"window.scrollBy(0, {scroll_y})")
+                                page.wait_for_timeout(500)
+                                
+                            elif action == "select":
+                                if not selector:
+                                    raise ValueError("Select action requires a selector")
+                                page.locator(selector).first.wait_for(state="visible", timeout=4000)
+                                page.locator(selector).first.select_option(value)
+                                page.wait_for_timeout(200)
+                                
+                            elif action == "screenshot":
+                                try:
+                                    screenshot_bytes = page.screenshot(type="png", full_page=False)
+                                    screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+                                except Exception as screenshot_err:
+                                    logger.error(f"Failed to capture manual screenshot: {screenshot_err}")
+                            
+                            else:
+                                raise ValueError(f"Unknown action type: {action}")
+                                
+                            # Step succeeded, break out of retry loop
+                            break
+                            
+                        except Exception as e:
+                            step_passed = False
+                            error_msg = str(e)
+                            if attempt < max_attempts - 1:
+                                logger.warning(f"Step {step_num} failed on attempt {attempt + 1}. Retrying in 1.5s... Error: {error_msg}")
+                                page.wait_for_timeout(1500)
+                            else:
+                                run_failed = True
+                                logger.error(f"Step {step_num} failed final attempt: {error_msg}")
+                                
+                                # Capture screenshot on final failure
+                                try:
+                                    screenshot_bytes = page.screenshot(type="png", full_page=False)
+                                    screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+                                except Exception as screenshot_err:
+                                    logger.error(f"Failed to capture screenshot: {screenshot_err}")
                     
                     if step_passed:
                         passed_steps += 1
@@ -336,9 +384,9 @@ def execute_test(self, test_run_id):
                 # Inspect background API logs for response quality warnings/errors
                 try:
                     from services.quality_analyzer import ResponseQualityAnalyzer
-                    quality_issues = ResponseQualityAnalyzer.analyze_response_quality(api_logs, prev_calls)
+                    quality_issues = ResponseQualityAnalyzer.analyze_response_quality(api_logs, prev_calls, expected_result=test_case.expected_result, base_url=test_case.app.url)
                     # Filter out latency warnings from being fatal errors (they are performance warnings)
-                    fatal_quality_issues = [q for q in quality_issues if q['type'] in ['content_error', 'schema_regression']]
+                    fatal_quality_issues = [q for q in quality_issues if q['type'] in ['content_error', 'schema_regression', 'semantic_error']]
                     
                     if fatal_quality_issues:
                         run_failed = True

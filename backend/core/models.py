@@ -124,3 +124,183 @@ class CeleryTask(models.Model):
     
     def __str__(self):
         return f"{self.task_type} - {self.task_id}"
+    
+# backend/qa_engine/models.py
+# ADD THESE MODELS TO YOUR EXISTING models.py
+
+from django.db import models
+from django.contrib.auth.models import User
+from django.utils import timezone
+
+# EXISTING MODELS (keep these):
+# - User
+# - Application
+# - Page
+# - TestCase
+# - TestRun
+# - TestResult
+# - Bug
+
+# NEW QUALITY VALIDATION MODELS
+# backend/core/models.py
+
+# Find these models and UPDATE them:
+
+class TestValidation(models.Model):
+    test_case = models.OneToOneField(TestCase, on_delete=models.CASCADE, related_name='quality_validation')
+    application = models.ForeignKey(
+        Application,
+        on_delete=models.CASCADE,
+        related_name='test_validations',
+        null=True,      # ADD THIS
+        blank=True      # ADD THIS
+    )
+    relevance_score = models.FloatField(default=0)
+    elements_found = models.IntegerField(default=0)
+    elements_total = models.IntegerField(default=0)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('HIGHLY_RELEVANT', 'Highly Relevant (90-100%)'),
+            ('RELEVANT', 'Relevant (70-89%)'),
+            ('SOMEWHAT_RELEVANT', 'Somewhat Relevant (50-69%)'),
+            ('IRRELEVANT', 'Irrelevant (<50%)')
+        ],
+        default='IRRELEVANT'
+    )
+    validation_details = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class CoverageReport(models.Model):
+    application = models.ForeignKey(
+        Application,
+        on_delete=models.CASCADE,
+        related_name='coverage_reports',
+        null=True,      # ADD THIS
+        blank=True      # ADD THIS
+    )
+    page_coverage = models.FloatField(default=0)
+    form_coverage = models.FloatField(default=0)
+    workflow_coverage = models.FloatField(default=0)
+    overall_coverage = models.FloatField(default=0)
+    total_pages = models.IntegerField(default=0)
+    tested_pages = models.IntegerField(default=0)
+    total_forms = models.IntegerField(default=0)
+    tested_forms = models.IntegerField(default=0)
+    total_workflows = models.IntegerField(default=0)
+    tested_workflows = models.IntegerField(default=0)
+    untested_elements = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class FlakinessReport(models.Model):
+    test_case = models.ForeignKey(
+        TestCase,
+        on_delete=models.CASCADE,
+        related_name='flakiness_reports',
+        null=True,      # ADD THIS
+        blank=True      # ADD THIS
+    )
+    application = models.ForeignKey(
+        Application,
+        on_delete=models.CASCADE,
+        related_name='flakiness_reports',
+        null=True,      # ADD THIS
+        blank=True      # ADD THIS
+    )
+    runs_executed = models.IntegerField(default=5)
+    runs_passed = models.IntegerField(default=0)
+    runs_failed = models.IntegerField(default=0)
+    flakiness_percentage = models.FloatField(default=0)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('STABLE', 'Stable (0-10% failure)'),
+            ('MOSTLY_STABLE', 'Mostly Stable (10-20% failure)'),
+            ('FLAKY', 'Flaky (20-50% failure)'),
+            ('VERY_FLAKY', 'Very Flaky (>50% failure)')
+        ],
+        default='VERY_FLAKY'
+    )
+    failure_patterns = models.JSONField(default=dict)
+    failure_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_run = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class BugValidation(models.Model):
+    bug = models.OneToOneField(
+        Bug,
+        on_delete=models.CASCADE,
+        related_name='validation',
+        null=True,      # ADD THIS
+        blank=True      # ADD THIS
+    )
+    application = models.ForeignKey(
+        Application,
+        on_delete=models.CASCADE,
+        related_name='bug_validations',
+        null=True,      # ADD THIS
+        blank=True      # ADD THIS
+    )
+    confidence_score = models.FloatField(default=0)
+    is_verified = models.BooleanField(default=False)
+    verification_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('VERIFIED', 'Real Bug'),
+            ('FALSE_POSITIVE', 'False Positive'),
+            ('NEEDS_REVIEW', 'Needs Manual Review')
+        ],
+        default='NEEDS_REVIEW'
+    )
+    reproducibility_count = models.IntegerField(default=1)
+    reproducibility_score = models.FloatField(default=0)
+    severity_score = models.FloatField(default=0)
+    error_type = models.CharField(max_length=50, blank=True)
+    validation_methods = models.JSONField(default=dict)
+    validation_notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class QualityMetrics(models.Model):
+    application = models.OneToOneField(
+        Application,
+        on_delete=models.CASCADE,
+        related_name='quality_metrics',
+        null=True,      # ADD THIS
+        blank=True      # ADD THIS
+    )
+    coverage_score = models.FloatField(default=0)
+    reliability_score = models.FloatField(default=0)
+    accuracy_score = models.FloatField(default=0)
+    relevance_score = models.FloatField(default=0)
+    overall_score = models.FloatField(default=0)
+    grade = models.CharField(
+        max_length=1,
+        choices=[
+            ('A', 'Excellent (90-100)'),
+            ('B', 'Good (80-89)'),
+            ('C', 'Fair (70-79)'),
+            ('D', 'Poor (60-69)'),
+            ('F', 'Failing (<60)')
+        ],
+        default='F'
+    )
+    recommendations = models.JSONField(default=list)
+    last_updated = models.DateTimeField(auto_now=True)
