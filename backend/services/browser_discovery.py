@@ -10,6 +10,7 @@ class BrowserDiscoveryService:
         self.discovered_pages = {}
         self.visited_urls = set()
         self.login_successful = None
+        self.login_error_message = None
 
     def is_same_domain(self, url, base_url, login_url=None):
         netloc1 = urlparse(url).netloc.lower()
@@ -31,7 +32,11 @@ class BrowserDiscoveryService:
         """
         logger.info(f"Attempting login at {login_url}")
         try:
-            page.goto(login_url, wait_until="networkidle", timeout=10000)
+            page.goto(login_url, wait_until="load", timeout=15000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=3000)
+            except Exception:
+                pass
             
             # Common username field selectors
             username_selectors = [
@@ -110,11 +115,14 @@ class BrowserDiscoveryService:
                     logger.info(f"Login successful heuristic passed. Current URL: {current_url}")
                 else:
                     self.login_successful = False
+                    self.login_error_message = f"Login failed heuristic: browser stayed on login URL '{current_url}' and password field is still visible."
                     logger.warning(f"Login failed heuristic triggered. Still on login URL: {current_url}")
             else:
+                self.login_error_message = "Login failed: could not find standard username/email and password fields on the login page."
                 logger.warning("Could not identify login fields.")
                 self.login_successful = False
         except Exception as e:
+            self.login_error_message = f"Login failed exception: {str(e)}"
             logger.error(f"Login failed: {e}")
             self.login_successful = False
 
@@ -201,17 +209,80 @@ class BrowserDiscoveryService:
             logger.error(f"Error extracting buttons: {e}")
         return buttons_data
 
-    def discover(self, start_url, login_url=None, username=None, password=None, on_progress=None):
+    def discover(self, start_url, login_url=None, username=None, password=None, storage_state=None, on_progress=None):
         """
         Performs the complete page discovery using Playwright.
-        Returns a dict in the unified format.
+        Registers API listeners early, handles session persistence, and returns
+        discovered pages, storage state, and captured api logs.
         """
         logger.info(f"Starting browser discovery for URL: {start_url}")
+        import json
         
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context()
+            
+            context_kwargs = {}
+            if storage_state:
+                try:
+                    context_kwargs['storage_state'] = json.loads(storage_state) if isinstance(storage_state, str) else storage_state
+                    logger.info("Loaded pre-existing storage state for discovery context.")
+                except Exception as parse_err:
+                    logger.error(f"Failed to parse storage state JSON: {parse_err}")
+            
+            context = browser.new_context(**context_kwargs)
             page = context.new_page()
+            
+            # API Interception setup (before any navigation/login)
+            api_logs = []
+            request_timestamps = {}
+
+            def capture_network_request(request):
+                try:
+                    if request.resource_type in ['xhr', 'fetch']:
+                        import time
+                        request_timestamps[request.url] = time.time()
+                except Exception:
+                    pass
+
+            page.on("request", capture_network_request)
+
+            def capture_network_api(response):
+                try:
+                    resource_type = response.request.resource_type
+                    if resource_type in ['xhr', 'fetch']:
+                        import time
+                        start_time = request_timestamps.get(response.url)
+                        latency = int((time.time() - start_time) * 1000) if start_time else 0
+
+                        body_text = ""
+                        try:
+                            content_type = response.headers.get("content-type", "").lower()
+                            if any(t in content_type for t in ["json", "text", "javascript", "xml"]):
+                                body_text = response.text()
+                        except Exception:
+                            pass
+
+                        # Detect auth type
+                        auth_type = None
+                        headers = response.request.headers
+                        if 'authorization' in headers:
+                            auth_type = 'bearer' if 'bearer' in headers['authorization'].lower() else 'custom'
+                        elif 'cookie' in headers:
+                            auth_type = 'cookie'
+
+                        api_logs.append({
+                            "method": response.request.method,
+                            "url": response.url,
+                            "status": response.status,
+                            "body": body_text,
+                            "latency": latency,
+                            "auth_type": auth_type,
+                            "request_body": response.request.post_data or ""
+                        })
+                except Exception as net_err:
+                    logger.error(f"Error logging network response during crawl: {net_err}")
+
+            page.on("response", capture_network_api)
             
             # Queue of links to visit
             to_visit = [start_url]
@@ -219,11 +290,37 @@ class BrowserDiscoveryService:
             
             # Optional login phase
             if login_url and username and password:
-                self.perform_login(page, login_url, username, password)
-                if self.login_successful:
-                    post_login_url = page.url
-                    if post_login_url not in to_visit:
-                        to_visit.insert(0, post_login_url)
+                already_logged_in = False
+                if storage_state:
+                    try:
+                        logger.info("Verifying if existing session is valid...")
+                        page.goto(start_url, wait_until="load", timeout=10000)
+                        page.wait_for_timeout(1000)
+                        
+                        # If we aren't on the login URL and don't see password fields, we are logged in
+                        if page.url.split('?')[0].rstrip('/') != login_url.split('?')[0].rstrip('/'):
+                            still_has_password = False
+                            password_selectors = ["input[type='password']", "input[name='password']", "input[id='password']"]
+                            for sel in password_selectors:
+                                try:
+                                    if page.locator(sel).first.is_visible():
+                                        still_has_password = True
+                                        break
+                                except Exception:
+                                    continue
+                            if not still_has_password:
+                                already_logged_in = True
+                                self.login_successful = True
+                                logger.info("Already logged in using pre-existing session. Skipping login step.")
+                    except Exception as goto_err:
+                        logger.warning(f"Failed checking pre-existing session: {goto_err}")
+                
+                if not already_logged_in:
+                    self.perform_login(page, login_url, username, password)
+                    if self.login_successful:
+                        post_login_url = page.url
+                        if post_login_url not in to_visit:
+                            to_visit.insert(0, post_login_url)
             
             while to_visit and len(pages_list) < self.max_pages:
                 current_url = to_visit.pop(0)
@@ -270,9 +367,20 @@ class BrowserDiscoveryService:
                 except Exception as e:
                     logger.error(f"Failed to crawl {current_url}: {e}")
                     
+            # Capture final storage state if login was attempted or completed
+            captured_storage = None
+            try:
+                if self.login_successful:
+                    captured_storage = json.dumps(context.storage_state())
+            except Exception as st_err:
+                logger.error(f"Failed to extract storage state from context: {st_err}")
+                
             browser.close()
             
             return {
                 "pages": pages_list,
-                "login_successful": self.login_successful
+                "login_successful": self.login_successful,
+                "login_error": self.login_error_message,
+                "storage_state": captured_storage,
+                "api_logs": api_logs
             }

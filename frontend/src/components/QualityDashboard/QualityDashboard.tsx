@@ -50,6 +50,17 @@ interface DashboardData {
     relevant_tests: number;
     avg_relevance: number;
   };
+  api_health?: {
+    total_apis: number;
+    endpoints: Array<{
+      id: number;
+      method: string;
+      url_pattern: string;
+      bug_count: number;
+      avg_latency: number;
+      auth_type?: string;
+    }>;
+  };
 }
 
 const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }) => {
@@ -395,6 +406,62 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
           <p className="target-note">Target: &gt;80% relevance</p>
         </div>
       </div>
+
+      {/* API catalog list */}
+      {data.api_health && data.api_health.endpoints && data.api_health.endpoints.length > 0 && (
+        <div className="recommendations-section api-catalog-section" style={{ marginTop: '24px', padding: '20px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+          <h3>🌐 Background API Catalog</h3>
+          <div className="table-responsive" style={{ marginTop: '16px', overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', color: '#e2e8f0', fontSize: '0.9rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)', textAlign: 'left' }}>
+                  <th style={{ padding: '12px 8px' }}>Method</th>
+                  <th style={{ padding: '12px 8px' }}>URL Pattern</th>
+                  <th style={{ padding: '12px 8px' }}>Auth Type</th>
+                  <th style={{ padding: '12px 8px' }}>Linked Bugs</th>
+                  <th style={{ padding: '12px 8px' }}>Avg Latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.api_health.endpoints.map((api: any) => {
+                  const getMethodBadgeColor = (m: string) => {
+                    switch (m.toUpperCase()) {
+                      case 'GET': return '#10b981';
+                      case 'POST': return '#3b82f6';
+                      case 'PUT': return '#f59e0b';
+                      case 'DELETE': return '#ef4444';
+                      default: return '#718096';
+                    }
+                  };
+                  return (
+                    <tr key={api.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                      <td style={{ padding: '10px 8px' }}>
+                        <span style={{ 
+                          backgroundColor: `${getMethodBadgeColor(api.method)}20`, 
+                          color: getMethodBadgeColor(api.method),
+                          border: `1px solid ${getMethodBadgeColor(api.method)}40`,
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontWeight: 'bold',
+                          fontSize: '0.75rem'
+                        }}>{api.method}</span>
+                      </td>
+                      <td style={{ padding: '10px 8px' }}><code>{api.url_pattern}</code></td>
+                      <td style={{ padding: '10px 8px', textTransform: 'capitalize' }}>{api.auth_type || 'none'}</td>
+                      <td style={{ padding: '10px 8px', color: api.bug_count > 0 ? '#ff4d4d' : '#10b981', fontWeight: 'bold' }}>
+                        {api.bug_count > 0 ? `🐞 ${api.bug_count} Bugs` : '✓ 0 Bugs'}
+                      </td>
+                      <td style={{ padding: '10px 8px' }}>
+                        {api.avg_latency > 0 ? `${api.avg_latency} ms` : 'N/A'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Recommendations */}
       <div className="recommendations-section">

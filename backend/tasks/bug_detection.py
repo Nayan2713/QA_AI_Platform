@@ -1,8 +1,11 @@
 import logging
+import re
+from urllib.parse import urlparse
 from celery import shared_task
 from django.db import transaction
 
-from core.models import TestRun, TestResult, Bug
+from core.models import TestRun, TestResult, Bug, APIEndpoint
+from tasks.discovery import get_url_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -125,12 +128,37 @@ def detect_bugs(test_run_id):
                         f"Error output:\n{error_msg}"
                     )
                 
+                matched_endpoint = None
+                if is_virtual_api_step:
+                    lines = error_msg.split('\n')
+                    for line in lines:
+                        match = re.search(r'-\s+([A-Z]+)\s+([^\s]+)\s+->\s+Status\s+(\d+)', line)
+                        if not match:
+                            # Try to match latency/schema warnings e.g. "- GET http://example.com/api/users"
+                            match = re.search(r'-\s+([A-Z]+)\s+([^\s]+)', line)
+                            
+                        if match:
+                            method = match.group(1).strip()
+                            url = match.group(2).strip()
+                            
+                            # Normalize URL to match pattern
+                            url_pattern = get_url_pattern(url, test_run.test_case.app.url)
+                            
+                            matched_endpoint = APIEndpoint.objects.filter(
+                                application=test_run.test_case.app,
+                                method=method,
+                                url_pattern=url_pattern
+                            ).first()
+                            if matched_endpoint:
+                                break
+                                
                 # Create Bug
                 Bug.objects.create(
                     test_run=test_run,
                     title=title,
                     description=description,
-                    severity=severity
+                    severity=severity,
+                    api_endpoint=matched_endpoint
                 )
                 bugs_created += 1
                 

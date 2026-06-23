@@ -111,74 +111,28 @@ def execute_test(self, test_run_id):
             try:
                 # Launch browser
                 browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    viewport={"width": 1280, "height": 720},
-                    ignore_https_errors=True
-                )
+                
+                # Fetch storage state
+                def get_storage():
+                    return app.storage_state
+                storage_state = run_in_thread(get_storage)
+                
+                import json
+                context_kwargs = {
+                    "viewport": {"width": 1280, "height": 720},
+                    "ignore_https_errors": True
+                }
+                if storage_state:
+                    try:
+                        context_kwargs["storage_state"] = json.loads(storage_state)
+                        logger.info("Loaded pre-existing storage state for execution context.")
+                    except Exception as e:
+                        logger.error(f"Failed parsing storage state: {e}")
+                
+                context = browser.new_context(**context_kwargs)
                 page = context.new_page()
                 
-                # Perform login if app has login credentials
-                if app.login_url and app.username and app.password:
-                    logger.info(f"Executing pre-run login for app {app.url} at {app.login_url}")
-                    try:
-                        page.goto(app.login_url, wait_until="networkidle", timeout=10000)
-                        
-                        # Username fields
-                        username_selectors = [
-                            "input[name='username']", "input[name='email']", "input[id='username']", 
-                            "input[id='email']", "input[type='email']", "input[type='text']"
-                        ]
-                        # Password fields
-                        password_selectors = [
-                            "input[type='password']", "input[name='password']", "input[id='password']"
-                        ]
-                        # Submit buttons
-                        submit_selectors = [
-                            "button[type='submit']", "input[type='submit']", "button:has-text('Login')", 
-                            "button:has-text('Sign In')", "button:has-text('Log In')"
-                        ]
-
-                        user_el = None
-                        for sel in username_selectors:
-                            try:
-                                if page.locator(sel).first.is_visible():
-                                    user_el = page.locator(sel).first
-                                    break
-                            except Exception:
-                                continue
-
-                        pass_el = None
-                        for sel in password_selectors:
-                            try:
-                                if page.locator(sel).first.is_visible():
-                                    pass_el = page.locator(sel).first
-                                    break
-                            except Exception:
-                                continue
-
-                        if user_el and pass_el:
-                            user_el.fill(app.username)
-                            pass_el.fill(app.password)
-                            
-                            submitted = False
-                            for sel in submit_selectors:
-                                try:
-                                    if page.locator(sel).first.is_visible():
-                                        page.locator(sel).first.click()
-                                        submitted = True
-                                        break
-                                except Exception:
-                                    continue
-                            if not submitted:
-                                pass_el.press("Enter")
-                            page.wait_for_timeout(3000)
-                            logger.info("Pre-run login completed successfully.")
-                        else:
-                            logger.warning("Pre-run login fields not found.")
-                    except Exception as login_err:
-                        logger.error(f"Pre-run login failed: {login_err}")
-                
-                # Register background API response listener
+                # Register background API response listener (registered BEFORE login/navigation)
                 request_timestamps = {}
 
                 def capture_network_request(request):
@@ -218,6 +172,129 @@ def execute_test(self, test_run_id):
                         logger.error(f"Error logging network response: {net_err}")
 
                 page.on("response", capture_network_api)
+                
+                # Perform login if app has login credentials
+                if app.login_url and app.username and app.password:
+                    already_logged_in = False
+                    if storage_state:
+                        try:
+                            logger.info("Verifying if existing session is valid for execution...")
+                            page.goto(app.url, wait_until="load", timeout=10000)
+                            page.wait_for_timeout(1000)
+                            
+                            if page.url.split('?')[0].rstrip('/') != app.login_url.split('?')[0].rstrip('/'):
+                                still_has_password = False
+                                password_selectors = ["input[type='password']", "input[name='password']", "input[id='password']"]
+                                for sel in password_selectors:
+                                    try:
+                                        if page.locator(sel).first.is_visible():
+                                            still_has_password = True
+                                            break
+                                    except Exception:
+                                        continue
+                                if not still_has_password:
+                                    already_logged_in = True
+                                    logger.info("Already logged in for execution. Skipping login step.")
+                        except Exception as check_err:
+                            logger.warning(f"Error checking session validity: {check_err}")
+                            
+                    if not already_logged_in:
+                        logger.info(f"Executing pre-run login for app {app.url} at {app.login_url}")
+                        try:
+                            page.goto(app.login_url, wait_until="load", timeout=15000)
+                            try:
+                                page.wait_for_load_state("networkidle", timeout=3000)
+                            except Exception:
+                                pass
+                            
+                            # Username fields
+                            username_selectors = [
+                                "input[name='username']", "input[name='email']", "input[id='username']", 
+                                "input[id='email']", "input[type='email']", "input[type='text']"
+                            ]
+                            # Password fields
+                            password_selectors = [
+                                "input[type='password']", "input[name='password']", "input[id='password']"
+                            ]
+                            # Submit buttons
+                            submit_selectors = [
+                                "button[type='submit']", "input[type='submit']", "button:has-text('Login')", 
+                                "button:has-text('Sign In')", "button:has-text('Log In')"
+                            ]
+
+                            user_el = None
+                            for sel in username_selectors:
+                                try:
+                                    if page.locator(sel).first.is_visible():
+                                        user_el = page.locator(sel).first
+                                        break
+                                except Exception:
+                                    continue
+
+                            pass_el = None
+                            for sel in password_selectors:
+                                try:
+                                    if page.locator(sel).first.is_visible():
+                                        pass_el = page.locator(sel).first
+                                        break
+                                except Exception:
+                                    continue
+
+                            if user_el and pass_el:
+                                user_el.fill(app.username)
+                                pass_el.fill(app.password)
+                                
+                                submitted = False
+                                for sel in submit_selectors:
+                                    try:
+                                        if page.locator(sel).first.is_visible():
+                                            page.locator(sel).first.click()
+                                            submitted = True
+                                            break
+                                    except Exception:
+                                        continue
+                                if not submitted:
+                                    pass_el.press("Enter")
+                                page.wait_for_timeout(3000)
+                                
+                                # Verify if login was successful, and save storage state if so
+                                still_has_password = False
+                                for sel in password_selectors:
+                                    try:
+                                        if page.locator(sel).first.is_visible():
+                                            still_has_password = True
+                                            break
+                                    except Exception:
+                                        continue
+                                        
+                                if not still_has_password:
+                                    new_state = context.storage_state()
+                                    def save_new_storage():
+                                        app.storage_state = json.dumps(new_state)
+                                        app.save()
+                                    run_in_thread(save_new_storage)
+                                    logger.info("Pre-run login completed successfully and storage state saved.")
+                                else:
+                                    logger.warning("Pre-run login completed, but password field still visible.")
+                                    def save_heuristic_fail():
+                                        app.login_status = 'FAILED'
+                                        app.login_error = f"Pre-run login failed heuristic: stayed on URL '{page.url}' and password input field remained visible."
+                                        app.save()
+                                    run_in_thread(save_heuristic_fail)
+                            else:
+                                logger.warning("Pre-run login fields not found.")
+                                def save_fields_missing():
+                                    app.login_status = 'FAILED'
+                                    app.login_error = "Pre-run login failed: could not locate standard email/username and password input fields on page."
+                                    app.save()
+                                run_in_thread(save_fields_missing)
+                        except Exception as login_err:
+                            logger.error(f"Pre-run login failed: {login_err}")
+                            def save_login_exception():
+                                app.login_status = 'FAILED'
+                                app.login_error = f"Pre-run login exception: {str(login_err)}"
+                                app.save()
+                            run_in_thread(save_login_exception)
                 
                 # Set default timeout to 15 seconds to allow slower websites to load
                 page.set_default_timeout(15000)

@@ -5,18 +5,21 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint
 from .serializers import (
     RegisterSerializer, UserSerializer, ApplicationSerializer, 
     PageSerializer, TestCaseSerializer, TestRunSerializer, 
-    TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer
+    TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer,
+    APIEndpointSerializer
 )
+from services.test_validation_service import TestValidationService
 
 # Celery task imports - imported inside methods to prevent circular dependency
 # or loading issues before Celery is ready.
 
 class RegisterView(viewsets.GenericViewSet):
     permission_classes = (permissions.AllowAny,)
+    authentication_classes = ()
     serializer_class = RegisterSerializer
 
     def create(self, request, *args, **kwargs):
@@ -128,6 +131,22 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             "task_id": task_id
         }, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post'])
+    def validate_test(self, request, pk=None):
+        test_case = self.get_object()
+        res = TestValidationService.validate_test_case(test_case.id)
+        if res.get("success"):
+            return Response(res, status=status.HTTP_200_OK)
+        return Response(res, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def auto_fix(self, request, pk=None):
+        test_case = self.get_object()
+        res = TestValidationService.auto_fix_test_case(test_case.id)
+        if res.get("success"):
+            return Response(res, status=status.HTTP_200_OK)
+        return Response(res, status=status.HTTP_400_BAD_REQUEST)
+
 
 class TestRunViewSet(viewsets.ModelViewSet):
     serializer_class = TestRunSerializer
@@ -199,6 +218,18 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == 'retrieve':
             return BugDetailSerializer
         return BugSerializer
+
+
+class APIEndpointViewSet(viewsets.ModelViewSet):
+    serializer_class = APIEndpointSerializer
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get_queryset(self):
+        queryset = APIEndpoint.objects.filter(application__user=self.request.user).order_by('url_pattern')
+        app_id = self.request.query_params.get('app')
+        if app_id:
+            queryset = queryset.filter(application_id=app_id)
+        return queryset
 
 
 class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):

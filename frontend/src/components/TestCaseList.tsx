@@ -22,6 +22,9 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   const [generating, setGenerating] = useState(false);
   const [executingTestCaseId, setExecutingTestCaseId] = useState<number | null>(null);
   const [executingAll, setExecutingAll] = useState(false);
+  const [validatingIds, setValidatingIds] = useState<Record<number, boolean>>({});
+  const [fixingIds, setFixingIds] = useState<Record<number, boolean>>({});
+  const [validationResults, setValidationResults] = useState<Record<number, any>>({});
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -56,8 +59,6 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     try {
       const response = await api.post('test-runs/execute/', { test_case_id: testCaseId });
       setSuccessMsg(`Test run execution started successfully.`);
-      
-      // Let parent component know a test run has been triggered
       if (response.data.test_run_id) {
         onTestExecuted(response.data.test_run_id, response.data.task_id);
       }
@@ -66,6 +67,49 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       setError('Failed to execute test run.');
     } finally {
       setExecutingTestCaseId(null);
+    }
+  };
+
+  const handleValidateTest = async (testCaseId: number) => {
+    setValidatingIds(prev => ({ ...prev, [testCaseId]: true }));
+    setError('');
+    setSuccessMsg('');
+    try {
+      const res = await api.post(`test-cases/${testCaseId}/validate_test/`);
+      setValidationResults(prev => ({ ...prev, [testCaseId]: res.data }));
+      if (res.data.validation_status === 'VERIFIED') {
+        setSuccessMsg('Test case verified successfully! All selectors match elements on the page.');
+      } else {
+        setError('Verification failed: Some selectors do not exist in the page structure. Click Auto-Fix to repair.');
+      }
+      onRefreshTests();
+    } catch (err: any) {
+      console.error(err);
+      setError('Failed to validate test case elements.');
+    } finally {
+      setValidatingIds(prev => ({ ...prev, [testCaseId]: false }));
+    }
+  };
+
+  const handleAutoFixTest = async (testCaseId: number) => {
+    setFixingIds(prev => ({ ...prev, [testCaseId]: true }));
+    setError('');
+    setSuccessMsg('');
+    try {
+      const res = await api.post(`test-cases/${testCaseId}/auto_fix/`);
+      setValidationResults(prev => ({ ...prev, [testCaseId]: res.data }));
+      const fixedCount = res.data.corrections_made || 0;
+      if (res.data.validation_status === 'VERIFIED') {
+        setSuccessMsg(`Auto-fix completed! Corrected ${fixedCount} selectors. Test is now verified and executable.`);
+      } else {
+        setSuccessMsg(`Auto-fix made ${fixedCount} adjustments, but test case still needs review.`);
+      }
+      onRefreshTests();
+    } catch (err: any) {
+      console.error(err);
+      setError('Failed to auto-fix test case selectors.');
+    } finally {
+      setFixingIds(prev => ({ ...prev, [testCaseId]: false }));
     }
   };
 
@@ -88,6 +132,41 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       setError('Failed to run all test cases.');
     } finally {
       setExecutingAll(false);
+    }
+  };
+
+  const getValidationBadge = (status: string) => {
+    switch (status) {
+      case 'VERIFIED':
+        return <span className="badge-validation verified" style={{
+          backgroundColor: 'rgba(34, 197, 94, 0.15)',
+          color: '#22c55e',
+          border: '1px solid rgba(34, 197, 94, 0.3)',
+          padding: '2px 8px',
+          borderRadius: '4px',
+          fontSize: '0.8rem',
+          fontWeight: '600'
+        }}>✓ Verified</span>;
+      case 'BROKEN':
+        return <span className="badge-validation broken" style={{
+          backgroundColor: 'rgba(239, 68, 68, 0.15)',
+          color: '#ef4444',
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          padding: '2px 8px',
+          borderRadius: '4px',
+          fontSize: '0.8rem',
+          fontWeight: '600'
+        }}>⚠️ Broken Selectors</span>;
+      default:
+        return <span className="badge-validation draft" style={{
+          backgroundColor: 'rgba(113, 128, 150, 0.15)',
+          color: '#a0aec0',
+          border: '1px solid rgba(113, 128, 150, 0.3)',
+          padding: '2px 8px',
+          borderRadius: '4px',
+          fontSize: '0.8rem',
+          fontWeight: '600'
+        }}>Draft (Unverified)</span>;
     }
   };
 
@@ -148,58 +227,130 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       ) : (
         <div className="test-cases-table-container">
           <div className="test-cases-list">
-            {testCases.map((tc) => (
-              <div key={tc.id} className="test-case-item">
-                <div className="test-case-main-info">
-                  <div className="test-case-title-row">
-                    <h5>{tc.title}</h5>
-                    <span className={`badge-ai ${tc.ai_generated ? 'badge-ai-model' : 'badge-ai-fallback'}`}>
-                      {tc.ai_generated ? '🤖 AI Generated' : '📋 Fallback Template'}
-                    </span>
-                  </div>
-                  
-                  <div className="test-steps-block">
-                    <h6>Steps:</h6>
-                    <ol className="steps-list">
-                      {tc.steps.map((step, idx) => (
-                        <li key={idx} className="step-list-item">
-                          <span className="step-action">{step.action.toUpperCase()}</span>
-                          {step.action === 'navigate' && (
-                            <> to <code className="step-code">{step.target}</code></>
-                          )}
-                          {step.action === 'fill' && (
-                            <> field <code className="step-code">{step.selector}</code> with <code className="step-code">"{step.value}"</code></>
-                          )}
-                          {step.action === 'click' && (
-                            <> element <code className="step-code">{step.selector}</code></>
-                          )}
-                          {step.action === 'wait' && (
-                            <> for <code className="step-code">{step.value} ms</code></>
-                          )}
-                          {step.action === 'assert' && (
-                            <> element <code className="step-code">{step.selector || 'body'}</code> contains text <code className="step-code">"{step.value}"</code></>
-                          )}
-                        </li>
-                      ))}
-                    </ol>
+            {testCases.map((tc) => {
+              const tcValResults = validationResults[tc.id];
+              return (
+                <div key={tc.id} className="test-case-item">
+                  <div className="test-case-main-info">
+                    <div className="test-case-title-row" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <h5 style={{ margin: 0 }}>{tc.title}</h5>
+                      <span className={`badge-ai ${tc.ai_generated ? 'badge-ai-model' : 'badge-ai-fallback'}`}>
+                        {tc.ai_generated ? '🤖 AI Generated' : '📋 Fallback Template'}
+                      </span>
+                      {getValidationBadge(tc.validation_status)}
+                    </div>
+                    
+                    <div className="test-steps-block" style={{ marginTop: '16px' }}>
+                      <h6>Steps:</h6>
+                      <ol className="steps-list">
+                        {tc.steps.map((step, idx) => {
+                          const stepDetails = tcValResults?.steps?.find((s: any) => s.step_index === idx);
+                          const isInvalid = stepDetails && !stepDetails.valid;
+                          
+                          return (
+                            <li key={idx} className="step-list-item" style={{ 
+                              color: isInvalid ? '#ff4d4d' : 'inherit',
+                              textDecoration: isInvalid ? 'line-through' : 'none'
+                            }}>
+                              <span className="step-action" style={{
+                                backgroundColor: isInvalid ? 'rgba(255, 77, 77, 0.15)' : 'rgba(255, 255, 255, 0.08)',
+                                border: isInvalid ? '1px solid rgba(255, 77, 77, 0.4)' : '1px solid rgba(255, 255, 255, 0.15)'
+                              }}>{step.action.toUpperCase()}</span>
+                              {step.action === 'navigate' && (
+                                <> to <code className="step-code">{step.target}</code></>
+                              )}
+                              {step.action === 'fill' && (
+                                <> field <code className="step-code">{step.selector}</code> with <code className="step-code">"{step.value}"</code></>
+                              )}
+                              {step.action === 'click' && (
+                                <> element <code className="step-code">{step.selector}</code></>
+                              )}
+                              {step.action === 'wait' && (
+                                <> for <code className="step-code">{step.value} ms</code></>
+                              )}
+                              {step.action === 'assert' && (
+                                <> element <code className="step-code">{step.selector || 'body'}</code> contains text <code className="step-code">"{step.value}"</code></>
+                              )}
+                              {step.action === 'hover' && (
+                                <> hover over element <code className="step-code">{step.selector}</code></>
+                              )}
+                              {step.action === 'scroll' && (
+                                <> scroll {step.selector ? <>element <code className="step-code">{step.selector}</code> into view</> : <>page down by <code className="step-code">{step.value}px</code></>}</>
+                              )}
+                              {step.action === 'select' && (
+                                <> select option <code className="step-code">"{step.value}"</code> in element <code className="step-code">{step.selector}</code></>
+                              )}
+                              {step.action === 'screenshot' && (
+                                <> capture page screenshot {step.value && <>labeled <code className="step-code">"{step.value}"</code></>}</>
+                              )}
+                              
+                              {isInvalid && (
+                                <span className="step-error-msg" style={{ marginLeft: '10px', fontSize: '0.85rem', color: '#ff6666' }}>
+                                  ({stepDetails.reason})
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </div>
+
+                    <div className="expected-results-block" style={{ marginTop: '12px' }}>
+                      <strong>Expected Outcome:</strong> {tc.expected_result}
+                    </div>
                   </div>
 
-                  <div className="expected-results-block">
-                    <strong>Expected:</strong> {tc.expected_result}
+                  <div className="test-case-actions" style={{ display: 'flex', flexDirection: 'column', gap: '8px', justifyContent: 'center' }}>
+                    <button 
+                      onClick={() => handleRunTest(tc.id)} 
+                      disabled={executingTestCaseId === tc.id || !!activeTaskId}
+                      className="btn-run-test"
+                      style={{ width: '150px' }}
+                    >
+                      {executingTestCaseId === tc.id ? 'Running...' : '▶ Run Test'}
+                    </button>
+                    
+                    <button 
+                      onClick={() => handleValidateTest(tc.id)} 
+                      disabled={validatingIds[tc.id] || fixingIds[tc.id] || !!activeTaskId}
+                      className="btn-secondary"
+                      style={{ 
+                        width: '150px',
+                        padding: '6px 12px',
+                        fontSize: '0.85rem',
+                        backgroundColor: '#4a5568',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {validatingIds[tc.id] ? 'Verifying...' : '🔍 Validate'}
+                    </button>
+
+                    {tc.validation_status !== 'VERIFIED' && (
+                      <button 
+                        onClick={() => handleAutoFixTest(tc.id)} 
+                        disabled={validatingIds[tc.id] || fixingIds[tc.id] || !!activeTaskId}
+                        className="btn-secondary"
+                        style={{ 
+                          width: '150px',
+                          padding: '6px 12px',
+                          fontSize: '0.85rem',
+                          backgroundColor: '#718096',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {fixingIds[tc.id] ? 'Fixing...' : '🔧 Auto-Fix'}
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                <div className="test-case-actions">
-                  <button 
-                    onClick={() => handleRunTest(tc.id)} 
-                    disabled={executingTestCaseId === tc.id || !!activeTaskId}
-                    className="btn-run-test"
-                  >
-                    {executingTestCaseId === tc.id ? 'Starting...' : '▶ Run Test'}
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

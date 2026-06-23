@@ -30,6 +30,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [loading, setLoading] = useState(true);
   const [discovering, setDiscovering] = useState(false);
   const [activeTab, setActiveTab] = useState<'discovery' | 'tests' | 'bugs' | 'quality'>('discovery');
+  const [showLoginError, setShowLoginError] = useState(false);
   
   // Track active execution
   const [localActiveTestRunId, setLocalActiveTestRunId] = useState<number | null>(null);
@@ -63,6 +64,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   };
 
   useEffect(() => {
+    setShowLoginError(false);
     fetchAppDetails();
   }, [appId]);
 
@@ -300,19 +302,30 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               style={{
                 borderColor: 
                   app.login_status === 'SUCCESS' ? 'rgba(34, 197, 94, 0.4)' : 
-                  app.login_status === 'FAILED' ? 'rgba(239, 68, 68, 0.4)' : 
+                  app.login_status === 'FAILED' ? (showLoginError ? '#ff4d4d' : 'rgba(239, 68, 68, 0.4)') : 
                   'rgba(234, 179, 8, 0.4)',
                 color: 
                   app.login_status === 'SUCCESS' ? '#22c55e' : 
-                  app.login_status === 'FAILED' ? '#ef4444' : 
+                  app.login_status === 'FAILED' ? '#ff4d4d' : 
                   '#eab308',
                 backgroundColor: 
                   app.login_status === 'SUCCESS' ? 'rgba(34, 197, 94, 0.1)' : 
-                  app.login_status === 'FAILED' ? 'rgba(239, 68, 68, 0.1)' : 
-                  'rgba(234, 179, 8, 0.1)'
-              }}>
+                  app.login_status === 'FAILED' ? 'rgba(239, 68, 68, 0.15)' : 
+                  'rgba(234, 179, 8, 0.1)',
+                cursor: app.login_status === 'FAILED' ? 'pointer' : 'default',
+                boxShadow: app.login_status === 'FAILED' && showLoginError ? '0 0 10px rgba(239, 68, 68, 0.3)' : 'none',
+                transition: 'all 0.2s ease',
+                userSelect: 'none'
+              }}
+              onClick={() => {
+                if (app.login_status === 'FAILED') {
+                  setShowLoginError(prev => !prev);
+                }
+              }}
+              title={app.login_status === 'FAILED' ? "Click to view login failure details" : undefined}
+              >
                 {app.login_status === 'SUCCESS' ? '🔑 Authenticated' : 
-                 app.login_status === 'FAILED' ? '⚠️ Login Failed' : 
+                 app.login_status === 'FAILED' ? (showLoginError ? '⚠️ Login Failed ▲' : '⚠️ Login Failed ▼ (Click for details)') : 
                  '🔑 Auth Pending'}
               </span>
             )}
@@ -375,6 +388,121 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         </div>
 
       </div>
+
+      {/* Login Failure Diagnostics Card */}
+      {showLoginError && app.login_status === 'FAILED' && (
+        <>
+          <style>{`
+            @keyframes slideDownFade {
+              from {
+                opacity: 0;
+                transform: translateY(-8px);
+              }
+              to {
+                opacity: 1;
+                transform: translateY(0);
+              }
+            }
+            .diagnostic-card-container {
+              animation: slideDownFade 0.25s ease-out forwards;
+            }
+          `}</style>
+          <div className="glass-card diagnostic-card-container" style={{
+            marginTop: '-12px',
+            padding: '20px',
+            border: '1px solid rgba(239, 68, 68, 0.35)',
+            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(20, 10, 10, 0.7) 100%)',
+            backdropFilter: 'blur(16px)',
+            borderRadius: '12px',
+            boxShadow: '0 8px 32px 0 rgba(239, 68, 68, 0.15)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '1.4rem' }}>🚨</span>
+                <div>
+                  <h4 style={{ margin: 0, color: '#ff6b6b', fontWeight: 600, fontSize: '1.1rem' }}>
+                    Login Failure Diagnostic Details
+                  </h4>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.5)' }}>
+                    Captured during target environment analysis and test runs
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowLoginError(false)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  color: 'rgba(255, 255, 255, 0.7)',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  padding: '4px 8px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                  e.currentTarget.style.color = '#fff';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                  e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
+                }}
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fca5a5', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Error Description
+              </span>
+              <div style={{
+                background: 'rgba(0, 0, 0, 0.4)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                borderRadius: '8px',
+                padding: '16px',
+                fontFamily: 'Consolas, Monaco, monospace',
+                fontSize: '0.85rem',
+                color: '#fca5a5',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.5)',
+                maxHeight: '200px',
+                overflowY: 'auto'
+              }}>
+                {app.login_error || 'No specific error message was captured. Please check if the login page is accessible and the configured credentials are valid.'}
+              </div>
+            </div>
+
+            <div style={{
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              paddingTop: '14px',
+              fontSize: '0.85rem',
+              color: 'rgba(255, 255, 255, 0.85)'
+            }}>
+              <strong style={{ color: '#fff', display: 'block', marginBottom: '8px' }}>💡 Recommended Troubleshooting Steps:</strong>
+              <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <li>
+                  Check if the target login URL is active and matches: <a href={app.login_url} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}><code>{app.login_url}</code></a>
+                </li>
+                <li>
+                  Ensure the configured <strong>email/username</strong> and <strong>password</strong> fields are correct and have access rights.
+                </li>
+                <li>
+                  Verify that your login form uses standard email/username and password input elements so that Playwright can automatically locate and fill them.
+                </li>
+                <li>
+                  Ensure that your target site is not blocked by CAPTCHA, Cloudflare, or Multi-Factor Authentication (MFA) during automated login attempts.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Internal Task Progress Tracker */}
       {currentTask && (

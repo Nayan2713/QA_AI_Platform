@@ -324,6 +324,40 @@ class QualityDashboardView(viewsets.ViewSet):
             bug_validations = BugValidation.objects.filter(application=app)
             test_validations = TestValidation.objects.filter(application=app)
             
+            # API catalog & health calculations
+            from core.models import APIEndpoint, TestRun
+            from tasks.discovery import get_url_pattern
+            api_endpoints = APIEndpoint.objects.filter(application=app)
+            
+            # Extract latency from latest successful run metadata
+            latest_run = TestRun.objects.filter(
+                test_case__app=app,
+                status='COMPLETED'
+            ).order_by('-created_at').first()
+            
+            avg_latencies = {}
+            if latest_run and isinstance(latest_run.metadata, dict):
+                api_calls = latest_run.metadata.get('api_calls', [])
+                pattern_latencies = {}
+                for call in api_calls:
+                    pattern = get_url_pattern(call.get('url', ''), app.url)
+                    pattern_latencies.setdefault(pattern, []).append(call.get('latency', 0))
+                for pat, lats in pattern_latencies.items():
+                    avg_latencies[pat] = sum(lats) / len(lats) if lats else 0
+            
+            api_list = []
+            for api in api_endpoints:
+                bug_count = api.bugs.count()
+                pat = api.url_pattern
+                api_list.append({
+                    'id': api.id,
+                    'method': api.method,
+                    'url_pattern': pat,
+                    'bug_count': bug_count,
+                    'avg_latency': int(avg_latencies.get(pat, 0)),
+                    'auth_type': api.auth_type
+                })
+            
             dashboard_data = {
                 'application_id': app_id,
                 'application_name': app.url,
@@ -357,6 +391,10 @@ class QualityDashboardView(viewsets.ViewSet):
                 'test_health': {
                     'relevant_tests': test_validations.filter(status='HIGHLY_RELEVANT').count(),
                     'avg_relevance': test_validations.aggregate(Avg('relevance_score'))['relevance_score__avg'] or 0,
+                },
+                'api_health': {
+                    'total_apis': api_endpoints.count(),
+                    'endpoints': api_list,
                 }
             }
             

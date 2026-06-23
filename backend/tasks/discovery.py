@@ -6,9 +6,88 @@ import logging
 import requests
 import threading
 
-from core.models import CeleryTask, Application, Page
+import re
+from urllib.parse import urlparse
+from core.models import CeleryTask, Application, Page, APIEndpoint
 from services.mcp_detector import route_discovery
 from services.browser_discovery import BrowserDiscoveryService
+
+def get_url_pattern(url, base_url):
+    parsed = urlparse(url)
+    path = parsed.path
+    
+    segments = path.split('/')
+    new_segments = []
+    
+    for segment in segments:
+        if not segment:
+            new_segments.append('')
+            continue
+            
+        if segment.isdigit():
+            new_segments.append(':id')
+        elif re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', segment):
+            new_segments.append(':id')
+        elif len(segment) >= 8 and re.match(r'^[0-9a-fA-F]+$', segment):
+            new_segments.append(':id')
+        else:
+            new_segments.append(segment)
+            
+    pattern = '/'.join(new_segments)
+    return pattern if pattern else '/'
+
+
+def save_api_endpoints(app, api_logs):
+    if not api_logs:
+        return
+        
+    for log in api_logs:
+        url = log.get('url')
+        method = log.get('method', 'GET').upper()
+        status = log.get('status', 200)
+        body = log.get('body', '')
+        auth_type = log.get('auth_type')
+        
+        parsed_url = urlparse(url)
+        parsed_base = urlparse(app.url)
+        if parsed_url.netloc.lower() != parsed_base.netloc.lower():
+            continue
+            
+        url_pattern = get_url_pattern(url, app.url)
+        
+        response_schema = {}
+        if body:
+            try:
+                import json
+                data = json.loads(body)
+                if isinstance(data, dict):
+                    response_schema = {k: type(v).__name__ for k, v in data.items()}
+                elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+                    response_schema = {k: type(v).__name__ for k, v in data[0].items()}
+            except Exception:
+                pass
+                
+        request_body = log.get('request_body', '')
+        request_schema = {}
+        if request_body:
+            try:
+                import json
+                data = json.loads(request_body)
+                if isinstance(data, dict):
+                    request_schema = {k: type(v).__name__ for k, v in data.items()}
+            except Exception:
+                pass
+                
+        APIEndpoint.objects.update_or_create(
+            application=app,
+            method=method,
+            url_pattern=url_pattern,
+            defaults={
+                'request_schema': request_schema,
+                'response_schema': response_schema,
+                'auth_type': auth_type or 'none'
+            }
+        )
 
 logger = logging.getLogger(__name__)
 
@@ -129,10 +208,18 @@ def start_discovery(self, app_id):
         task_record.save()
     run_in_thread(set_progress_40)
 
+    storage_state_data = None
+    captured_storage_state = None
+    api_logs_data = []
+
     if route == 'browser':
         logger.info("Executing Playwright browser discovery path...")
         try:
             crawler = BrowserDiscoveryService(max_pages=8)
+            
+            def get_app_storage():
+                return app.storage_state
+            storage_state_data = run_in_thread(get_app_storage)
             
             def on_crawler_progress(current_url, pages_count):
                 def update_progress():
@@ -149,15 +236,22 @@ def start_discovery(self, app_id):
                 login_url=app.login_url,
                 username=app.username,
                 password=app.password,
+                storage_state=storage_state_data,
                 on_progress=on_crawler_progress
             )
             pages_data = result.get("pages", [])
             login_successful = result.get("login_successful")
+            captured_storage_state = result.get("storage_state")
+            api_logs_data = result.get("api_logs", [])
             
+            login_error_val = result.get("login_error")
             def set_browser_source():
                 app.discovery_source = 'browser'
                 if app.login_url:
                     app.login_status = 'SUCCESS' if login_successful else 'FAILED'
+                    app.login_error = login_error_val if not login_successful else None
+                if captured_storage_state:
+                    app.storage_state = captured_storage_state
                 app.save()
             run_in_thread(set_browser_source)
             logger.info(f"Successfully crawled {len(pages_data)} pages using Playwright.")
@@ -167,6 +261,7 @@ def start_discovery(self, app_id):
                 app.status = 'FAILED'
                 if app.login_url:
                     app.login_status = 'FAILED'
+                    app.login_error = f"Discovery run exception: {str(e)}"
                 app.save()
                 task_record.status = 'failed'
                 task_record.error = str(e)
@@ -180,7 +275,7 @@ def start_discovery(self, app_id):
         task_record.save()
     run_in_thread(set_progress_75)
 
-    # Save pages inside a database transaction
+    # Save pages and API endpoints inside a database transaction
     try:
         def save_discovered_pages():
             with transaction.atomic():
@@ -197,6 +292,10 @@ def start_discovery(self, app_id):
                         buttons=page_info.get("buttons", [])
                     )
                 
+                # Catalog captured APIs
+                if api_logs_data:
+                    save_api_endpoints(app, api_logs_data)
+                
                 app.status = 'DISCOVERED'
                 if app.login_url:
                     if app.discovery_source == 'browser':
@@ -211,7 +310,8 @@ def start_discovery(self, app_id):
                 task_record.progress = 100
                 task_record.result = {
                     "pages_discovered": len(pages_data),
-                    "source": app.discovery_source
+                    "source": app.discovery_source,
+                    "apis_cataloged": len(api_logs_data)
                 }
                 task_record.completed_at = timezone.now()
                 task_record.save()

@@ -22,6 +22,7 @@ function App() {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
   // Check auth on startup
@@ -82,30 +83,26 @@ function App() {
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!authUsername || !authPassword || (!isLogin && !authEmail)) {
-      setAuthError('Please fill in all required fields.');
-      return;
+    if (isLogin) {
+      if (!authEmail || !authPassword) {
+        setAuthError('Please fill in all required fields.');
+        return;
+      }
+    } else {
+      if (!authUsername || !authEmail || !authPassword) {
+        setAuthError('Please fill in all required fields.');
+        return;
+      }
     }
 
     setAuthError('');
+    setAuthSuccess('');
     setAuthLoading(true);
 
     try {
       if (isLogin) {
-        // Log in
-        const response = await api.post<{ access: string; refresh: string }>('auth/login/', {
-          username: authUsername,
-          password: authPassword
-        });
-        localStorage.setItem('access_token', response.data.access);
-        localStorage.setItem('refresh_token', response.data.refresh);
-        localStorage.setItem('username', authUsername);
-        setToken(response.data.access);
-        setUsername(authUsername);
-      } else {
-        // Register
-        const response = await api.post<{ access: string; refresh: string; user: User }>('auth/register/', {
-          username: authUsername,
+        // Log in with email
+        const response = await api.post<{ access: string; refresh: string; user: User }>('auth/login/', {
           email: authEmail,
           password: authPassword
         });
@@ -114,18 +111,33 @@ function App() {
         localStorage.setItem('username', response.data.user.username);
         setToken(response.data.access);
         setUsername(response.data.user.username);
+        
+        // Reset login form fields
+        setAuthEmail('');
+        setAuthPassword('');
+      } else {
+        // Register
+        await api.post<{ access: string; refresh: string; user: User }>('auth/register/', {
+          username: authUsername,
+          email: authEmail,
+          password: authPassword
+        });
+        
+        // Success notification & switch to Login form
+        setAuthSuccess('Successfully registered! Please log in.');
+        setIsLogin(true);
+        
+        // Keep the email filled in for ease of login, clear username and password
+        setAuthUsername('');
+        setAuthPassword('');
       }
-      
-      // Reset forms
-      setAuthUsername('');
-      setAuthEmail('');
-      setAuthPassword('');
     } catch (err: any) {
       console.error(err);
       setAuthError(
         err.response?.data?.detail || 
         err.response?.data?.username?.[0] || 
         err.response?.data?.password?.[0] || 
+        err.response?.data?.email?.[0] || 
         'Authentication failed.'
       );
     } finally {
@@ -147,34 +159,35 @@ function App() {
 
           <form onSubmit={handleAuthSubmit} className="auth-form">
             {authError && <div className="error-alert">{authError}</div>}
-
-            <div className="form-group">
-              <label htmlFor="auth-username">Username *</label>
-              <input
-                id="auth-username"
-                type="text"
-                value={authUsername}
-                onChange={(e) => setAuthUsername(e.target.value)}
-                required
-                className="form-input"
-                placeholder="qa_engineer"
-              />
-            </div>
+            {authSuccess && <div className="success-alert">{authSuccess}</div>}
 
             {!isLogin && (
               <div className="form-group">
-                <label htmlFor="auth-email">Email Address *</label>
+                <label htmlFor="auth-username">Username *</label>
                 <input
-                  id="auth-email"
-                  type="email"
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
+                  id="auth-username"
+                  type="text"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
                   required={!isLogin}
                   className="form-input"
-                  placeholder="name@company.com"
+                  placeholder="qa_engineer"
                 />
               </div>
             )}
+
+            <div className="form-group">
+              <label htmlFor="auth-email">Email Address *</label>
+              <input
+                id="auth-email"
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                required
+                className="form-input"
+                placeholder="name@company.com"
+              />
+            </div>
 
             <div className="form-group">
               <label htmlFor="auth-password">Password *</label>
@@ -195,7 +208,7 @@ function App() {
           </form>
 
           <div className="auth-footer">
-            <button className="btn-link" onClick={() => { setIsLogin(!isLogin); setAuthError(''); }}>
+            <button className="btn-link" onClick={() => { setIsLogin(!isLogin); setAuthError(''); setAuthSuccess(''); }}>
               {isLogin ? "Don't have an account? Sign Up" : 'Already have an account? Log In'}
             </button>
           </div>

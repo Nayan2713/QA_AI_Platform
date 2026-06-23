@@ -11,6 +11,7 @@ from .views import (
     TestRunViewSet,
     BugViewSet,
     CeleryTaskViewSet,
+    APIEndpointViewSet,
 )
 
 router = DefaultRouter()
@@ -20,6 +21,7 @@ router.register(r'test-cases', TestCaseViewSet, basename='testcase')
 router.register(r'test-runs', TestRunViewSet, basename='testrun')
 router.register(r'bugs', BugViewSet, basename='bug')
 router.register(r'tasks', CeleryTaskViewSet, basename='task')
+router.register(r'api-endpoints', APIEndpointViewSet, basename='apiendpoint')
 
 urlpatterns = [
     # Auth endpoints

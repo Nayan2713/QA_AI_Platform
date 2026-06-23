@@ -24,6 +24,8 @@ class Application(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='IDLE')
     discovery_source = models.CharField(max_length=20, blank=True, null=True) # 'mcp' or 'browser'
     login_status = models.CharField(max_length=20, choices=LOGIN_STATUS_CHOICES, default='NOT_ATTEMPTED')
+    storage_state = models.TextField(blank=True, null=True)
+    login_error = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -48,6 +50,15 @@ class TestCase(models.Model):
     steps = models.JSONField(default=list)  # [{"action": "...", "selector": "...", "value": "..."}]
     expected_result = models.TextField()
     ai_generated = models.BooleanField(default=True)
+    validation_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('DRAFT', 'Draft'),
+            ('VERIFIED', 'Verified'),
+            ('BROKEN', 'Broken')
+        ],
+        default='DRAFT'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -87,6 +98,24 @@ class TestResult(models.Model):
         return f"Result Step {self.step_number} in Run {self.test_run.id} ({self.status})"
 
 
+class APIEndpoint(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='api_endpoints')
+    method = models.CharField(max_length=10)
+    url_pattern = models.CharField(max_length=1000)
+    request_schema = models.JSONField(default=dict, blank=True)
+    response_schema = models.JSONField(default=dict, blank=True)
+    auth_type = models.CharField(max_length=100, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('application', 'method', 'url_pattern')
+        ordering = ['url_pattern']
+
+    def __str__(self):
+        return f"[{self.method}] {self.url_pattern}"
+
+
 class Bug(models.Model):
     SEVERITY_CHOICES = [
         ('critical', 'Critical'),
@@ -98,6 +127,7 @@ class Bug(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField()
     severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='medium')
+    api_endpoint = models.ForeignKey(APIEndpoint, on_delete=models.SET_NULL, blank=True, null=True, related_name='bugs')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

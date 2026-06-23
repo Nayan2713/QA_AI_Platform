@@ -61,9 +61,9 @@ class LLMService:
 
     def get_prompt(self, pages_context):
         return f"""You are an expert QA Automation Engineer.
-Your task is to analyze a website structure and generate functional, executable test cases.
+Your task is to analyze a website structure and its background API endpoints to generate functional, executable test cases.
 
-Here is the JSON representing discovered pages, forms, and buttons of the web application:
+Here is the JSON representing discovered pages, forms, buttons, and API endpoints triggered by actions on the web application:
 {pages_context}
 
 Supported actions for each test step:
@@ -71,13 +71,14 @@ Supported actions for each test step:
 2. "fill": Populate form input fields. Parameter keys: "selector" (CSS selector of input), "value" (text to type). "target" should be empty.
 3. "click": Click interactive elements. Parameter keys: "selector" (CSS selector of button/element). "target" and "value" should be empty.
 4. "wait": Pause execution. Parameter keys: "value" (millisecond duration string like "1000"). "selector" and "target" should be empty.
-5. "assert": Verify content/element existence. Parameter keys: "selector" (selector of text container or container element, optional), "value" (text expected to be present). "target" should be empty.
+5. "assert": Verify content/element existence or check response outcomes. Parameter keys: "selector" (selector of text container or container element, optional), "value" (text expected to be present, which can be an expected field value from the API endpoint response schema). "target" should be empty.
 6. "hover": Hover mouse over element. Parameter keys: "selector" (CSS selector of element). "target" and "value" should be empty.
 7. "scroll": Scroll the page or scroll element into view. Parameter keys: "selector" (selector of element to scroll into view, optional) or "value" (vertical pixel count to scroll down, e.g. "500"). "target" should be empty.
 8. "select": Select option in dropdown. Parameter keys: "selector" (CSS selector of select element), "value" (value or label to select). "target" should be empty.
 9. "screenshot": Manually capture screenshot checkpoint. Parameter keys: "value" (screenshot label, optional). "selector" and "target" should be empty.
 
 CRITICAL INSTRUCTIONS FOR SELECTORS & DATA VALIDATION:
+- Leverage the provided API endpoints request/response schemas to design test cases. For instance, when a form triggers an API endpoint, make assertions checking that the text results match the fields returned in the api_endpoints response schema.
 - You MUST only use the exact page URLs, form input field selectors/names/IDs, and button selectors that are listed in the JSON context above. Do not invent or hallucinate any selectors or URLs.
 - If a form field has an ID (e.g. "email"), use its ID selector (e.g., "#email"). If it only has a name, use its name attribute selector (e.g., "[name='email']").
 - When generating "fill" actions, the "value" you provide MUST be contextually valid for the field type:

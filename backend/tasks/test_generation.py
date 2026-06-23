@@ -68,8 +68,22 @@ def generate_tests(self, app_id):
                 "buttons": page.buttons
             })
             
+        # Fetch API endpoints cataloged for the application
+        from core.models import APIEndpoint
+        api_endpoints = APIEndpoint.objects.filter(application=app)
+        api_list = []
+        for api in api_endpoints:
+            api_list.append({
+                "method": api.method,
+                "url_pattern": api.url_pattern,
+                "request_schema": api.request_schema,
+                "response_schema": api.response_schema,
+                "auth_type": api.auth_type
+            })
+            
         pages_data = {
-            "pages": pages_list
+            "pages": pages_list,
+            "api_endpoints": api_list
         }
 
         # Generate test cases using LLM Service
