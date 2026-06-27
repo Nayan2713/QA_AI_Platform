@@ -78,6 +78,10 @@ Supported actions for each test step:
 9. "screenshot": Manually capture screenshot checkpoint. Parameter keys: "value" (screenshot label, optional). "selector" and "target" should be empty.
 
 CRITICAL INSTRUCTIONS FOR SELECTORS & DATA VALIDATION:
+- You MUST generate at least one dedicated test case for EACH and EVERY API endpoint listed under "api_endpoints". Each of these test cases should:
+  1. Navigate to the page that triggers this endpoint.
+  2. Perform the interaction (form submission or button click) using the correct inputs/selectors.
+  3. Include an "assert" step checking that the resulting UI matches the expected API "response_schema" fields.
 - Leverage the provided API endpoints request/response schemas to design test cases. For instance, when a form triggers an API endpoint, make assertions checking that the text results match the fields returned in the api_endpoints response schema.
 - You MUST only use the exact page URLs, form input field selectors/names/IDs, and button selectors that are listed in the JSON context above. Do not invent or hallucinate any selectors or URLs.
 - If a form field has an ID (e.g. "email"), use its ID selector (e.g., "#email"). If it only has a name, use its name attribute selector (e.g., "[name='email']").
@@ -87,7 +91,7 @@ CRITICAL INSTRUCTIONS FOR SELECTORS & DATA VALIDATION:
   - If the field is a password input, use a valid password like "Secr3tP@ss123".
   - Do NOT fill email fields with personal names, or phone fields with generic text.
 
-Generate a JSON array containing 5 to 8 comprehensive test cases. Each test case MUST follow this schema exactly:
+Generate a JSON array of comprehensive test cases covering these requirements. Each test case MUST follow this schema exactly:
 {{
   "title": "Descriptive test case title",
   "steps": [
@@ -156,7 +160,10 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
         Analyzes the pages structure and creates:
         1. Site accessibility tests
         2. Form submission tests (for each page's forms)
-        3. Button interactive checks
+        3. Standalone inputs tests (inputs outside forms)
+        4. Interactive button checks (separate click flows)
+        5. Negative/validation form rejects tests
+        6. Subpage navigation flows
         """
         test_cases = []
         pages = pages_data.get("pages", [])
@@ -176,27 +183,26 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
             "expected_result": f"Homepage loads successfully with page title matches '{first_page['title']}'."
         })
 
-        # Form submissions fallback tests
+        # Test Case 2: Positive Form submissions fallback tests
         for page_idx, page in enumerate(pages):
             forms = page.get("forms", [])
             for form_idx, form in enumerate(forms):
                 form_id = form.get("id", f"form-{form_idx}")
-                steps = [{"action": "navigate", "selector": "", "target": page["url"], "value": ""}]
+                if form_id == "standalone_fields":
+                    continue
                 
-                # Fill in inputs
+                steps = [{"action": "navigate", "selector": "", "target": page["url"], "value": ""}]
                 fields = form.get("fields", [])
                 for field in fields:
                     name = field.get("name")
                     inp_type = field.get("type", "text")
                     inp_id = field.get("id")
                     
-                    # Compute selector
                     if inp_id:
                         selector = f"#{inp_id}"
                     else:
                         selector = f"input[name='{name}']"
                         
-                    # Compute dummy values case-insensitively checking name, id, and type
                     name_lower = (name or "").lower()
                     id_lower = (inp_id or "").lower()
                     
@@ -222,11 +228,8 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                         "value": val
                     })
                 
-                # Add click submit step
-                # Look for a button or submit element
                 submit_selector = f"form[id='{form_id}'] button[type='submit']"
                 if page.get("buttons"):
-                    # Check if there is a button selector on this page matching submit
                     for btn in page["buttons"]:
                         if "submit" in btn["selector"] or "login" in btn["text"].lower() or "submit" in btn["text"].lower():
                             submit_selector = btn["selector"]
@@ -234,7 +237,7 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                             
                 steps.append({"action": "click", "selector": submit_selector, "target": "", "value": ""})
                 steps.append({"action": "wait", "selector": "", "target": "", "value": "2000"})
-                steps.append({"action": "assert", "selector": "body", "target": "", "value": ""}) # Assert page runs without crashing
+                steps.append({"action": "assert", "selector": "body", "target": "", "value": ""})
                 
                 test_cases.append({
                     "title": f"Execute Form Submission: {form_id} on Page {page['title'] or 'View'}",
@@ -242,7 +245,115 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                     "expected_result": f"Form '{form_id}' is successfully filled and submitted without errors."
                 })
 
-        # Test Case 3: Verify Subpage Navigation flow
+        # Test Case 3: Negative Form validation constraints tests (if email fields exist)
+        for page_idx, page in enumerate(pages):
+            forms = page.get("forms", [])
+            for form_idx, form in enumerate(forms):
+                form_id = form.get("id", "")
+                if not form_id or form_id == "standalone_fields":
+                    continue
+                
+                steps = [{"action": "navigate", "selector": "", "target": page["url"], "value": ""}]
+                fields = form.get("fields", [])
+                has_email = False
+                for field in fields:
+                    name = field.get("name")
+                    inp_type = field.get("type", "text")
+                    inp_id = field.get("id")
+                    selector = f"#{inp_id}" if inp_id else f"input[name='{name}']"
+                    
+                    name_lower = (name or "").lower()
+                    id_lower = (inp_id or "").lower()
+                    
+                    if "email" in name_lower or "email" in id_lower or inp_type == "email":
+                        val = "invalid-email-format"
+                        has_email = True
+                    else:
+                        val = "Test"
+                        
+                    steps.append({"action": "fill", "selector": selector, "target": "", "value": val})
+                
+                if not has_email:
+                    continue
+                    
+                submit_selector = f"form[id='{form_id}'] button[type='submit']"
+                if page.get("buttons"):
+                    for btn in page["buttons"]:
+                        if "submit" in btn["selector"] or "login" in btn["text"].lower() or "submit" in btn["text"].lower():
+                            submit_selector = btn["selector"]
+                            break
+                            
+                steps.append({"action": "click", "selector": submit_selector, "target": "", "value": ""})
+                steps.append({"action": "wait", "selector": "", "target": "", "value": "1000"})
+                steps.append({"action": "assert", "selector": "body", "target": "", "value": ""})
+                
+                test_cases.append({
+                    "title": f"Verify Form Validation Constraints: {form_id} on Page {page['title'] or 'View'}",
+                    "steps": steps,
+                    "expected_result": f"Form '{form_id}' rejects invalid input formats and shows validation feedback."
+                })
+
+        # Test Case 4: Standalone non-form fields tests
+        for page_idx, page in enumerate(pages):
+            forms = page.get("forms", [])
+            standalone_form = next((f for f in forms if f.get("id") == "standalone_fields"), None)
+            if standalone_form:
+                fields = standalone_form.get("fields", [])
+                steps = [{"action": "navigate", "selector": "", "target": page["url"], "value": ""}]
+                for field in fields:
+                    name = field.get("name")
+                    inp_type = field.get("type", "text")
+                    inp_id = field.get("id")
+                    selector = f"#{inp_id}" if inp_id else f"input[name='{name}']"
+                    
+                    name_lower = (name or "").lower()
+                    id_lower = (inp_id or "").lower()
+                    if "email" in name_lower or "email" in id_lower or inp_type == "email":
+                        val = "testuser@example.com"
+                    elif "password" in name_lower or "password" in id_lower or "pass" in name_lower or "pass" in id_lower or inp_type == "password":
+                        val = "Secr3tP@ss123"
+                    else:
+                        val = "Automated Standalone Input"
+                        
+                    steps.append({"action": "fill", "selector": selector, "target": "", "value": val})
+                
+                click_selector = ""
+                if page.get("buttons"):
+                    # Find a button to click that is not a form submit
+                    click_selector = page["buttons"][0]["selector"]
+                    
+                if click_selector:
+                    steps.append({"action": "click", "selector": click_selector, "target": "", "value": ""})
+                steps.append({"action": "wait", "selector": "", "target": "", "value": "1500"})
+                steps.append({"action": "assert", "selector": "body", "target": "", "value": ""})
+                
+                test_cases.append({
+                    "title": f"Verify Standalone Input Fields on Page: {page['title'] or 'View'}",
+                    "steps": steps,
+                    "expected_result": f"Standalone fields are successfully populated and interactive events triggered."
+                })
+
+        # Test Case 5: Button Action Validations (Click Verification)
+        for page in pages:
+            buttons = page.get("buttons", [])
+            for idx, btn in enumerate(buttons[:3]):
+                text = btn.get("text", "")
+                selector = btn.get("selector", "")
+                if not selector or "submit" in text.lower() or "login" in text.lower():
+                    continue
+                
+                test_cases.append({
+                    "title": f"Verify Interactive Button Action: Click '{text[:25]}' on {page['title'] or 'Page'}",
+                    "steps": [
+                        {"action": "navigate", "selector": "", "target": page["url"], "value": ""},
+                        {"action": "click", "selector": selector, "target": "", "value": ""},
+                        {"action": "wait", "selector": "", "target": "", "value": "1000"},
+                        {"action": "assert", "selector": "body", "target": "", "value": ""}
+                    ],
+                    "expected_result": f"Button '{text}' is clickable and page resolves without console errors."
+                })
+
+        # Test Case 6: Verify Subpage Navigation flow
         if len(pages) > 1:
             steps = []
             expected_title = pages[1].get("title", "Subpage")
@@ -257,4 +368,131 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                 "expected_result": f"Browser can successfully navigate from Homepage to subpage {pages[1]['url']}."
             })
             
+        # Test Case 7: API Endpoint Verification (ensure each API has a test case)
+        api_endpoints = pages_data.get("api_endpoints", [])
+        from urllib.parse import urlparse
+        
+        for api in api_endpoints:
+            method = api.get("method", "GET").upper()
+            url_pattern = api.get("url_pattern", "")
+            if not url_pattern:
+                continue
+                
+            # Try to find a form that triggers this API
+            matching_page = None
+            matching_form = None
+            
+            try:
+                from tasks.discovery import get_url_pattern
+            except Exception:
+                get_url_pattern = None
+                
+            for page in pages:
+                forms = page.get("forms", [])
+                for form in forms:
+                    action = form.get("action", "") or ""
+                    if action and get_url_pattern:
+                        try:
+                            action_pattern = get_url_pattern(action, first_page["url"])
+                            if action_pattern and (action_pattern in url_pattern or url_pattern in action_pattern):
+                                matching_page = page
+                                matching_form = form
+                                break
+                        except Exception:
+                            pass
+                if matching_page:
+                    break
+                    
+            if matching_page and matching_form:
+                # Generate form submission test case for this specific API
+                form_id = matching_form.get("id", "form")
+                steps = [{"action": "navigate", "selector": "", "target": matching_page["url"], "value": ""}]
+                
+                # Fill fields
+                fields = matching_form.get("fields", [])
+                for field in fields:
+                    name = field.get("name")
+                    inp_type = field.get("type", "text")
+                    inp_id = field.get("id")
+                    selector = f"#{inp_id}" if inp_id else f"input[name='{name}']"
+                    
+                    # Determine a valid value
+                    name_lower = (name or "").lower()
+                    id_lower = (inp_id or "").lower()
+                    if "email" in name_lower or "email" in id_lower or inp_type == "email":
+                        val = "testuser@example.com"
+                    elif "password" in name_lower or "password" in id_lower or inp_type == "password":
+                        val = "Secr3tP@ss123"
+                    elif "phone" in name_lower or "phone" in id_lower or inp_type == "tel":
+                        val = "1234567890"
+                    else:
+                        val = "API Test Input"
+                        
+                    steps.append({"action": "fill", "selector": selector, "target": "", "value": val})
+                    
+                # Find submit button
+                submit_selector = f"form[id='{form_id}'] button[type='submit']"
+                if matching_page.get("buttons"):
+                    for btn in matching_page["buttons"]:
+                        if "submit" in btn["selector"] or "submit" in btn["text"].lower() or "login" in btn["text"].lower():
+                            submit_selector = btn["selector"]
+                            break
+                            
+                steps.append({"action": "click", "selector": submit_selector, "target": "", "value": ""})
+                steps.append({"action": "wait", "selector": "", "target": "", "value": "2000"})
+                
+                # Check expected schema keys for assertion
+                assert_val = ""
+                response_schema = api.get("response_schema", {})
+                if response_schema:
+                    assert_val = list(response_schema.keys())[0] if isinstance(response_schema, dict) else ""
+                    
+                steps.append({"action": "assert", "selector": "body", "target": "", "value": assert_val})
+                
+                test_cases.append({
+                    "title": f"Verify API Endpoint [{method}] {url_pattern} via Form Submit",
+                    "steps": steps,
+                    "expected_result": f"Submitting the form triggers [{method}] {url_pattern} API and returns a successful response."
+                })
+            else:
+                # If no matching form, and it's a GET, try to find the page where it triggers
+                best_page = None
+                for page in pages:
+                    page_path = urlparse(page["url"]).path.strip('/')
+                    api_path = url_pattern.strip('/')
+                    if page_path and api_path and (page_path in api_path or api_path in page_path):
+                        best_page = page
+                        break
+                if not best_page:
+                    best_page = first_page
+                    
+                steps = [{"action": "navigate", "selector": "", "target": best_page["url"], "value": ""}]
+                
+                # Check if there is a button on this page that might trigger the API (e.g. Search, Load, Refresh)
+                trigger_btn = None
+                if best_page.get("buttons"):
+                    for btn in best_page["buttons"]:
+                        btn_text = btn.get("text", "").lower()
+                        if any(kw in btn_text for kw in ["load", "refresh", "search", "get", "fetch", "show"]):
+                            trigger_btn = btn
+                            break
+                if trigger_btn:
+                    steps.append({"action": "click", "selector": trigger_btn["selector"], "target": "", "value": ""})
+                    steps.append({"action": "wait", "selector": "", "target": "", "value": "1500"})
+                    
+                # Check expected schema keys for assertion
+                assert_val = ""
+                response_schema = api.get("response_schema", {})
+                if response_schema:
+                    assert_val = list(response_schema.keys())[0] if isinstance(response_schema, dict) else ""
+                    
+                steps.append({"action": "assert", "selector": "body", "target": "", "value": assert_val})
+                
+                test_cases.append({
+                    "title": f"Verify API Endpoint [{method}] {url_pattern} Page Interaction",
+                    "steps": steps,
+                    "expected_result": f"Visiting the page/triggering interaction invokes the [{method}] {url_pattern} API successfully."
+                })
+                
         return test_cases
+

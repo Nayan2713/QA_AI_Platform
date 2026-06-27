@@ -179,7 +179,7 @@ def execute_test(self, test_run_id):
                     if storage_state:
                         try:
                             logger.info("Verifying if existing session is valid for execution...")
-                            page.goto(app.url, wait_until="load", timeout=10000)
+                            page.goto(app.url, wait_until="domcontentloaded", timeout=15000)
                             page.wait_for_timeout(1000)
                             
                             if page.url.split('?')[0].rstrip('/') != app.login_url.split('?')[0].rstrip('/'):
@@ -201,11 +201,14 @@ def execute_test(self, test_run_id):
                     if not already_logged_in:
                         logger.info(f"Executing pre-run login for app {app.url} at {app.login_url}")
                         try:
-                            page.goto(app.login_url, wait_until="load", timeout=15000)
                             try:
-                                page.wait_for_load_state("networkidle", timeout=3000)
-                            except Exception:
-                                pass
+                                page.goto(app.login_url, wait_until="domcontentloaded", timeout=20000)
+                                try:
+                                    page.wait_for_load_state("networkidle", timeout=3000)
+                                except Exception:
+                                    pass
+                            except Exception as goto_err:
+                                logger.warning(f"Navigation to login page had an issue/timeout: {goto_err}. Trying to proceed anyway...")
                             
                             # Username fields
                             username_selectors = [
@@ -332,12 +335,15 @@ def execute_test(self, test_run_id):
                             if action == "navigate":
                                 if not target:
                                     raise ValueError("Navigation action requires a target URL")
-                                page.goto(target, wait_until="load")
-                                # Wait for network to stabilize
                                 try:
-                                    page.wait_for_load_state("networkidle", timeout=3000)
-                                except Exception:
-                                    pass  # Networkidle timeout is non-fatal for navigation
+                                    page.goto(target, wait_until="domcontentloaded")
+                                    # Wait for network to stabilize
+                                    try:
+                                        page.wait_for_load_state("networkidle", timeout=3000)
+                                    except Exception:
+                                        pass  # Networkidle timeout is non-fatal for navigation
+                                except Exception as e:
+                                    raise Exception(f"Navigation to {target} failed: {e}")
                                 
                             elif action == "fill":
                                 if not selector:
@@ -461,9 +467,9 @@ def execute_test(self, test_run_id):
                 # Inspect background API logs for response quality warnings/errors
                 try:
                     from services.quality_analyzer import ResponseQualityAnalyzer
-                    quality_issues = ResponseQualityAnalyzer.analyze_response_quality(api_logs, prev_calls, expected_result=test_case.expected_result, base_url=test_case.app.url)
+                    quality_issues = ResponseQualityAnalyzer.analyze_response_quality(api_logs, prev_calls, expected_result=test_case.expected_result, base_url=test_case.app.url, app=test_case.app)
                     # Filter out latency warnings from being fatal errors (they are performance warnings)
-                    fatal_quality_issues = [q for q in quality_issues if q['type'] in ['content_error', 'schema_regression', 'semantic_error']]
+                    fatal_quality_issues = [q for q in quality_issues if q['type'] in ['content_error', 'schema_regression', 'semantic_error', 'schema_conformance']]
                     
                     if fatal_quality_issues:
                         run_failed = True

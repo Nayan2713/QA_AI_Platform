@@ -212,7 +212,85 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
         return None
 
     @classmethod
-    def analyze_response_quality(cls, current_calls, previous_calls, expected_result=None, base_url=None):
+    def check_schema_conformance(cls, call, app):
+        """
+        Validates if the API response body conforms to the discovered APIEndpoint schema.
+        """
+        if not app or not call:
+            return None
+            
+        url = call.get('url')
+        method = call.get('method', 'GET').upper()
+        body = call.get('body', '')
+        
+        if not body:
+            return None
+            
+        try:
+            from tasks.discovery import get_url_pattern
+            url_pattern = get_url_pattern(url, app.url)
+        except Exception as err:
+            logger.debug(f"Failed to generate url pattern for conformance check: {err}")
+            return None
+            
+        from core.models import APIEndpoint
+        endpoint = APIEndpoint.objects.filter(
+            application=app,
+            method=method,
+            url_pattern=url_pattern
+        ).first()
+        
+        if not endpoint or not endpoint.response_schema:
+            return None
+            
+        try:
+            actual_data = json.loads(body)
+            expected_schema = endpoint.response_schema
+            
+            # If the response is a list, check the first element
+            actual_obj = actual_data
+            if isinstance(actual_data, list):
+                if not actual_data:
+                    return None  # Empty list is valid, cannot assert keys
+                actual_obj = actual_data[0]
+                
+            if not isinstance(actual_obj, dict):
+                return f"API schema mismatch: Expected response to be a JSON object or array of objects, but got {type(actual_data).__name__}."
+                
+            missing_fields = []
+            type_mismatches = []
+            
+            for expected_key, expected_type_name in expected_schema.items():
+                if expected_key not in actual_obj:
+                    missing_fields.append(expected_key)
+                else:
+                    actual_val = actual_obj[expected_key]
+                    if actual_val is not None:
+                        actual_type_name = type(actual_val).__name__
+                        # Normalize type names (e.g. float and int compatibility)
+                        if expected_type_name == 'float' and actual_type_name in ['int', 'float']:
+                            continue
+                        if expected_type_name == 'str' and actual_type_name == 'str':
+                            continue
+                        if expected_type_name != actual_type_name:
+                            type_mismatches.append(f"'{expected_key}' (expected {expected_type_name}, got {actual_type_name})")
+                            
+            if missing_fields or type_mismatches:
+                reasons = []
+                if missing_fields:
+                    reasons.append(f"missing fields: {missing_fields}")
+                if type_mismatches:
+                    reasons.append(f"type mismatches: {', '.join(type_mismatches)}")
+                return f"API response schema conformance failure: {'; '.join(reasons)}"
+                
+        except Exception:
+            # If actual response is not valid JSON, it's captured as a content error elsewhere.
+            pass
+            
+        return None
+
+    @classmethod
+    def analyze_response_quality(cls, current_calls, previous_calls, expected_result=None, base_url=None, app=None):
         """
         Runs quality scans and returns a list of detected warnings and errors.
         """
@@ -253,6 +331,17 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
                         "method": method,
                         "type": "schema_regression",
                         "issue": regression
+                    })
+                    
+            # 4. Schema Conformance checks (compared against discovered cataloged API schema)
+            if app:
+                conformance_issue = cls.check_schema_conformance(call, app)
+                if conformance_issue:
+                    issues.append({
+                        "url": url,
+                        "method": method,
+                        "type": "schema_conformance",
+                        "issue": conformance_issue
                     })
 
         # 4. Semantic Relevance Check (only run on the single largest eligible response to prevent Ollama overload)

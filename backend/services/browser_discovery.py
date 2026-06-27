@@ -32,11 +32,14 @@ class BrowserDiscoveryService:
         """
         logger.info(f"Attempting login at {login_url}")
         try:
-            page.goto(login_url, wait_until="load", timeout=15000)
             try:
-                page.wait_for_load_state("networkidle", timeout=3000)
-            except Exception:
-                pass
+                page.goto(login_url, wait_until="domcontentloaded", timeout=20000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=3000)
+                except Exception:
+                    pass
+            except Exception as goto_err:
+                logger.warning(f"Navigation to login page had an issue/timeout: {goto_err}. Trying to proceed anyway...")
             
             # Common username field selectors
             username_selectors = [
@@ -129,9 +132,11 @@ class BrowserDiscoveryService:
     def extract_forms(self, page):
         """
         Finds all forms on the current page and extracts fields, action, and method.
+        Also finds standalone input elements outside forms and groups them as a virtual form.
         """
         forms_data = []
         try:
+            # 1. Standard forms
             forms = page.locator("form").all()
             for idx, form in enumerate(forms):
                 form_id = form.get_attribute("id") or form.get_attribute("name") or f"form_{idx}"
@@ -163,17 +168,51 @@ class BrowserDiscoveryService:
                     "action": action,
                     "method": method
                 })
+
+            # 2. Standalone inputs (not inside any form tag)
+            standalone_fields = []
+            all_inputs = page.locator("input, select, textarea").all()
+            for inp in all_inputs:
+                try:
+                    # Check if this input has a form ancestor in JS
+                    is_inside_form = inp.evaluate("el => el.closest('form') !== null")
+                    if is_inside_form:
+                        continue
+                        
+                    inp_type = inp.get_attribute("type") or "text"
+                    if inp_type.lower() in ["hidden", "submit", "button", "image"]:
+                        continue
+                        
+                    inp_name = inp.get_attribute("name")
+                    inp_id = inp.get_attribute("id") or ""
+                    
+                    if inp_name or inp_id:
+                        standalone_fields.append({
+                            "name": inp_name or "",
+                            "type": inp_type,
+                            "id": inp_id or ""
+                        })
+                except Exception as eval_err:
+                    logger.debug(f"Error checking standalone input element: {eval_err}")
+                    
+            if standalone_fields:
+                forms_data.append({
+                    "id": "standalone_fields",
+                    "fields": standalone_fields,
+                    "action": "",
+                    "method": "standalone"
+                })
         except Exception as e:
-            logger.error(f"Error extracting forms: {e}")
+            logger.error(f"Error extracting forms and standalone inputs: {e}")
         return forms_data
 
     def extract_buttons(self, page):
         """
-        Finds buttons and interactive clickable elements on the page.
+        Finds buttons and interactive clickable elements (div buttons, custom links, etc.) on the page.
         """
         buttons_data = []
         try:
-            buttons = page.locator("button, input[type='button'], input[type='submit']").all()
+            buttons = page.locator("button, input[type='button'], input[type='submit'], a.btn, a.button, [role='button'], [onclick]").all()
             for idx, btn in enumerate(buttons):
                 # Skip hidden elements
                 if not btn.is_visible():
@@ -182,24 +221,48 @@ class BrowserDiscoveryService:
                 if not text:
                     text = btn.get_attribute("title") or f"Button {idx}"
                 
-                # Get a selector. Prefers ID, then name, then class
-                btn_id = btn.get_attribute("id")
-                btn_name = btn.get_attribute("name")
-                btn_class = btn.get_attribute("class")
-                
-                if btn_id:
-                    selector = f"#{btn_id}"
-                elif btn_name:
-                    selector = f"[name='{btn_name}']"
-                elif btn_class:
-                    # Strip classes containing colons (e.g. Tailwind modifiers like hover:, focus:, md:)
-                    classes = [c for c in btn_class.split() if ':' not in c]
-                    if classes:
-                        selector = f".{'.'.join(classes)}"
-                    else:
-                        selector = f"button:has-text('{text}')" if text else f"button >> nth={idx}"
-                else:
-                    selector = f"button:has-text('{text}')" if text else f"button >> nth={idx}"
+                # Generate a unique and safe selector using browser-side JS
+                selector = btn.evaluate("""el => {
+                    const getSelector = (element) => {
+                        // 1. Try ID (must be unique)
+                        if (element.id) {
+                            try {
+                                if (document.querySelectorAll('#' + CSS.escape(element.id)).length === 1) {
+                                    return '#' + element.id;
+                                }
+                            } catch(e) {}
+                        }
+                        // 2. Try Name (must be unique)
+                        const name = element.getAttribute('name');
+                        if (name) {
+                            try {
+                                const tag = element.tagName.toLowerCase();
+                                if (document.querySelectorAll(`${tag}[name="${CSS.escape(name)}"]`).length === 1) {
+                                    return `${tag}[name="${name}"]`;
+                                }
+                            } catch(e) {}
+                        }
+                        // 3. Fallback to unique XPath
+                        const getXPath = (el) => {
+                            if (el.id) return `//*[@id="${el.id}"]`;
+                            if (el === document.body) return '/html/body';
+                            let ix = 0;
+                            const siblings = el.parentNode.childNodes;
+                            for (let i = 0; i < siblings.length; i++) {
+                                const sibling = siblings[i];
+                                if (sibling === el) {
+                                    return getXPath(el.parentNode) + '/' + el.tagName.toLowerCase() + '[' + (ix + 1) + ']';
+                                }
+                                if (sibling.nodeType === 1 && sibling.tagName === el.tagName) {
+                                    ix++;
+                                }
+                            }
+                            return '';
+                        };
+                        return 'xpath=' + getXPath(element);
+                    };
+                    return getSelector(el);
+                }""")
 
                 buttons_data.append({
                     "text": text,
@@ -208,6 +271,7 @@ class BrowserDiscoveryService:
         except Exception as e:
             logger.error(f"Error extracting buttons: {e}")
         return buttons_data
+
 
     def discover(self, start_url, login_url=None, username=None, password=None, storage_state=None, on_progress=None):
         """
@@ -270,6 +334,18 @@ class BrowserDiscoveryService:
                         elif 'cookie' in headers:
                             auth_type = 'cookie'
 
+                        # Safely retrieve post_data as string or fallback to bytes details if not UTF-8
+                        request_body = ""
+                        try:
+                            request_body = response.request.post_data or ""
+                        except Exception:
+                            try:
+                                post_bytes = response.request.post_data_bytes
+                                if post_bytes:
+                                    request_body = f"<binary data: {len(post_bytes)} bytes>"
+                            except Exception:
+                                pass
+
                         api_logs.append({
                             "method": response.request.method,
                             "url": response.url,
@@ -277,7 +353,7 @@ class BrowserDiscoveryService:
                             "body": body_text,
                             "latency": latency,
                             "auth_type": auth_type,
-                            "request_body": response.request.post_data or ""
+                            "request_body": request_body
                         })
                 except Exception as net_err:
                     logger.error(f"Error logging network response during crawl: {net_err}")
@@ -294,7 +370,7 @@ class BrowserDiscoveryService:
                 if storage_state:
                     try:
                         logger.info("Verifying if existing session is valid...")
-                        page.goto(start_url, wait_until="load", timeout=10000)
+                        page.goto(start_url, wait_until="domcontentloaded", timeout=15000)
                         page.wait_for_timeout(1000)
                         
                         # If we aren't on the login URL and don't see password fields, we are logged in
@@ -337,8 +413,12 @@ class BrowserDiscoveryService:
                         logger.error(f"Error calling progress callback: {progress_err}")
                 
                 try:
-                    page.goto(current_url, wait_until="load", timeout=15000)
-                    page.wait_for_timeout(1000) # Give extra second for JS execution
+                    page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=3000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(2000) # Give extra 2 seconds for JS execution & hydration
                     
                     title = page.title()
                     forms = self.extract_forms(page)
@@ -351,7 +431,7 @@ class BrowserDiscoveryService:
                         "buttons": buttons
                     })
                     
-                    # Extract link tags on the page for further traversal
+                    # 1. Extract link tags on the page for further traversal
                     links = page.locator("a").all()
                     for link in links:
                         href = link.get_attribute("href")
@@ -360,9 +440,50 @@ class BrowserDiscoveryService:
                             # Remove query params / hashes for deduplication
                             normalized_url = absolute_url.split('#')[0].split('?')[0]
                             if (self.is_same_domain(normalized_url, start_url, login_url) and 
-                                    normalized_url not in self.visited_urls and 
-                                    normalized_url not in to_visit):
+                                     normalized_url not in self.visited_urls and 
+                                     normalized_url not in to_visit):
                                 to_visit.append(normalized_url)
+
+                    # 2. Click buttons/interactive elements to find dynamic SPA client-side routes
+                    for btn_info in buttons[:15]:  # Check up to 15 buttons per page
+                        selector = btn_info.get("selector")
+                        text = btn_info.get("text", "").lower()
+                        if not selector:
+                            continue
+                        
+                        # Skip typical form submit buttons or logout buttons to prevent session termination
+                        if "submit" in text or "submit" in selector:
+                            continue
+                        if any(logout_kw in text for logout_kw in ["logout", "log out", "signout", "sign out", "exit"]):
+                            continue
+                        
+                        try:
+                            button_el = page.locator(selector).first
+                            if button_el and button_el.is_visible() and button_el.is_enabled():
+                                button_el.click(timeout=1500, force=True)
+                                page.wait_for_timeout(600)  # Pause to allow route transition
+                                
+                                new_url = page.url
+                                normalized_new = new_url.split('#')[0].split('?')[0]
+                                
+                                if (normalized_new != current_url.split('#')[0].split('?')[0] and 
+                                        self.is_same_domain(normalized_new, start_url, login_url) and 
+                                        normalized_new not in self.visited_urls and 
+                                        normalized_new not in to_visit):
+                                    to_visit.append(normalized_new)
+                                    logger.info(f"Discovered new client-side route via button click: {normalized_new}")
+                                
+                                # Navigate back to continue clicking other buttons on the original page
+                                if page.url != current_url:
+                                    page.goto(current_url, wait_until="domcontentloaded", timeout=10000)
+                                    page.wait_for_timeout(400)
+                        except Exception as click_err:
+                            logger.debug(f"Skipping button click check on selector {selector}: {click_err}")
+                            try:
+                                if page.url != current_url:
+                                    page.goto(current_url, wait_until="domcontentloaded", timeout=10000)
+                            except Exception:
+                                pass
                                 
                 except Exception as e:
                     logger.error(f"Failed to crawl {current_url}: {e}")

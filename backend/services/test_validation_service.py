@@ -53,7 +53,10 @@ class TestValidationService:
                             if f_id:
                                 selector = f"#{f_id}"
                             elif f_name:
-                                selector = f"input[name='{f_name}']"
+                                tag = "input"
+                                if f_type in ["select", "textarea"]:
+                                    tag = f_type
+                                selector = f"{tag}[name='{f_name}']"
                                 
                             elements.append({
                                 "type": "input",
@@ -137,6 +140,14 @@ class TestValidationService:
                             found = True
                             break
                             
+                    # Check if class name matches any part of detected selectors
+                    if not found:
+                        classes = re.findall(r'\.([a-zA-Z0-9_\-]+)', selector)
+                        for cls_val in classes:
+                            if any(cls_val in s for s in detected_selectors):
+                                found = True
+                                break
+                                
                     # Tag selectors that are always relevant
                     if not found and selector.strip() in ['body', 'html', 'head', 'main']:
                         found = True

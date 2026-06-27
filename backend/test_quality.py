@@ -76,6 +76,72 @@ def run_tests():
     for i in issues:
         print(f" - [{i['type'].upper()}]: {i['issue']} (Endpoint: {i['method']} {i['url']})")
 
+    # Test Case 5: Schema Conformance Validation
+    print("\n--- Test 5: Schema Conformance Check ---")
+    from core.models import Application, APIEndpoint, User
+    
+    # Create mock user and app
+    user, _ = User.objects.get_or_create(username="test_qa_auditor")
+    app, _ = Application.objects.get_or_create(
+        user=user,
+        url="http://example.com",
+        defaults={"base_url": "http://example.com"}
+    )
+    
+    # Create api endpoint with response schema
+    api_endpoint, _ = APIEndpoint.objects.update_or_create(
+        application=app,
+        method="GET",
+        url_pattern="/api/v1/users",
+        defaults={
+            "response_schema": {
+                "id": "int",
+                "username": "str",
+                "email": "str"
+            }
+        }
+    )
+    
+    try:
+        # A. Perfect conformance response
+        call_conforming = {
+            "url": "http://example.com/api/v1/users",
+            "method": "GET",
+            "body": '{"id": 123, "username": "alice", "email": "alice@example.com"}'
+        }
+        res_conforming = ResponseQualityAnalyzer.check_schema_conformance(call_conforming, app)
+        print(f"Conforming input check: {res_conforming}")
+        assert res_conforming is None, "Conforming response should not yield conformance issues"
+        
+        # B. Missing fields response
+        call_missing = {
+            "url": "http://example.com/api/v1/users",
+            "method": "GET",
+            "body": '{"id": 123, "username": "alice"}' # missing email
+        }
+        res_missing = ResponseQualityAnalyzer.check_schema_conformance(call_missing, app)
+        print(f"Missing field check: {res_missing}")
+        assert res_missing is not None, "Response missing email field should yield conformance issues"
+        assert "missing fields" in res_missing
+        
+        # C. Type mismatch response
+        call_type_mismatch = {
+            "url": "http://example.com/api/v1/users",
+            "method": "GET",
+            "body": '{"id": "not-an-int", "username": "alice", "email": "alice@example.com"}' # id is string instead of int
+        }
+        res_type_mismatch = ResponseQualityAnalyzer.check_schema_conformance(call_type_mismatch, app)
+        print(f"Type mismatch check: {res_type_mismatch}")
+        assert res_type_mismatch is not None, "Response with type mismatch should yield conformance issues"
+        assert "type mismatches" in res_type_mismatch
+        
+        print("Schema conformance validation tests passed!")
+        
+    finally:
+        # Clean up database records
+        api_endpoint.delete()
+        app.delete()
+
     print("\n" + "=" * 60)
     print("All logic tests passed successfully!")
     print("=" * 60)
