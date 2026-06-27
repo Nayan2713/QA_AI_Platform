@@ -231,6 +231,126 @@ class APIEndpointViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(application_id=app_id)
         return queryset
 
+    @action(detail=True, methods=['get'])
+    def analyze(self, request, pk=None):
+        endpoint = self.get_object()
+        app = endpoint.application
+        
+        # 1. Fetch bugs linked to this endpoint
+        bugs = endpoint.bugs.all()
+        bug_data = []
+        for bug in bugs:
+            bug_data.append({
+                "id": bug.id,
+                "title": bug.title,
+                "severity": bug.severity,
+                "description": bug.description,
+                "created_at": bug.created_at
+            })
+            
+        # 2. Scan TestRuns to find test results/calls that hit this endpoint
+        from core.models import TestRun
+        from tasks.discovery import get_url_pattern
+        from services.quality_analyzer import ResponseQualityAnalyzer
+        
+        runs = TestRun.objects.filter(test_case__app=app)
+        
+        calls_found = []
+        latency_sum = 0
+        latency_count = 0
+        max_latency = 0
+        min_latency = float('inf')
+        
+        status_failures_count = 0
+        content_error_count = 0
+        schema_conformance_count = 0
+        
+        for run in runs:
+            if not isinstance(run.metadata, dict):
+                continue
+            api_calls = run.metadata.get('api_calls', [])
+            
+            for call in api_calls:
+                call_method = call.get('method', '').upper()
+                call_url = call.get('url', '')
+                
+                # Resolve URL to pattern
+                try:
+                    pat = get_url_pattern(call_url, app.url)
+                except Exception:
+                    pat = ""
+                    
+                if call_method == endpoint.method and pat == endpoint.url_pattern:
+                    latency = call.get('latency', 0)
+                    status_code = call.get('status', 200)
+                    body = call.get('body', '')
+                    
+                    # Latency calculations
+                    latency_sum += latency
+                    latency_count += 1
+                    if latency > max_latency:
+                        max_latency = latency
+                    if latency < min_latency:
+                        min_latency = latency
+                        
+                    # Status failure check
+                    if status_code >= 400:
+                        status_failures_count += 1
+                        
+                    # Scan issues using quality analyzer logic
+                    content_err = ResponseQualityAnalyzer.check_content_errors(status_code, body)
+                    if content_err:
+                        content_error_count += 1
+                        
+                    conformance_err = ResponseQualityAnalyzer.check_schema_conformance(call, app)
+                    if conformance_err:
+                        schema_conformance_count += 1
+                        
+                    calls_found.append({
+                        "run_id": run.id,
+                        "test_case_title": run.test_case.title,
+                        "status": status_code,
+                        "latency": latency,
+                        "timestamp": run.created_at
+                    })
+                    
+        avg_latency = int(latency_sum / latency_count) if latency_count > 0 else 0
+        min_latency = min_latency if min_latency != float('inf') else 0
+        
+        # Calculate overall health score for this API (0-100)
+        health_score = 100
+        if latency_count > 0:
+            deductions = (
+                status_failures_count * 30 +
+                content_error_count * 20 +
+                schema_conformance_count * 15
+            )
+            if avg_latency > 1500:
+                deductions += min(20, int((avg_latency - 1500) / 100))
+            health_score = max(0, 100 - deductions)
+            
+        analysis = {
+            "endpoint_id": endpoint.id,
+            "method": endpoint.method,
+            "url_pattern": endpoint.url_pattern,
+            "health_score": health_score,
+            "total_calls_tracked": latency_count,
+            "latency": {
+                "avg_ms": avg_latency,
+                "min_ms": min_latency,
+                "max_ms": max_latency
+            },
+            "failures": {
+                "status_errors": status_failures_count,
+                "content_errors": content_error_count,
+                "schema_violations": schema_conformance_count
+            },
+            "linked_bugs": bug_data,
+            "call_history": calls_found[:15]
+        }
+        
+        return Response(analysis, status=status.HTTP_200_OK)
+
 
 class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = CeleryTask.objects.all()

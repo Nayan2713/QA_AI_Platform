@@ -9,3 +9,4 @@ django-cors-headers>=4.1.0
 python-dotenv>=1.0.0
 django-celery-results>=2.5.1
 django-celery-beat>=2.5.0
+cryptography>=41.0.0,<43.0
