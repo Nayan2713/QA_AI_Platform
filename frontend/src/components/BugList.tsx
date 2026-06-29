@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Bug } from '../lib/types';
+import api from '../lib/api';
 
 interface BugListProps {
   bugs: Bug[];
@@ -15,10 +16,20 @@ export const BugList: React.FC<BugListProps> = ({
   activeTaskId
 }) => {
   const [selectedBugId, setSelectedBugId] = useState<number | null>(null);
+  const [filterSeverity, setFilterSeverity] = useState<string>('all');
+  const [filterType, setFilterType] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
 
   const toggleExpandBug = (id: number) => {
     setSelectedBugId(selectedBugId === id ? null : id);
   };
+
+  const filteredBugs = bugs.filter(b => {
+    const matchSeverity = filterSeverity === 'all' || b.severity.toLowerCase() === filterSeverity.toLowerCase();
+    const matchType = filterType === 'all' || (b.bug_type && b.bug_type.toLowerCase() === filterType.toLowerCase());
+    const matchStatus = filterStatus === 'all' || (b.status && b.status.toLowerCase() === filterStatus.toLowerCase());
+    return matchSeverity && matchType && matchStatus;
+  });
 
   return (
     <div className="glass-card bug-list-card">
@@ -34,15 +45,94 @@ export const BugList: React.FC<BugListProps> = ({
         )}
       </div>
 
-      {bugs.length === 0 ? (
+      {/* Filters Panel */}
+      <div className="bugs-filters-panel" style={{
+        display: 'flex',
+        gap: '16px',
+        padding: '16px',
+        background: 'rgba(255, 255, 255, 0.02)',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+        marginBottom: '12px',
+        alignItems: 'center',
+        flexWrap: 'wrap'
+      }}>
+        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'rgba(255, 255, 255, 0.6)' }}>Filters:</span>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.4)', textTransform: 'uppercase' }}>Severity</label>
+          <select 
+            value={filterSeverity} 
+            onChange={(e) => setFilterSeverity(e.target.value)}
+            style={{
+              background: 'rgba(20, 20, 30, 0.7)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: '6px',
+              color: '#fff',
+              padding: '6px 12px',
+              fontSize: '0.85rem'
+            }}
+          >
+            <option value="all">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.4)', textTransform: 'uppercase' }}>Bug Type</label>
+          <select 
+            value={filterType} 
+            onChange={(e) => setFilterType(e.target.value)}
+            style={{
+              background: 'rgba(20, 20, 30, 0.7)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: '6px',
+              color: '#fff',
+              padding: '6px 12px',
+              fontSize: '0.85rem'
+            }}
+          >
+            <option value="all">All Types</option>
+            <option value="functional">Functional</option>
+            <option value="ui">UI/Layout</option>
+            <option value="permission">Permission</option>
+            <option value="workflow">Workflow</option>
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <label style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.4)', textTransform: 'uppercase' }}>Status</label>
+          <select 
+            value={filterStatus} 
+            onChange={(e) => setFilterStatus(e.target.value)}
+            style={{
+              background: 'rgba(20, 20, 30, 0.7)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: '6px',
+              color: '#fff',
+              padding: '6px 12px',
+              fontSize: '0.85rem'
+            }}
+          >
+            <option value="all">All Statuses</option>
+            <option value="open">Open</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="resolved">Resolved</option>
+          </select>
+        </div>
+      </div>
+
+      {filteredBugs.length === 0 ? (
         <div className="empty-state">
           <div className="bug-free-icon">🛡️</div>
-          <p>Zero bugs detected so far! Your site is healthy or tests have not failed.</p>
+          <p>Zero bugs match the selected filters.</p>
         </div>
       ) : (
         <div className="bugs-table-container">
           <div className="bugs-list">
-            {bugs.map((bug) => {
+            {filteredBugs.map((bug) => {
               const isExpanded = selectedBugId === bug.id;
               return (
                 <div 
@@ -202,7 +292,9 @@ export const BugList: React.FC<BugListProps> = ({
                                         📸 Failure Screenshot:
                                       </span>
                                       <img 
-                                        src={`data:image/png;base64,${stepResult.screenshot}`} 
+                                        src={stepResult.screenshot.startsWith('http') || stepResult.screenshot.startsWith('/') || stepResult.screenshot.includes('bugs/')
+                                          ? `${api.defaults.baseURL?.replace('/api/', '')}/media/${stepResult.screenshot}`
+                                          : `data:image/png;base64,${stepResult.screenshot}`} 
                                         alt={`Step ${stepNum} Failure Screenshot`}
                                         style={{
                                           maxWidth: '100%',
@@ -257,10 +349,46 @@ export const BugList: React.FC<BugListProps> = ({
                         </div>
                       )}
                       
+                      {bug.steps_to_reproduce && bug.steps_to_reproduce.length > 0 && (
+                        <div className="repro-steps-section" style={{ marginTop: '16px', marginBottom: '16px' }}>
+                          <h6 style={{ color: 'var(--text-primary)', marginBottom: '8px', fontSize: '0.9rem', fontWeight: '600' }}>
+                            📝 Steps to Reproduce:
+                          </h6>
+                          <ol style={{ margin: '4px 0 0 16px', padding: 0, fontSize: '0.85rem', color: 'rgba(255,255,255,0.7)', listStyleType: 'decimal' }}>
+                            {bug.steps_to_reproduce.map((step, sIdx) => (
+                              <li key={sIdx} style={{ marginBottom: '4px' }}>{step}</li>
+                            ))}
+                          </ol>
+                        </div>
+                      )}
+
+                      {bug.screenshot && (
+                        <div className="bug-screenshot-gallery" style={{ marginTop: '16px', marginBottom: '16px' }}>
+                          <h6 style={{ color: 'var(--text-primary)', marginBottom: '8px', fontSize: '0.9rem', fontWeight: '600' }}>
+                            📸 Captured Bug Screenshot:
+                          </h6>
+                          <img 
+                            src={bug.screenshot.startsWith('http') || bug.screenshot.startsWith('/')
+                              ? `${api.defaults.baseURL?.replace('/api/', '')}${bug.screenshot.startsWith('/') ? '' : '/'}${bug.screenshot}`
+                              : `${api.defaults.baseURL?.replace('/api/', '')}/media/${bug.screenshot}`} 
+                            alt="Captured Bug Screenshot" 
+                            style={{
+                              maxWidth: '100%',
+                              maxHeight: '400px',
+                              borderRadius: '8px',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.6)'
+                            }}
+                          />
+                        </div>
+                      )}
+
                       <div className="repro-section">
-                        <h6>Test Run Details:</h6>
+                        <h6>Bug Details:</h6>
                         <p>
-                          <strong>Failed Test Case:</strong> {bug.test_case_title}<br />
+                          {bug.test_case_title && <><strong>Failed Test Case:</strong> {bug.test_case_title}<br /></>}
+                          {bug.bug_type && <><strong>Type:</strong> <span style={{ textTransform: 'capitalize' }}>{bug.bug_type}</span><br /></>}
+                          {bug.status && <><strong>Status:</strong> <span style={{ color: '#60a5fa', fontWeight: 'bold' }}>{bug.status.toUpperCase()}</span><br /></>}
                           <strong>Logged on:</strong> {new Date(bug.created_at).toLocaleString()}
                         </p>
                       </div>

@@ -15,7 +15,7 @@ def configure_logging():
     # File handler - all logs
     file_handler = logging.handlers.RotatingFileHandler(
         'logs/debug.log',
-        maxBytes=10485760,  # 10MB
+        maxBytes=0,  # Disable rotation on Windows to prevent WinError 32 PermissionError
         backupCount=5
     )
     file_handler.setLevel(logging.DEBUG)
@@ -23,7 +23,7 @@ def configure_logging():
     # File handler - errors only
     error_handler = logging.handlers.RotatingFileHandler(
         'logs/error.log',
-        maxBytes=10485760,
+        maxBytes=0,  # Disable rotation on Windows to prevent WinError 32 PermissionError
         backupCount=5
     )
     error_handler.setLevel(logging.ERROR)

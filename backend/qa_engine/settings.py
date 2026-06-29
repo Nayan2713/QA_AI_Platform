@@ -3,9 +3,9 @@ from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
 
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=BASE_DIR / '.env')
+load_dotenv(dotenv_path=BASE_DIR.parent / '.env')
 
 # FIX: No insecure fallback — crash loudly if SECRET_KEY is missing
 SECRET_KEY = os.environ['SECRET_KEY']
@@ -42,14 +42,14 @@ LOGGING = {
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': 'logs/debug.log',
-            'maxBytes': 1024 * 1024 * 10,
+            'maxBytes': 0,  # Disable rotation on Windows to prevent WinError 32 PermissionError
             'backupCount': 5,
             'formatter': 'verbose',
         },
         'error_file': {
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': 'logs/error.log',
-            'maxBytes': 1024 * 1024 * 10,
+            'maxBytes': 0,  # Disable rotation on Windows to prevent WinError 32 PermissionError
             'backupCount': 5,
             'formatter': 'verbose',
             'level': 'ERROR',
@@ -146,6 +146,11 @@ _cors_origins = os.getenv(
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
+# Allow all origins in debug/development mode to prevent CORS issues
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -183,7 +188,8 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
 OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generate')
-OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen:7b')
+OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen2.5:7b')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', None)
 
 MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')
 
@@ -424,7 +430,7 @@ MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')
 
 # # Ollama LLM Service Configuration
 # OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generate')
-# OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen:7b') # fallback model can be mistral:7b
+# OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen2.5:7b') # fallback model can be mistral:7b
 
 # # MCP Configuration
 # MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')

@@ -7,6 +7,7 @@ from .views import (
     BugViewSet,
     CeleryTaskViewSet,
     APIEndpointViewSet,
+    AgentSessionViewSet,
 )
 
 router = DefaultRouter()
@@ -16,6 +17,7 @@ router.register(r'test-runs', TestRunViewSet, basename='testrun')
 router.register(r'bugs', BugViewSet, basename='bug')
 router.register(r'tasks', CeleryTaskViewSet, basename='task')
 router.register(r'api-endpoints', APIEndpointViewSet, basename='apiendpoint')
+router.register(r'agent-sessions', AgentSessionViewSet, basename='agentsession')
 
 urlpatterns = [
     path('quality/', include('api.urls')),

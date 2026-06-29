@@ -356,21 +356,29 @@ def validate_bug_accuracy(self, bug_id):
     """
     try:
         bug = Bug.objects.get(id=bug_id)
-        app = bug.test_run.test_case.app
+        app = bug.application or (bug.test_run.test_case.app if bug.test_run and bug.test_run.test_case else None)
         
         # Extract error message from failed TestResult step logs
-        failed_results = bug.test_run.step_results.filter(status='FAILED')
-        error_message = failed_results.first().error if failed_results.exists() else bug.description
+        if bug.test_run:
+            failed_results = bug.test_run.step_results.filter(status='FAILED')
+            error_message = failed_results.first().error if failed_results.exists() else bug.description
+        else:
+            failed_results = None
+            error_message = bug.description
         
         confidence_scores = {}
         
         # ===== METHOD 1: REPRODUCIBILITY SCORE =====
         # Check if same bug/error appears in other runs for the same app
-        same_error_bugs = Bug.objects.filter(
-            test_run__test_case__app=app,
-            title__icontains=bug.title[:30]
-        )
-        reproducibility_count = same_error_bugs.count()
+        from django.db.models import Q
+        if app:
+            same_error_bugs = Bug.objects.filter(
+                Q(application=app) | Q(test_run__test_case__app=app),
+                title__icontains=bug.title[:30]
+            ).distinct()
+            reproducibility_count = same_error_bugs.count()
+        else:
+            reproducibility_count = 1
         reproducibility_score = min(reproducibility_count / 3 * 100, 100)
         confidence_scores['reproducibility'] = reproducibility_score
         
@@ -404,10 +412,12 @@ def validate_bug_accuracy(self, bug_id):
         confidence_scores['severity'] = severity_score
         
         # ===== METHOD 3: SCREENSHOT ANALYSIS =====
-        screenshot_result = bug.test_run.step_results.exclude(screenshot__isnull=True).exclude(screenshot='').first()
-        screenshot_base64 = screenshot_result.screenshot if screenshot_result else ''
+        screenshot_result = None
+        if bug.test_run:
+            screenshot_result = bug.test_run.step_results.exclude(screenshot__isnull=True).exclude(screenshot='').first()
+        screenshot_base64 = screenshot_result.screenshot if screenshot_result else (bug.screenshot.url if bug.screenshot else '')
         screenshot_score = 60
-        if screenshot_base64 and len(screenshot_base64) > 1000:
+        if screenshot_base64 and len(str(screenshot_base64)) > 1000:
             screenshot_score = 75
         confidence_scores['screenshot'] = screenshot_score
         

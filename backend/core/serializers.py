@@ -3,7 +3,7 @@ from django.contrib.auth.models import User
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from urllib.parse import urlparse
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -37,6 +37,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 class ApplicationSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     page_count = serializers.IntegerField(source='pages.count', read_only=True)
+    api_count = serializers.IntegerField(source='api_endpoints.count', read_only=True)
     test_case_count = serializers.IntegerField(source='test_cases.count', read_only=True)
     bug_count = serializers.SerializerMethodField(read_only=True)
 
@@ -45,13 +46,24 @@ class ApplicationSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'user', 'url', 'base_url', 'login_url', 
             'username', 'password', 'status', 'discovery_source', 
-            'login_status', 'storage_state', 'login_error', 'page_count', 'test_case_count', 'bug_count', 'created_at'
+            'login_status', 'storage_state', 'login_error', 'industry', 'page_count', 'api_count', 'test_case_count', 'bug_count', 'created_at'
         )
         read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'storage_state', 'login_error')
 
     def get_bug_count(self, obj):
-        # Count bugs associated with all test runs of this application's test cases
-        return Bug.objects.filter(test_run__test_case__app=obj).count()
+        # Count unique bugs associated with all test runs of this application's test cases
+        import re
+        queryset = Bug.objects.filter(test_run__test_case__app=obj)
+        seen = set()
+        unique_count = 0
+        for bug in queryset:
+            endpoint_id = bug.api_endpoint_id if bug.api_endpoint_id else 0
+            norm_title = re.sub(r'Step \d+ Failed', 'Step Failed', bug.title)
+            key = (norm_title, endpoint_id, bug.severity)
+            if key not in seen:
+                seen.add(key)
+                unique_count += 1
+        return unique_count
 
     def validate(self, attrs):
         url = attrs.get('url')
@@ -90,7 +102,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
 class PageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Page
-        fields = ('id', 'app', 'url', 'title', 'forms', 'buttons', 'created_at')
+        fields = ('id', 'app', 'url', 'title', 'forms', 'buttons', 'page_type', 'elements', 'workflows', 'created_at')
 
 
 class TestCaseSerializer(serializers.ModelSerializer):
@@ -98,7 +110,8 @@ class TestCaseSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = TestCase
-        fields = ('id', 'app', 'title', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'created_at')
+        fields = ('id', 'app', 'title', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'generation_context', 'created_at')
+        read_only_fields = ('generation_context',)
     
     def validate_steps(self, value):
         """Validate test case steps"""
@@ -148,21 +161,45 @@ class APIEndpointSerializer(serializers.ModelSerializer):
 
 
 class BugSerializer(serializers.ModelSerializer):
-    test_case_title = serializers.CharField(source='test_run.test_case.title', read_only=True)
-    test_case_id = serializers.IntegerField(source='test_run.test_case.id', read_only=True)
-    app_url = serializers.CharField(source='test_run.test_case.app.url', read_only=True)
-    app_id = serializers.IntegerField(source='test_run.test_case.app.id', read_only=True)
-    test_case_steps = serializers.JSONField(source='test_run.test_case.steps', read_only=True)
-    test_run_results = TestResultSerializer(source='test_run.step_results', many=True, read_only=True)
+    test_case_title = serializers.SerializerMethodField(read_only=True)
+    test_case_id = serializers.SerializerMethodField(read_only=True)
+    app_url = serializers.SerializerMethodField(read_only=True)
+    app_id = serializers.SerializerMethodField(read_only=True)
+    test_case_steps = serializers.SerializerMethodField(read_only=True)
+    test_run_results = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Bug
         fields = (
-            'id', 'test_run', 'test_case_id', 'app_id', 'test_case_title', 
+            'id', 'application', 'test_run', 'test_case_id', 'app_id', 'test_case_title', 
             'app_url', 'title', 'description', 'severity', 'api_endpoint', 
-            'test_case_steps', 'test_run_results', 'created_at'
+            'test_case_steps', 'test_run_results', 'bug_type', 'steps_to_reproduce',
+            'screenshot', 'element_selector', 'status', 'created_at'
         )
 
+    def get_test_case_title(self, obj):
+        return obj.test_run.test_case.title if obj.test_run and obj.test_run.test_case else None
+        
+    def get_test_case_id(self, obj):
+        return obj.test_run.test_case.id if obj.test_run and obj.test_run.test_case else None
+        
+    def get_app_url(self, obj):
+        if obj.test_run and obj.test_run.test_case and obj.test_run.test_case.app:
+            return obj.test_run.test_case.app.url
+        return obj.application.url if obj.application else None
+        
+    def get_app_id(self, obj):
+        if obj.test_run and obj.test_run.test_case and obj.test_run.test_case.app:
+            return obj.test_run.test_case.app.id
+        return obj.application.id if obj.application else None
+        
+    def get_test_case_steps(self, obj):
+        return obj.test_run.test_case.steps if obj.test_run and obj.test_run.test_case else []
+        
+    def get_test_run_results(self, obj):
+        if obj.test_run:
+            return TestResultSerializer(obj.test_run.step_results.all(), many=True).data
+        return []
 
 
 class BugDetailSerializer(serializers.ModelSerializer):
@@ -171,7 +208,11 @@ class BugDetailSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Bug
-        fields = ('id', 'test_run', 'title', 'description', 'severity', 'api_endpoint', 'api_endpoint_detail', 'created_at')
+        fields = (
+            'id', 'application', 'test_run', 'title', 'description', 'severity', 
+            'api_endpoint', 'api_endpoint_detail', 'bug_type', 'steps_to_reproduce', 
+            'screenshot', 'element_selector', 'status', 'created_at'
+        )
 
 
 class CeleryTaskSerializer(serializers.ModelSerializer):
@@ -181,3 +222,8 @@ class CeleryTaskSerializer(serializers.ModelSerializer):
             'id', 'task_id', 'task_type', 'status', 'progress', 
             'result', 'error', 'created_at', 'updated_at', 'completed_at'
         )
+
+class AgentSessionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AgentSession
+        fields = '__all__'

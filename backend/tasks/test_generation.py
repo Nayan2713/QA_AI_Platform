@@ -135,7 +135,7 @@ def generate_tests(self, app_id):
         run_in_thread(update_progress_50)
 
         llm_service = LLMService()
-        test_cases_data, was_ai = llm_service.generate_test_cases(pages_data)
+        test_cases_data, industry_val, was_ai = llm_service.generate_test_cases(pages_data)
 
         if not test_cases_data:
             logger.error("Failed to generate any test cases.")
@@ -155,6 +155,11 @@ def generate_tests(self, app_id):
 
         def save_test_cases():
             with transaction.atomic():
+                # Save industry back to Application model if it has changed/was empty
+                if industry_val and not app.industry:
+                    app.industry = industry_val
+                    app.save()
+
                 TestCase.objects.filter(app=app).delete()
                 for tc in test_cases_data:
                     TestCase.objects.create(
@@ -163,12 +168,13 @@ def generate_tests(self, app_id):
                         steps=tc["steps"],
                         expected_result=tc["expected_result"],
                         ai_generated=was_ai,
+                        generation_context=pages_data,
                     )
                 logger.info(f"Saved {len(test_cases_data)} test cases to database.")
                 task_record.status = 'success'
                 task_record.progress = 100
                 task_record.result = {
-                    "status_text": f"Successfully generated {len(test_cases_data)} test cases.",
+                    "status_text": f"Successfully generated {len(test_cases_data)} test cases for {industry_val or 'General'} industry.",
                     "tests_generated": len(test_cases_data),
                     "ai_generated": was_ai,
                 }

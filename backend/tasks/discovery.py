@@ -50,7 +50,19 @@ def save_api_endpoints(app, api_logs):
         
         parsed_url = urlparse(url)
         parsed_base = urlparse(app.url)
-        if parsed_url.netloc.lower() != parsed_base.netloc.lower():
+        
+        def get_base_domain(host):
+            parts = host.split('.')
+            if len(parts) >= 2:
+                if parts[-2] in ['com', 'co', 'org', 'net', 'gov', 'edu', 'io']:
+                    return '.'.join(parts[-3:])
+                return '.'.join(parts[-2:])
+            return host
+            
+        base_domain = get_base_domain(parsed_base.netloc.lower())
+        url_domain = get_base_domain(parsed_url.netloc.lower())
+        
+        if base_domain not in url_domain and url_domain not in base_domain:
             continue
             
         url_pattern = get_url_pattern(url, app.url)
@@ -78,6 +90,10 @@ def save_api_endpoints(app, api_logs):
             except Exception:
                 pass
                 
+        page_url = log.get('page_url')
+        if page_url:
+            request_schema['_trigger_page_url'] = page_url
+                
         APIEndpoint.objects.update_or_create(
             application=app,
             method=method,
@@ -90,6 +106,19 @@ def save_api_endpoints(app, api_logs):
         )
 
 logger = logging.getLogger(__name__)
+
+import asyncio
+
+def run_async(coro):
+    """
+    Creates a new event loop inside the Celery thread to safely execute async functions.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 def run_in_thread(func, *args, **kwargs):
     """
@@ -116,11 +145,12 @@ def run_in_thread(func, *args, **kwargs):
         raise err[0]
     return res[0][0] if res else None
 
+
 @shared_task(bind=True, name="tasks.discovery.start_discovery")
 def start_discovery(self, app_id):
     """
     Celery task that tracks task progress in CeleryTask,
-    detects MCP availability, routes to MCP or browser discovery,
+    detects MCP availability, routes to MCP or browser-use discovery,
     saves the discovered pages, and updates the application status.
     """
     logger.info(f"Starting discovery task for application ID: {app_id}")
@@ -199,10 +229,10 @@ def start_discovery(self, app_id):
                 run_in_thread(set_mcp_source)
                 logger.info(f"Successfully retrieved {len(pages_data)} pages from MCP.")
             else:
-                logger.warning("MCP server failed to return data, falling back to Playwright browser.")
+                logger.warning("MCP server failed to return data, falling back to browser.")
                 route = 'browser'
         except Exception as e:
-            logger.warning(f"MCP discovery query failed: {e}. Falling back to Playwright.")
+            logger.warning(f"MCP discovery query failed: {e}. Falling back to browser.")
             route = 'browser'
 
     def set_progress_40():
@@ -217,7 +247,7 @@ def start_discovery(self, app_id):
     if route == 'browser':
         logger.info("Executing Playwright browser discovery path...")
         try:
-            crawler = BrowserDiscoveryService(max_pages=8)
+            crawler = BrowserDiscoveryService(max_pages=15)
             
             def get_app_storage():
                 return app.storage_state
@@ -225,7 +255,7 @@ def start_discovery(self, app_id):
             
             def on_crawler_progress(current_url, pages_count):
                 def update_progress():
-                    task_record.progress = min(40 + pages_count * 7, 90)
+                    task_record.progress = min(40 + pages_count * 4, 90)
                     task_record.result = {
                         "status_text": f"Crawling page {pages_count + 1}: {current_url}",
                         "pages_discovered": pages_count + 1
@@ -233,20 +263,20 @@ def start_discovery(self, app_id):
                     task_record.save()
                 run_in_thread(update_progress)
                 
-            result = crawler.discover(
+            result = run_async(crawler.discover(
                 start_url=app.url,
                 login_url=app.login_url,
                 username=app.username,
                 password=app.password,
                 storage_state=storage_state_data,
                 on_progress=on_crawler_progress
-            )
+            ))
             pages_data = result.get("pages", [])
             login_successful = result.get("login_successful")
             captured_storage_state = result.get("storage_state")
             api_logs_data = result.get("api_logs", [])
-            
             login_error_val = result.get("login_error")
+            
             def set_browser_source():
                 app.discovery_source = 'browser'
                 if app.login_url:
@@ -291,7 +321,10 @@ def start_discovery(self, app_id):
                         url=page_info.get("url"),
                         title=page_info.get("title", ""),
                         forms=page_info.get("forms", []),
-                        buttons=page_info.get("buttons", [])
+                        buttons=page_info.get("buttons", []),
+                        page_type=page_info.get("page_type"),
+                        elements=page_info.get("elements", {}),
+                        workflows=page_info.get("workflows", [])
                     )
                 
                 # Catalog captured APIs

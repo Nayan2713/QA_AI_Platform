@@ -115,7 +115,18 @@ export const TestResults: React.FC<TestResultsProps> = ({
             Test Case: <strong>{testRun.test_case_title}</strong>
           </p>
         </div>
-        <div className="header-actions">
+        <div className="header-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <span className="badge-engine" style={{
+            padding: '4px 8px',
+            borderRadius: '6px',
+            fontSize: '0.8rem',
+            fontWeight: 'bold',
+            background: ((testRun.metadata as any)?.engine_used === 'BROWSER_USE') ? 'rgba(160, 160, 255, 0.2)' : 'rgba(34, 197, 94, 0.2)',
+            color: ((testRun.metadata as any)?.engine_used === 'BROWSER_USE') ? '#a0a0ff' : '#22c55e',
+            border: `1px solid ${((testRun.metadata as any)?.engine_used === 'BROWSER_USE') ? 'rgba(160, 160, 255, 0.4)' : 'rgba(34, 197, 94, 0.4)'}`
+          }}>
+            🤖 {((testRun.metadata as any)?.engine_used === 'BROWSER_USE') ? 'BROWSER-USE AGENT' : 'PLAYWRIGHT ENGINE'}
+          </span>
           <span className={`badge-run-status status-${testRun.status.toLowerCase()}`}>
             {isExecuting ? '⏳ Running...' : testRun.status}
           </span>
@@ -137,6 +148,95 @@ export const TestResults: React.FC<TestResultsProps> = ({
           <span className="meta-val bug-indicator">{testRun.bugs_found}</span>
         </div>
       </div>
+
+      {/* Video Playback */}
+      {(testRun.metadata as any)?.video_path && (
+        <div className="video-playback-box" style={{ margin: '16px 0', background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px' }}>
+          <h4 style={{ margin: '0 0 8px 0' }}>🎥 Execution Video Recording</h4>
+          <video 
+            src={`${api.defaults.baseURL?.replace('/api/', '')}/media/${(testRun.metadata as any).video_path}`} 
+            controls 
+            style={{ width: '100%', borderRadius: '6px', maxHeight: '240px', background: '#000' }}
+          />
+        </div>
+      )}
+
+      {/* HAR Download Link */}
+      {(testRun.metadata as any)?.har_path && (
+        <div className="har-download-box" style={{ margin: '12px 0', fontSize: '0.9rem' }}>
+          📥 <a 
+            href={`${api.defaults.baseURL?.replace('/api/', '')}/media/${(testRun.metadata as any).har_path}`} 
+            download 
+            style={{ color: '#60a5fa', textDecoration: 'underline', fontWeight: '500' }}
+          >
+            Download HAR Network Traffic Trace File
+          </a>
+        </div>
+      )}
+
+      {/* Browser Console logs */}
+      {(testRun.metadata as any)?.console_logs && (testRun.metadata as any).console_logs.length > 0 && (
+        <div className="console-logs-box" style={{ margin: '16px 0', background: '#111827', padding: '12px', borderRadius: '8px' }}>
+          <h4 style={{ margin: '0 0 8px 0', color: '#fbbf24' }}>💻 Browser Console Outputs</h4>
+          <pre style={{ 
+            maxHeight: '120px', 
+            overflowY: 'auto', 
+            margin: 0, 
+            fontSize: '0.75rem', 
+            fontFamily: 'monospace', 
+            whiteSpace: 'pre-wrap', 
+            color: '#f3f4f6' 
+          }}>
+            {(testRun.metadata as any).console_logs.join('\n')}
+          </pre>
+        </div>
+      )}
+
+      {/* Intercepted API calls list */}
+      {(testRun.metadata as any)?.api_calls && (testRun.metadata as any).api_calls.length > 0 && (
+        <div className="api-calls-box" style={{ margin: '16px 0', background: '#1f2937', padding: '12px', borderRadius: '8px' }}>
+          <h4 style={{ margin: '0 0 8px 0', color: '#60a5fa' }}>🔌 Intercepted AJAX API Requests</h4>
+          <div style={{ overflowX: 'auto', maxHeight: '180px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left', color: 'rgba(255,255,255,0.6)' }}>
+                  <th style={{ padding: '6px' }}>Method</th>
+                  <th style={{ padding: '6px' }}>URL</th>
+                  <th style={{ padding: '6px' }}>Status</th>
+                  <th style={{ padding: '6px' }}>Latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(testRun.metadata as any).api_calls.map((call: any, idx: number) => (
+                  <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', color: '#f3f4f6' }}>
+                    <td style={{ padding: '6px' }}>
+                      <span className={`badge-method method-${call.method?.toLowerCase()}`} style={{
+                        padding: '2px 4px',
+                        borderRadius: '3px',
+                        fontWeight: 'bold',
+                        fontSize: '0.7rem',
+                        background: call.method === 'GET' ? 'rgba(34,197,94,0.2)' : 'rgba(59,130,246,0.2)',
+                        color: call.method === 'GET' ? '#10b981' : '#3b82f6'
+                      }}>
+                        {call.method}
+                      </span>
+                    </td>
+                    <td style={{ padding: '6px', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' }} title={call.url}>
+                      {call.url}
+                    </td>
+                    <td style={{ padding: '6px' }}>
+                      <span style={{ color: call.status >= 400 ? '#f87171' : '#34d399', fontWeight: 'bold' }}>{call.status}</span>
+                    </td>
+                    <td style={{ padding: '6px', color: call.latency > 1500 ? '#f59e0b' : 'inherit' }}>
+                      {call.latency} ms
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="execution-timeline">
         <h4>📋 Step-by-Step Timeline Logs</h4>
@@ -175,7 +275,12 @@ export const TestResults: React.FC<TestResultsProps> = ({
                   {res.screenshot && (
                     <div className="step-screenshot-box">
                       <button 
-                        onClick={() => setSelectedScreenshot(`data:image/png;base64,${res.screenshot}`)}
+                        onClick={() => {
+                          const src = res.screenshot.startsWith('http') || res.screenshot.startsWith('/') || res.screenshot.includes('bugs/')
+                            ? `${api.defaults.baseURL?.replace('/api/', '')}/media/${res.screenshot}`
+                            : `data:image/png;base64,${res.screenshot}`;
+                          setSelectedScreenshot(src);
+                        }}
                         className="btn-view-screenshot"
                       >
                         📷 View Screenshot

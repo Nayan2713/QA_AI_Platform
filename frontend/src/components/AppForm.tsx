@@ -39,7 +39,25 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
       setPassword('');
     } catch (err: any) {
       console.error(err);
-      setError(err.response?.data?.url?.[0] || err.response?.data?.detail || 'Failed to add application');
+      const backendError = err.response?.data;
+      let errorMsg = 'Failed to add application';
+      if (backendError) {
+        if (backendError.url) {
+          errorMsg = backendError.url[0];
+        } else if (backendError.username) {
+          errorMsg = backendError.username[0];
+        } else if (backendError.password) {
+          errorMsg = backendError.password[0];
+        } else if (backendError.detail) {
+          errorMsg = backendError.detail;
+        } else if (typeof backendError === 'string') {
+          errorMsg = backendError;
+        } else {
+          errorMsg = JSON.stringify(backendError);
+        }
+      }
+      setError(errorMsg);
+      alert(`⚠️ Registration Error:\n\n${errorMsg}`);
     } finally {
       setLoading(false);
     }

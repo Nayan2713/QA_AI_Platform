@@ -150,7 +150,7 @@ class ResponseQualityAnalyzer:
     @staticmethod
     def check_semantic_relevance(body_text, expected_result):
         """
-        Uses local Ollama LLM to check if the response data is semantically relevant to expected result.
+        Uses configured LLM to check if the response data is semantically relevant to expected result.
         """
         # Skip checking if body or expectations are missing
         if not body_text or not expected_result:
@@ -159,12 +159,6 @@ class ResponseQualityAnalyzer:
         # Optimization: Skip small responses (e.g. status status messages or empty sets)
         if len(body_text) < 150:
             return None
-
-        from django.conf import settings
-        import requests
-
-        api_url = getattr(settings, 'OLLAMA_API_URL', 'http://localhost:11434/api/generate')
-        model = getattr(settings, 'OLLAMA_MODEL', 'qwen:7b')
 
         # Limit body size to 800 chars to avoid prompt context overload and speed up local inference
         truncated_body = body_text[:800]
@@ -186,29 +180,17 @@ For example:
 Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a one-sentence reason on the second line. Do not write any markdown code blocks or intro text.
 """
         try:
-            response = requests.post(
-                api_url,
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.1,
-                        "num_predict": 50  # Limit output length to 50 tokens to speed up local inference
-                    }
-                },
-                timeout=5  # Fast timeout (5s) to prevent task blocking if Ollama is slow/overloaded
-            )
-            if response.status_code == 200:
-                result_text = response.json().get("response", "").strip()
-                lines = [l.strip() for l in result_text.split('\n') if l.strip()]
-                if lines:
-                    verdict = lines[0].upper()
-                    reason = lines[1] if len(lines) > 1 else "LLM did not provide a reason."
-                    if "IRRELEVANT" in verdict:
-                        return f"API output content does not match expectations: {reason}"
+            from config.llm_config import get_llm, llm_predict
+            llm = get_llm()
+            result_text = llm_predict(llm, prompt).strip()
+            lines = [l.strip() for l in result_text.split('\n') if l.strip()]
+            if lines:
+                verdict = lines[0].upper()
+                reason = lines[1] if len(lines) > 1 else "LLM did not provide a reason."
+                if "IRRELEVANT" in verdict:
+                    return f"API output content does not match expectations: {reason}"
         except Exception as e:
-            logger.warning(f"Ollama semantic check failed: {e}")
+            logger.warning(f"LLM semantic check failed: {e}")
         return None
 
     @classmethod

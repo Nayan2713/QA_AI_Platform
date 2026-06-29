@@ -66,6 +66,7 @@ def detect_bugs(test_run_id):
             # Clear previous bugs for this test case to avoid duplicates across runs
             Bug.objects.filter(test_run__test_case=test_run.test_case).delete()
             
+            seen_bugs_in_run = set()
             for result in failed_results:
                 error_msg = result.error or "Unknown error occurred"
                 
@@ -152,6 +153,16 @@ def detect_bugs(test_run_id):
                             if matched_endpoint:
                                 break
                                 
+                # Deduplicate bugs within the same test run using a signature
+                norm_title = re.sub(r'Step \d+ Failed', 'Step Failed', title)
+                endpoint_id = matched_endpoint.id if matched_endpoint else 0
+                run_key = (norm_title, endpoint_id, severity)
+                
+                if run_key in seen_bugs_in_run:
+                    logger.info(f"Skipping duplicate bug ticket within the same run: {title}")
+                    continue
+                seen_bugs_in_run.add(run_key)
+                
                 # Create Bug
                 Bug.objects.create(
                     test_run=test_run,
@@ -176,3 +187,101 @@ def detect_bugs(test_run_id):
         "status": "SUCCESS",
         "bugs_found": bugs_created
     }
+
+
+@shared_task(bind=True, name="tasks.bug_detection.start_agentic_bug_detection")
+def start_agentic_bug_detection(self, app_id):
+    """
+    Celery task that triggers autonomous browser-use agent execution
+    to audit the entire application context and generate bug reports.
+    """
+    logger.info(f"Starting agentic bug detection task for application ID: {app_id}")
+    task_id = self.request.id or "dummy_task_id"
+    
+    from core.models import CeleryTask, Application
+    from tasks.discovery import run_async, run_in_thread
+    from django.utils import timezone
+    
+    def get_or_create_task():
+        obj, created = CeleryTask.objects.get_or_create(
+            task_id=task_id,
+            defaults={
+                'task_type': 'bug_detection',
+                'status': 'progress',
+                'progress': 10,
+                'result': {"status_text": "Starting agentic bug audit..."}
+            }
+        )
+        if not created:
+            obj.status = 'progress'
+            obj.progress = 10
+            obj.result = {"status_text": "Starting agentic bug audit..."}
+            obj.save()
+        return obj
+
+    task_record = run_in_thread(get_or_create_task)
+    
+    try:
+        app = run_in_thread(Application.objects.get, id=app_id)
+    except Application.DoesNotExist:
+        logger.error(f"Application with ID {app_id} does not exist.")
+        def handle_missing_app():
+            task_record.status = 'failed'
+            task_record.error = f"Application with ID {app_id} not found."
+            task_record.completed_at = timezone.now()
+            task_record.save()
+        run_in_thread(handle_missing_app)
+        return {"error": f"Application with ID {app_id} not found."}
+
+    try:
+        from services.browser_use_agent import BrowserUseAgent
+        
+        def run_agentic_bugs():
+            agent = BrowserUseAgent()
+            credentials = {
+                "username": app.username,
+                "password": app.password
+            } if app.username else None
+            
+            task_record.progress = 45
+            task_record.result = {"status_text": "AI agent actively auditing subpages and forms for defects..."}
+            task_record.save()
+            
+            return run_async(agent.detect_bugs(app, credentials))
+            
+        bugs_found = run_in_thread(run_agentic_bugs)
+        
+        def save_bugs():
+            with transaction.atomic():
+                for b_info in bugs_found:
+                    Bug.objects.create(
+                        application=app,
+                        bug_type=b_info.get("bug_type", "functional"),
+                        severity=b_info.get("severity", "medium"),
+                        title=b_info.get("title", "Discovered UI/Functional Bug"),
+                        description=b_info.get("description", "Error observed during crawler audit."),
+                        element_selector=b_info.get("element_selector"),
+                        status="open"
+                    )
+                
+                task_record.status = 'success'
+                task_record.progress = 100
+                task_record.result = {
+                    "bugs_found": len(bugs_found),
+                    "status_text": f"Agent finished audit. Discovered {len(bugs_found)} bug tickets."
+                }
+                task_record.completed_at = timezone.now()
+                task_record.save()
+                
+        run_in_thread(save_bugs)
+        return {"status": "SUCCESS", "bugs_found": len(bugs_found)}
+    except Exception as e:
+        logger.error(f"Agentic bug detection failed: {e}")
+        def handle_error():
+            task_record.status = 'failed'
+            task_record.error = str(e)
+            task_record.completed_at = timezone.now()
+            task_record.save()
+        run_in_thread(handle_error)
+        return {"status": "FAILED", "error": str(e)}
+

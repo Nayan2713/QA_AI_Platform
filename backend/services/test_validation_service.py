@@ -312,14 +312,8 @@ class TestValidationService:
     @staticmethod
     def llm_fix_selector(invalid_selector, action, value, elements):
         """
-        Asks the local Ollama LLM to map an invalid selector to a list of crawled elements.
+        Asks the configured LLM to map an invalid selector to a list of crawled elements.
         """
-        import requests
-        from django.conf import settings
-        
-        api_url = getattr(settings, 'OLLAMA_API_URL', 'http://localhost:11434/api/generate')
-        model = getattr(settings, 'OLLAMA_MODEL', 'qwen:7b')
-        
         elements_context = json.dumps(elements[:30], indent=1) # Limit to first 30 elements to prevent prompt bloating
         
         prompt = f"""You are a QA Automation script selector auditor.
@@ -338,24 +332,12 @@ For example:
 Respond with ONLY the selector string itself (e.g., "#email" or "button[type='submit']"). Do not write any explanations, markdown code blocks, or conversational text.
 """
         try:
-            response = requests.post(
-                api_url,
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.1,
-                        "num_predict": 30
-                    }
-                },
-                timeout=4
-            )
-            if response.status_code == 200:
-                verdict = response.json().get("response", "").strip()
-                # Clean clean response of quotes or markdown backticks
-                verdict = verdict.replace("`", "").replace('"', "").replace("'", "")
-                return verdict
+            from config.llm_config import get_llm, llm_predict
+            llm = get_llm()
+            verdict = llm_predict(llm, prompt).strip()
+            # Clean response of quotes or markdown backticks
+            verdict = verdict.replace("`", "").replace('"', "").replace("'", "")
+            return verdict
         except Exception as e:
-            logger.warning(f"Ollama selector auto-fix failed: {e}")
+            logger.warning(f"LLM selector auto-fix failed: {e}")
         return None

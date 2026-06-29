@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../lib/api';
-import { Application, TestCase, Bug, CeleryTask } from '../lib/types';
+import { Application, TestCase, Bug, CeleryTask, APIEndpoint, AgentSession } from '../lib/types';
 import { DiscoveryStatus } from './DiscoveryStatus';
 import { TestCaseList } from './TestCaseList';
 import { TestResults } from './TestResults';
@@ -27,9 +27,14 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [app, setApp] = useState<Application | null>(null);
   const [testCases, setTestCases] = useState<TestCase[]>([]);
   const [bugs, setBugs] = useState<Bug[]>([]);
+  const [apiEndpoints, setApiEndpoints] = useState<APIEndpoint[]>([]);
+  const [agentSessions, setAgentSessions] = useState<AgentSession[]>([]);
+  const [apiGraph, setApiGraph] = useState<{ nodes: any[]; links: any[] } | null>(null);
+  const [selectedApiAnalysis, setSelectedApiAnalysis] = useState<any | null>(null);
+  const [loadingApiAnalysisId, setLoadingApiAnalysisId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [discovering, setDiscovering] = useState(false);
-  const [activeTab, setActiveTab] = useState<'discovery' | 'tests' | 'bugs' | 'quality'>('discovery');
+  const [activeTab, setActiveTab] = useState<'discovery' | 'apis' | 'tests' | 'bugs' | 'sessions' | 'quality'>('discovery');
   const [showLoginError, setShowLoginError] = useState(false);
   
   // Track active execution
@@ -56,6 +61,26 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       // Fetch bugs
       const bugsRes = await api.get<Bug[]>(`bugs/?app=${appId}`);
       setBugs(bugsRes.data);
+      
+      // Fetch endpoints
+      const endpointsRes = await api.get<APIEndpoint[]>(`api-endpoints/?app=${appId}`);
+      setApiEndpoints(endpointsRes.data);
+
+      // Fetch sessions
+      try {
+        const sessionsRes = await api.get<AgentSession[]>(`agent-sessions/?app=${appId}`);
+        setAgentSessions(sessionsRes.data);
+      } catch (sessionErr) {
+        console.warn('Failed to fetch agent sessions:', sessionErr);
+      }
+
+      // Fetch graph
+      try {
+        const graphRes = await api.get<any>(`applications/${appId}/api-dependency-graph/`);
+        setApiGraph(graphRes.data);
+      } catch (graphErr) {
+        console.warn('Failed to fetch api dependency graph:', graphErr);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -291,6 +316,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           <p className="base-url-text">Base Domain: <code>{app.base_url}</code></p>
           <div className="app-details-metrics">
             <span className="metric-tag">📄 {app.page_count} Pages Discovered</span>
+            <span className="metric-tag">🔗 {app.api_count} APIs Discovered</span>
             <span className="metric-tag">📋 {app.test_case_count} Test Cases</span>
             <span className="metric-tag bug-metric">🐞 {app.bug_count} Bugs Detected</span>
             {app.login_url && (
@@ -560,6 +586,12 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             🔍 Discovery Details
           </button>
           <button 
+            className={`tab-btn ${activeTab === 'apis' ? 'active' : ''}`}
+            onClick={() => setActiveTab('apis')}
+          >
+            🔌 APIs & Graph ({apiEndpoints.length})
+          </button>
+          <button 
             className={`tab-btn ${activeTab === 'tests' ? 'active' : ''}`}
             onClick={() => setActiveTab('tests')}
           >
@@ -570,6 +602,12 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             onClick={() => setActiveTab('bugs')}
           >
             🐞 App Bugs ({bugs.length})
+          </button>
+          <button 
+            className={`tab-btn ${activeTab === 'sessions' ? 'active' : ''}`}
+            onClick={() => setActiveTab('sessions')}
+          >
+            🔑 Sessions & Auth
           </button>
           <button 
             className={`tab-btn ${activeTab === 'quality' ? 'active' : ''}`}
@@ -587,6 +625,136 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               discoverySource={app.discovery_source}
               onDiscoveryComplete={handleDiscoveryComplete}
             />
+          )}
+
+          {activeTab === 'apis' && (
+            <div className="glass-card api-status-card" style={{ padding: '20px' }}>
+              <div className="card-header" style={{ marginBottom: '20px' }}>
+                <div>
+                  <h3>🔌 Discovered API Catalog</h3>
+                  <p className="card-subtitle">REST, Axios, and GraphQL endpoints monitored during crawlers and runs.</p>
+                </div>
+              </div>
+              
+              <div className="api-endpoints-table-container" style={{ overflowX: 'auto', marginBottom: '30px' }}>
+                <table className="api-endpoints-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
+                      <th style={{ padding: '12px' }}>Method</th>
+                      <th style={{ padding: '12px' }}>Pattern</th>
+                      <th style={{ padding: '12px' }}>Auth Type</th>
+                      <th style={{ padding: '12px' }}>Schema</th>
+                      <th style={{ padding: '12px' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {apiEndpoints.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          No background APIs intercepted yet. Perform crawler discovery or execute test cases.
+                        </td>
+                      </tr>
+                    ) : (
+                      apiEndpoints.map((ep) => (
+                        <React.Fragment key={ep.id}>
+                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                            <td style={{ padding: '12px' }}>
+                              <span className={`badge-method method-${ep.method.toLowerCase()}`} style={{
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                fontWeight: 'bold',
+                                fontSize: '0.75rem',
+                                background: ep.method === 'GET' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(59, 130, 246, 0.2)',
+                                color: ep.method === 'GET' ? '#22c55e' : '#3b82f6'
+                              }}>
+                                {ep.method}
+                              </span>
+                            </td>
+                            <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: '0.85rem' }}>{ep.url_pattern}</td>
+                            <td style={{ padding: '12px' }}>{ep.auth_type || 'none'}</td>
+                            <td style={{ padding: '12px', fontSize: '0.8rem' }}>
+                              {ep.response_schema ? `${Object.keys(ep.response_schema).length} fields` : 'no schema'}
+                            </td>
+                            <td style={{ padding: '12px' }}>
+                              <button 
+                                className="btn-secondary" 
+                                style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                                onClick={async () => {
+                                  if (selectedApiAnalysis?.endpoint_id === ep.id) {
+                                    setSelectedApiAnalysis(null);
+                                    return;
+                                  }
+                                  setLoadingApiAnalysisId(ep.id);
+                                  try {
+                                    const analysisRes = await api.get(`api-endpoints/${ep.id}/analyze/`);
+                                    setSelectedApiAnalysis(analysisRes.data);
+                                  } catch (err) {
+                                    console.error(err);
+                                  } finally {
+                                    setLoadingApiAnalysisId(null);
+                                  }
+                                }}
+                              >
+                                {loadingApiAnalysisId === ep.id ? 'Loading...' : selectedApiAnalysis?.endpoint_id === ep.id ? 'Hide Analysis' : 'Analyze API'}
+                              </button>
+                            </td>
+                          </tr>
+                          {selectedApiAnalysis?.endpoint_id === ep.id && (
+                            <tr>
+                              <td colSpan={5} style={{ background: 'rgba(0,0,0,0.2)', padding: '16px' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                  <div>
+                                    <h4 style={{ margin: '0 0 8px 0', color: '#60a5fa' }}>📈 Live Metrics & Health</h4>
+                                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px' }}>
+                                      <p><strong>Health Score:</strong> {selectedApiAnalysis.health_score} / 100</p>
+                                      <p><strong>Total Calls:</strong> {selectedApiAnalysis.total_calls_tracked}</p>
+                                      <p><strong>Average Latency:</strong> {selectedApiAnalysis.latency.avg_ms} ms</p>
+                                      <p><strong>Status Failures:</strong> {selectedApiAnalysis.failures.status_errors}</p>
+                                      <p><strong>Schema Violations:</strong> {selectedApiAnalysis.failures.schema_violations}</p>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <h4 style={{ margin: '0 0 8px 0', color: '#60a5fa' }}>📄 Response Schema contract</h4>
+                                    <pre style={{ background: '#111827', padding: '12px', borderRadius: '6px', fontSize: '0.75rem', margin: 0, maxHeight: '150px', overflowY: 'auto' }}>
+                                      {JSON.stringify(ep.response_schema, null, 2)}
+                                    </pre>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Dependency Graph visual list */}
+              {apiGraph && apiGraph.links.length > 0 && (
+                <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px' }}>
+                  <h4>🕸️ API Dependency Flow Graph</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                    {apiGraph.links.map((link, lIdx) => {
+                      const srcNode = apiGraph.nodes.find(n => n.id === link.source);
+                      const tgtNode = apiGraph.nodes.find(n => n.id === link.target);
+                      if (!srcNode || !tgtNode) return null;
+                      return (
+                        <div key={lIdx} style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(255,255,255,0.03)', padding: '8px 12px', borderRadius: '6px' }}>
+                          <span style={{ fontSize: '0.8rem', color: '#10b981', fontFamily: 'monospace' }}>{srcNode.label}</span>
+                          <span style={{ color: 'rgba(255,255,255,0.4)' }}>➔</span>
+                          <span style={{ background: 'rgba(96,165,250,0.2)', color: '#60a5fa', fontSize: '0.75rem', padding: '2px 6px', borderRadius: '4px' }}>
+                            pass {link.parameters.join(', ')}
+                          </span>
+                          <span style={{ color: 'rgba(255,255,255,0.4)' }}>➔</span>
+                          <span style={{ fontSize: '0.8rem', color: '#f59e0b', fontFamily: 'monospace' }}>{tgtNode.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {activeTab === 'tests' && (
@@ -614,6 +782,133 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               onRunTestCase={handleRunTestCase}
               activeTaskId={activeTaskId}
             />
+          )}
+
+          {activeTab === 'sessions' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* Storage State Section */}
+              <div className="glass-card" style={{ padding: '20px' }}>
+                <h3>🔑 Active Storage & Session State</h3>
+                <p className="card-subtitle">Active credentials, cookies, and local storage variables preserved from Playwright runs.</p>
+                
+                {(() => {
+                  let cookies: any[] = [];
+                  let origins: any[] = [];
+                  try {
+                    if (app?.storage_state) {
+                      const parsed = JSON.parse(app.storage_state);
+                      cookies = parsed.cookies || [];
+                      origins = parsed.origins || [];
+                    }
+                  } catch (err) {}
+                  
+                  return (
+                    <div style={{ marginTop: '16px' }}>
+                      <h4 style={{ color: '#60a5fa', marginBottom: '8px' }}>🍪 Preserved Session Cookies</h4>
+                      <div style={{ overflowX: 'auto', marginBottom: '24px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
+                              <th style={{ padding: '8px' }}>Name</th>
+                              <th style={{ padding: '8px' }}>Domain</th>
+                              <th style={{ padding: '8px' }}>Value</th>
+                              <th style={{ padding: '8px' }}>Path</th>
+                              <th style={{ padding: '8px' }}>Expiry</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cookies.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} style={{ padding: '12px', textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
+                                  No session cookies captured yet. Login has not been executed or session was cleared.
+                                </td>
+                              </tr>
+                            ) : (
+                              cookies.map((c, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                  <td style={{ padding: '8px', fontWeight: 'bold' }}>{c.name}</td>
+                                  <td style={{ padding: '8px' }}>{c.domain}</td>
+                                  <td style={{ padding: '8px', fontFamily: 'monospace', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.value}</td>
+                                  <td style={{ padding: '8px' }}>{c.path}</td>
+                                  <td style={{ padding: '8px' }}>{c.expires ? new Date(c.expires * 1000).toLocaleDateString() : 'Session'}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      
+                      <h4 style={{ color: '#60a5fa', marginBottom: '8px' }}>📦 Local Storage Preserves</h4>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
+                              <th style={{ padding: '8px' }}>Origin</th>
+                              <th style={{ padding: '8px' }}>Key</th>
+                              <th style={{ padding: '8px' }}>Value</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {origins.length === 0 ? (
+                              <tr>
+                                <td colSpan={3} style={{ padding: '12px', textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
+                                  No Local Storage records captured yet.
+                                </td>
+                              </tr>
+                            ) : (
+                              origins.flatMap((originObj: any) => {
+                                const localStorageItems = originObj.localStorage || [];
+                                if (localStorageItems.length === 0) return [];
+                                return localStorageItems.map((item: any, idx: number) => (
+                                  <tr key={`${originObj.origin}-${idx}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                    <td style={{ padding: '8px', color: 'rgba(255,255,255,0.5)' }}>{originObj.origin}</td>
+                                    <td style={{ padding: '8px', fontWeight: 'bold' }}>{item.name}</td>
+                                    <td style={{ padding: '8px', fontFamily: 'monospace', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.value}</td>
+                                  </tr>
+                                ));
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              
+              {/* Agent Sessions list */}
+              <div className="glass-card" style={{ padding: '20px' }}>
+                <h3>🤖 Autonomous Agent Log Sessions</h3>
+                <p className="card-subtitle">Trace history of Browser-Use reasoning and goal planning runs.</p>
+                <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {agentSessions.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
+                      No agent session logs recorded yet.
+                    </div>
+                  ) : (
+                    agentSessions.map((session) => (
+                      <div key={session.id} style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', padding: '12px', background: 'rgba(255,255,255,0.01)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                          <strong>{session.task_type.toUpperCase()} session ({session.llm_model})</strong>
+                          <span className={`badge-status status-${session.status}`} style={{
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 'bold',
+                            background: session.status === 'completed' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
+                            color: session.status === 'completed' ? '#22c55e' : '#ef4444'
+                          }}>{session.status}</span>
+                        </div>
+                        <p style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'rgba(255,255,255,0.85)' }}>{session.result_summary}</p>
+                        <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)' }}>
+                          Duration: {session.duration_seconds?.toFixed(1)}s | Tokens: {session.tokens_used} | Executed: {new Date(session.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
           )}
 
           {activeTab === 'quality' && (

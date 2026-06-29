@@ -1,16 +1,22 @@
 import logging
+import json
+import asyncio
+import re
+import time
+import requests
 from urllib.parse import urljoin, urlparse
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
 class BrowserDiscoveryService:
-    def __init__(self, max_pages=10):
+    def __init__(self, max_pages=100):
         self.max_pages = max_pages
         self.discovered_pages = {}
         self.visited_urls = set()
         self.login_successful = None
         self.login_error_message = None
+        self.dom_fingerprints = set()
 
     def is_same_domain(self, url, base_url, login_url=None):
         netloc1 = urlparse(url).netloc.lower()
@@ -25,7 +31,7 @@ class BrowserDiscoveryService:
                 return True
         return False
 
-    def perform_login(self, page, login_url, username, password):
+    async def perform_login(self, page, login_url, username, password):
         """
         Navigates to the login page, identifies common username/password fields,
         fills them, and clicks submit.
@@ -33,60 +39,51 @@ class BrowserDiscoveryService:
         logger.info(f"Attempting login at {login_url}")
         try:
             try:
-                page.goto(login_url, wait_until="domcontentloaded", timeout=20000)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=3000)
-                except Exception:
-                    pass
+                await page.goto(login_url, wait_until="domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(1000)
             except Exception as goto_err:
                 logger.warning(f"Navigation to login page had an issue/timeout: {goto_err}. Trying to proceed anyway...")
             
-            # Common username field selectors
             username_selectors = [
                 "input[name='username']", "input[name='email']", "input[id='username']", 
                 "input[id='email']", "input[type='email']", "input[type='text']"
             ]
-            # Common password field selectors
             password_selectors = [
                 "input[type='password']", "input[name='password']", "input[id='password']"
             ]
-            # Common submit buttons
             submit_selectors = [
                 "button[type='submit']", "input[type='submit']", "button:has-text('Login')", 
                 "button:has-text('Sign In')", "button:has-text('Log In')"
             ]
 
-            # Try to find username input
             user_el = None
             for sel in username_selectors:
                 try:
-                    if page.locator(sel).first.is_visible():
+                    if await page.locator(sel).first.is_visible():
                         user_el = page.locator(sel).first
                         break
                 except Exception:
                     continue
 
-            # Try to find password input
             pass_el = None
             for sel in password_selectors:
                 try:
-                    if page.locator(sel).first.is_visible():
+                    if await page.locator(sel).first.is_visible():
                         pass_el = page.locator(sel).first
                         break
                 except Exception:
                     continue
 
             if user_el and pass_el:
-                user_el.fill(username)
-                pass_el.fill(password)
+                await user_el.fill(username)
+                await pass_el.fill(password)
                 logger.info("Credentials filled in.")
                 
-                # Click submit
                 submitted = False
                 for sel in submit_selectors:
                     try:
-                        if page.locator(sel).first.is_visible():
-                            page.locator(sel).first.click()
+                        if await page.locator(sel).first.is_visible():
+                            await page.locator(sel).first.click()
                             submitted = True
                             logger.info(f"Clicked login button using selector: {sel}")
                             break
@@ -94,17 +91,15 @@ class BrowserDiscoveryService:
                         continue
                 
                 if not submitted:
-                    # Fallback press Enter
-                    pass_el.press("Enter")
+                    await pass_el.press("Enter")
                     logger.info("Pressed Enter as submit fallback.")
 
-                page.wait_for_timeout(3000) # Wait a bit for transition
+                await page.wait_for_timeout(3000)
                 
-                # Heuristic check: URL changed or password input disappeared
                 still_has_password = False
                 for sel in password_selectors:
                     try:
-                        if page.locator(sel).first.is_visible():
+                        if await page.locator(sel).first.is_visible():
                             still_has_password = True
                             break
                     except Exception:
@@ -121,7 +116,7 @@ class BrowserDiscoveryService:
                     self.login_error_message = f"Login failed heuristic: browser stayed on login URL '{current_url}' and password field is still visible."
                     logger.warning(f"Login failed heuristic triggered. Still on login URL: {current_url}")
             else:
-                self.login_error_message = "Login failed: could not find standard username/email and password fields on the login page."
+                self.login_error_message = "Login failed: could not find username/email and password fields."
                 logger.warning("Could not identify login fields.")
                 self.login_successful = False
         except Exception as e:
@@ -129,192 +124,238 @@ class BrowserDiscoveryService:
             logger.error(f"Login failed: {e}")
             self.login_successful = False
 
-    def extract_forms(self, page):
+    async def get_dom_fingerprint(self, page):
         """
-        Finds all forms on the current page and extracts fields, action, and method.
-        Also finds standalone input elements outside forms and groups them as a virtual form.
+        Generates a tag-hierarchy signature of the DOM to skip duplicate structures.
         """
+        try:
+            fingerprint = await page.evaluate("""() => {
+                const tags = [];
+                const walk = (node, depth = 0) => {
+                    if (!node || depth > 6) return;
+                    const tag = node.tagName?.toLowerCase();
+                    if (tag && !['script', 'style', 'noscript', 'svg', 'path'].includes(tag)) {
+                        tags.push(tag);
+                        if (node.children) {
+                            for (const child of node.children) {
+                                walk(child, depth + 1);
+                            }
+                        }
+                    }
+                };
+                walk(document.body);
+                return tags.join('-');
+            }""")
+            return fingerprint
+        except Exception:
+            return ""
+
+    async def extract_forms(self, page):
         forms_data = []
         try:
-            # 1. Standard forms
-            forms = page.locator("form").all()
-            for idx, form in enumerate(forms):
-                form_id = form.get_attribute("id") or form.get_attribute("name") or f"form_{idx}"
-                action = form.get_attribute("action") or ""
-                method = form.get_attribute("method") or "get"
-                
-                fields = []
-                # Find inputs, selects, textareas inside this form
-                inputs = form.locator("input, select, textarea").all()
-                for inp in inputs:
-                    inp_type = inp.get_attribute("type") or "text"
-                    if inp_type.lower() == "hidden":
-                        continue
-                        
-                    inp_name = inp.get_attribute("name")
-                    inp_id = inp.get_attribute("id") or ""
-                    
-                    # Ignore buttons and hidden fields if not needed, but keep names/IDs for filling
-                    if inp_name or inp_id:
-                        fields.append({
-                            "name": inp_name or "",
-                            "type": inp_type,
-                            "id": inp_id or ""
-                        })
-                
-                forms_data.append({
-                    "id": form_id,
-                    "fields": fields,
-                    "action": action,
-                    "method": method
-                })
+            contexts = [page]
+            for frame in page.frames:
+                if frame.url and not frame.url.startswith("javascript:"):
+                    contexts.append(frame)
 
-            # 2. Standalone inputs (not inside any form tag)
-            standalone_fields = []
-            all_inputs = page.locator("input, select, textarea").all()
-            for inp in all_inputs:
-                try:
-                    # Check if this input has a form ancestor in JS
-                    is_inside_form = inp.evaluate("el => el.closest('form') !== null")
-                    if is_inside_form:
-                        continue
+            for ctx in contexts:
+                forms = await ctx.locator("form").all()
+                for idx, form in enumerate(forms):
+                    try:
+                        form_id = await form.get_attribute("id") or await form.get_attribute("name") or f"form_{idx}"
+                        action = await form.get_attribute("action") or ""
+                        method = await form.get_attribute("method") or "get"
                         
-                    inp_type = inp.get_attribute("type") or "text"
-                    if inp_type.lower() in ["hidden", "submit", "button", "image"]:
-                        continue
-                        
-                    inp_name = inp.get_attribute("name")
-                    inp_id = inp.get_attribute("id") or ""
-                    
-                    if inp_name or inp_id:
-                        standalone_fields.append({
-                            "name": inp_name or "",
-                            "type": inp_type,
-                            "id": inp_id or ""
+                        fields = []
+                        inputs = await form.locator("input, select, textarea").all()
+                        for inp in inputs:
+                            inp_type = await inp.get_attribute("type") or "text"
+                            if inp_type.lower() == "hidden":
+                                continue
+                            inp_name = await inp.get_attribute("name")
+                            inp_id = await inp.get_attribute("id") or ""
+                            
+                            if inp_name or inp_id:
+                                fields.append({
+                                    "name": inp_name or "",
+                                    "type": inp_type,
+                                    "id": inp_id or ""
+                                })
+                        forms_data.append({
+                            "id": form_id,
+                            "fields": fields,
+                            "action": action,
+                            "method": method
                         })
-                except Exception as eval_err:
-                    logger.debug(f"Error checking standalone input element: {eval_err}")
-                    
-            if standalone_fields:
-                forms_data.append({
-                    "id": "standalone_fields",
-                    "fields": standalone_fields,
-                    "action": "",
-                    "method": "standalone"
-                })
+                    except Exception:
+                        continue
+
+                standalone_fields = []
+                all_inputs = await ctx.locator("input, select, textarea").all()
+                for inp in all_inputs:
+                    try:
+                        is_inside_form = await inp.evaluate("el => el.closest('form') !== null")
+                        if is_inside_form:
+                            continue
+                        inp_type = await inp.get_attribute("type") or "text"
+                        if inp_type.lower() in ["hidden", "submit", "button", "image"]:
+                            continue
+                        inp_name = await inp.get_attribute("name")
+                        inp_id = await inp.get_attribute("id") or ""
+                        if inp_name or inp_id:
+                            standalone_fields.append({
+                                "name": inp_name or "",
+                                "type": inp_type,
+                                "id": inp_id or ""
+                            })
+                    except Exception:
+                        continue
+                if standalone_fields:
+                    forms_data.append({
+                        "id": "standalone_fields",
+                        "fields": standalone_fields,
+                        "action": "",
+                        "method": "standalone"
+                    })
         except Exception as e:
-            logger.error(f"Error extracting forms and standalone inputs: {e}")
+            logger.error(f"Error extracting forms: {e}")
         return forms_data
 
-    def extract_buttons(self, page):
-        """
-        Finds buttons and interactive clickable elements (div buttons, custom links, etc.) on the page.
-        """
+    async def extract_buttons(self, page):
         buttons_data = []
         try:
-            buttons = page.locator("button, input[type='button'], input[type='submit'], a.btn, a.button, [role='button'], [onclick]").all()
-            for idx, btn in enumerate(buttons):
-                # Skip hidden elements
-                if not btn.is_visible():
-                    continue
-                text = btn.inner_text().strip() or btn.get_attribute("value") or ""
-                if not text:
-                    text = btn.get_attribute("title") or f"Button {idx}"
-                
-                # Generate a unique and safe selector using browser-side JS
-                selector = btn.evaluate("""el => {
-                    const getSelector = (element) => {
-                        // 1. Try ID (must be unique)
-                        if (element.id) {
-                            try {
-                                if (document.querySelectorAll('#' + CSS.escape(element.id)).length === 1) {
-                                    return '#' + element.id;
-                                }
-                            } catch(e) {}
-                        }
-                        // 2. Try Name (must be unique)
-                        const name = element.getAttribute('name');
-                        if (name) {
-                            try {
-                                const tag = element.tagName.toLowerCase();
-                                if (document.querySelectorAll(`${tag}[name="${CSS.escape(name)}"]`).length === 1) {
-                                    return `${tag}[name="${name}"]`;
-                                }
-                            } catch(e) {}
-                        }
-                        // 3. Fallback to unique XPath
-                        const getXPath = (el) => {
-                            if (el.id) return `//*[@id="${el.id}"]`;
-                            if (el === document.body) return '/html/body';
-                            let ix = 0;
-                            const siblings = el.parentNode.childNodes;
-                            for (let i = 0; i < siblings.length; i++) {
-                                const sibling = siblings[i];
-                                if (sibling === el) {
-                                    return getXPath(el.parentNode) + '/' + el.tagName.toLowerCase() + '[' + (ix + 1) + ']';
-                                }
-                                if (sibling.nodeType === 1 && sibling.tagName === el.tagName) {
-                                    ix++;
-                                }
-                            }
-                            return '';
-                        };
-                        return 'xpath=' + getXPath(element);
-                    };
-                    return getSelector(el);
-                }""")
+            contexts = [page]
+            for frame in page.frames:
+                if frame.url and not frame.url.startswith("javascript:"):
+                    contexts.append(frame)
 
-                buttons_data.append({
-                    "text": text,
-                    "selector": selector
-                })
+            for ctx in contexts:
+                buttons = await ctx.locator("button, input[type='button'], input[type='submit'], a.btn, a.button, [role='button'], [onclick]").all()
+                for idx, btn in enumerate(buttons):
+                    try:
+                        if not await btn.is_visible():
+                            continue
+                        text = (await btn.inner_text()).strip() or await btn.get_attribute("value") or ""
+                        if not text:
+                            text = await btn.get_attribute("title") or f"Button {idx}"
+                        
+                        selector = await btn.evaluate("""el => {
+                            const getSelector = (element) => {
+                                if (element.id) {
+                                    try {
+                                        if (document.querySelectorAll('#' + CSS.escape(element.id)).length === 1) {
+                                            return '#' + element.id;
+                                        }
+                                    } catch(e) {}
+                                }
+                                const name = element.getAttribute('name');
+                                if (name) {
+                                    try {
+                                        const tag = element.tagName.toLowerCase();
+                                        if (document.querySelectorAll(`${tag}[name="${CSS.escape(name)}"]`).length === 1) {
+                                            return `${tag}[name="${name}"]`;
+                                        }
+                                    } catch(e) {}
+                                }
+                                const getXPath = (el) => {
+                                    if (el.id) return `//*[@id="${el.id}"]`;
+                                    if (el === document.body) return '/html/body';
+                                    let ix = 0;
+                                    const siblings = el.parentNode.childNodes;
+                                    for (let i = 0; i < siblings.length; i++) {
+                                        const sibling = siblings[i];
+                                        if (sibling === el) {
+                                            return getXPath(el.parentNode) + '/' + el.tagName.toLowerCase() + '[' + (ix + 1) + ']';
+                                        }
+                                        if (sibling.nodeType === 1 && sibling.tagName === el.tagName) {
+                                            ix++;
+                                        }
+                                    }
+                                    return '';
+                                };
+                                return 'xpath=' + getXPath(element);
+                            };
+                            return getSelector(el);
+                        }""")
+                        buttons_data.append({
+                            "text": text,
+                            "selector": selector
+                        })
+                    except Exception:
+                        continue
         except Exception as e:
             logger.error(f"Error extracting buttons: {e}")
         return buttons_data
 
+    async def discover_openapi(self, base_url):
+        common_paths = [
+            "/swagger.json", "/openapi.json", "/api/docs", "/v2/api-docs",
+            "/api/swagger.json", "/api/v1/swagger.json", "/api/v2/swagger.json",
+            "/api/openapi.json", "/api/v1/openapi.json"
+        ]
+        parsed_apis = []
+        for path in common_paths:
+            target_url = urljoin(base_url, path)
+            try:
+                resp = await asyncio.to_thread(requests.get, target_url, timeout=2.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    paths = data.get("paths", {})
+                    for api_path, methods in paths.items():
+                        for method, val in methods.items():
+                            if method.upper() in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']:
+                                parsed_apis.append({
+                                    "method": method.upper(),
+                                    "url": urljoin(base_url, api_path),
+                                    "status": 200,
+                                    "body": "{}",
+                                    "request_body": "{}",
+                                    "auth_type": "none"
+                                })
+                    logger.info(f"OpenAPI endpoints discovered: {target_url}")
+                    break
+            except Exception:
+                continue
+        return parsed_apis
 
-    def discover(self, start_url, login_url=None, username=None, password=None, storage_state=None, on_progress=None):
+    async def discover(self, start_url, login_url=None, username=None, password=None, storage_state=None, on_progress=None):
         """
-        Performs the complete page discovery using Playwright.
-        Registers API listeners early, handles session persistence, and returns
-        discovered pages, storage state, and captured api logs.
+        High-performance concurrent async page crawler sharing session contexts.
         """
         logger.info(f"Starting browser discovery for URL: {start_url}")
-        import json
         
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
             
-            context_kwargs = {}
-            if storage_state:
+            context_kwargs = {
+                "viewport": {"width": 1280, "height": 720},
+                "ignore_https_errors": True
+            }
+            if storage_state and not (login_url and username and password):
                 try:
                     context_kwargs['storage_state'] = json.loads(storage_state) if isinstance(storage_state, str) else storage_state
-                    logger.info("Loaded pre-existing storage state for discovery context.")
                 except Exception as parse_err:
-                    logger.error(f"Failed to parse storage state JSON: {parse_err}")
+                    logger.error(f"Failed parsing storage state: {parse_err}")
             
-            context = browser.new_context(**context_kwargs)
-            page = context.new_page()
+            context = await browser.new_context(**context_kwargs)
+            page = await context.new_page()
             
-            # API Interception setup (before any navigation/login)
+            # API logs holder
             api_logs = []
             request_timestamps = {}
+            api_logs_lock = asyncio.Lock()
 
-            def capture_network_request(request):
+            async def capture_network_request(request):
                 try:
                     if request.resource_type in ['xhr', 'fetch']:
-                        import time
                         request_timestamps[request.url] = time.time()
                 except Exception:
                     pass
 
-            page.on("request", capture_network_request)
-
-            def capture_network_api(response):
+            async def capture_network_api(response):
                 try:
                     resource_type = response.request.resource_type
                     if resource_type in ['xhr', 'fetch']:
-                        import time
                         start_time = request_timestamps.get(response.url)
                         latency = int((time.time() - start_time) * 1000) if start_time else 0
 
@@ -322,11 +363,17 @@ class BrowserDiscoveryService:
                         try:
                             content_type = response.headers.get("content-type", "").lower()
                             if any(t in content_type for t in ["json", "text", "javascript", "xml"]):
-                                body_text = response.text()
+                                raw_bytes = await response.body()
+                                if raw_bytes.startswith(b'\x1f\x8b'):
+                                    import gzip
+                                    try:
+                                        raw_bytes = gzip.decompress(raw_bytes)
+                                    except Exception:
+                                        pass
+                                body_text = raw_bytes.decode('utf-8', errors='replace')
                         except Exception:
                             pass
 
-                        # Detect auth type
                         auth_type = None
                         headers = response.request.headers
                         if 'authorization' in headers:
@@ -334,173 +381,250 @@ class BrowserDiscoveryService:
                         elif 'cookie' in headers:
                             auth_type = 'cookie'
 
-                        # Safely retrieve post_data as string or fallback to bytes details if not UTF-8
-                        request_body = ""
+                        request_body = response.request.post_data or ""
+
+                        page_url = ""
                         try:
-                            request_body = response.request.post_data or ""
+                            page_url = response.frame.url
                         except Exception:
-                            try:
-                                post_bytes = response.request.post_data_bytes
-                                if post_bytes:
-                                    request_body = f"<binary data: {len(post_bytes)} bytes>"
-                            except Exception:
-                                pass
+                            pass
 
-                        api_logs.append({
-                            "method": response.request.method,
-                            "url": response.url,
-                            "status": response.status,
-                            "body": body_text,
-                            "latency": latency,
-                            "auth_type": auth_type,
-                            "request_body": request_body
-                        })
+                        async with api_logs_lock:
+                            api_logs.append({
+                                "method": response.request.method,
+                                "url": response.url,
+                                "status": response.status,
+                                "body": body_text,
+                                "latency": latency,
+                                "auth_type": auth_type,
+                                "request_body": request_body,
+                                "page_url": page_url
+                            })
                 except Exception as net_err:
-                    logger.error(f"Error logging network response during crawl: {net_err}")
+                    logger.error(f"Error logging response: {net_err}")
 
+            page.on("request", capture_network_request)
             page.on("response", capture_network_api)
             
-            # Queue of links to visit
-            to_visit = [start_url]
-            pages_list = []
-            
-            # Optional login phase
+            # 1. Pre-login pass
+            logged_in = False
+            post_login_url = None
             if login_url and username and password:
-                already_logged_in = False
-                if storage_state:
-                    try:
-                        logger.info("Verifying if existing session is valid...")
-                        page.goto(start_url, wait_until="domcontentloaded", timeout=15000)
-                        page.wait_for_timeout(1000)
-                        
-                        # If we aren't on the login URL and don't see password fields, we are logged in
-                        if page.url.split('?')[0].rstrip('/') != login_url.split('?')[0].rstrip('/'):
-                            still_has_password = False
-                            password_selectors = ["input[type='password']", "input[name='password']", "input[id='password']"]
-                            for sel in password_selectors:
-                                try:
-                                    if page.locator(sel).first.is_visible():
-                                        still_has_password = True
-                                        break
-                                except Exception:
-                                    continue
-                            if not still_has_password:
-                                already_logged_in = True
-                                self.login_successful = True
-                                logger.info("Already logged in using pre-existing session. Skipping login step.")
-                    except Exception as goto_err:
-                        logger.warning(f"Failed checking pre-existing session: {goto_err}")
-                
-                if not already_logged_in:
-                    self.perform_login(page, login_url, username, password)
-                    if self.login_successful:
-                        post_login_url = page.url
-                        if post_login_url not in to_visit:
-                            to_visit.insert(0, post_login_url)
+                await self.perform_login(page, login_url, username, password)
+                if self.login_successful:
+                    logged_in = True
+                    post_login_url = page.url
+                    logger.info(f"Pre-login step finished successfully. Post-login URL: {post_login_url}")
+                else:
+                    logger.warning(f"Pre-login step failed: {self.login_error_message}")
             
-            while to_visit and len(pages_list) < self.max_pages:
-                current_url = to_visit.pop(0)
-                if current_url in self.visited_urls:
-                    continue
-                
-                self.visited_urls.add(current_url)
-                logger.info(f"Crawling page: {current_url}")
-                
-                if on_progress:
-                    try:
-                        on_progress(current_url, len(pages_list))
-                    except Exception as progress_err:
-                        logger.error(f"Error calling progress callback: {progress_err}")
-                
+            pages_list = []
+            to_visit = []
+            
+            # Extract links from post-login URL first if logged in
+            if logged_in and post_login_url:
                 try:
-                    page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
-                    try:
-                        page.wait_for_load_state("networkidle", timeout=3000)
-                    except Exception:
-                        pass
-                    page.wait_for_timeout(2000) # Give extra 2 seconds for JS execution & hydration
-                    
-                    title = page.title()
-                    forms = self.extract_forms(page)
-                    buttons = self.extract_buttons(page)
+                    logger.info(f"Booting queue from post-login landing URL: {post_login_url}")
+                    title = await page.title()
+                    forms = await self.extract_forms(page)
+                    buttons = await self.extract_buttons(page)
                     
                     pages_list.append({
-                        "url": current_url,
+                        "url": post_login_url,
                         "title": title,
                         "forms": forms,
-                        "buttons": buttons
+                        "buttons": buttons,
+                        "page_type": "dashboard"
                     })
                     
-                    # 1. Extract link tags on the page for further traversal
-                    links = page.locator("a").all()
+                    links = await page.locator("a").all()
                     for link in links:
-                        href = link.get_attribute("href")
-                        if href:
-                            absolute_url = urljoin(current_url, href)
-                            # Remove query params / hashes for deduplication
-                            normalized_url = absolute_url.split('#')[0].split('?')[0]
-                            if (self.is_same_domain(normalized_url, start_url, login_url) and 
-                                     normalized_url not in self.visited_urls and 
-                                     normalized_url not in to_visit):
-                                to_visit.append(normalized_url)
-
-                    # 2. Click buttons/interactive elements to find dynamic SPA client-side routes
-                    for btn_info in buttons[:15]:  # Check up to 15 buttons per page
-                        selector = btn_info.get("selector")
-                        text = btn_info.get("text", "").lower()
-                        if not selector:
-                            continue
-                        
-                        # Skip typical form submit buttons or logout buttons to prevent session termination
-                        if "submit" in text or "submit" in selector:
-                            continue
-                        if any(logout_kw in text for logout_kw in ["logout", "log out", "signout", "sign out", "exit"]):
-                            continue
-                        
                         try:
-                            button_el = page.locator(selector).first
-                            if button_el and button_el.is_visible() and button_el.is_enabled():
-                                button_el.click(timeout=1500, force=True)
-                                page.wait_for_timeout(600)  # Pause to allow route transition
-                                
-                                new_url = page.url
-                                normalized_new = new_url.split('#')[0].split('?')[0]
-                                
-                                if (normalized_new != current_url.split('#')[0].split('?')[0] and 
-                                        self.is_same_domain(normalized_new, start_url, login_url) and 
-                                        normalized_new not in self.visited_urls and 
-                                        normalized_new not in to_visit):
-                                    to_visit.append(normalized_new)
-                                    logger.info(f"Discovered new client-side route via button click: {normalized_new}")
-                                
-                                # Navigate back to continue clicking other buttons on the original page
-                                if page.url != current_url:
-                                    page.goto(current_url, wait_until="domcontentloaded", timeout=10000)
-                                    page.wait_for_timeout(400)
-                        except Exception as click_err:
-                            logger.debug(f"Skipping button click check on selector {selector}: {click_err}")
-                            try:
-                                if page.url != current_url:
-                                    page.goto(current_url, wait_until="domcontentloaded", timeout=10000)
-                            except Exception:
-                                pass
-                                
-                except Exception as e:
-                    logger.error(f"Failed to crawl {current_url}: {e}")
+                            href = await link.get_attribute("href")
+                            if href:
+                                abs_url = urljoin(post_login_url, href)
+                                norm_url = abs_url.split('#')[0].split('?')[0]
+                                if self.is_same_domain(norm_url, start_url, login_url):
+                                    to_visit.append(norm_url)
+                        except Exception:
+                            continue
+                except Exception as post_login_err:
+                    logger.error(f"Failed extracting from post-login URL: {post_login_err}")
+
+            # Also scan start URL (public page)
+            if not pages_list or (start_url.split('#')[0].split('?')[0] != page.url.split('#')[0].split('?')[0]):
+                try:
+                    logger.info(f"Navigating to start URL: {start_url}")
+                    await page.goto(start_url, wait_until="domcontentloaded", timeout=20000)
+                    await page.wait_for_timeout(1000)
                     
-            # Capture final storage state if login was attempted or completed
+                    title = await page.title()
+                    forms = await self.extract_forms(page)
+                    buttons = await self.extract_buttons(page)
+                    
+                    pages_list.append({
+                        "url": start_url,
+                        "title": title,
+                        "forms": forms,
+                        "buttons": buttons,
+                        "page_type": "home"
+                    })
+                    
+                    links = await page.locator("a").all()
+                    for link in links:
+                        try:
+                            href = await link.get_attribute("href")
+                            if href:
+                                abs_url = urljoin(start_url, href)
+                                norm_url = abs_url.split('#')[0].split('?')[0]
+                                if self.is_same_domain(norm_url, start_url, login_url):
+                                    to_visit.append(norm_url)
+                        except Exception:
+                            continue
+                except Exception as e:
+                    logger.error(f"Failed loading start URL: {e}")
+                    
+            # Close original page to clean up context before workers
+            await page.close()
+            
+            # 2. Run 3 Parallel workers
+            to_visit_queue = asyncio.Queue()
+            for url in to_visit:
+                await to_visit_queue.put(url)
+                
+            visited_urls = self.visited_urls
+            visited_urls.add(start_url)
+            if login_url:
+                visited_urls.add(login_url)
+                
+            async def crawl_worker(worker_id):
+                logger.info(f"Starting crawl worker {worker_id}")
+                worker_page = await context.new_page()
+                worker_page.on("request", capture_network_request)
+                worker_page.on("response", capture_network_api)
+                
+                while not to_visit_queue.empty() and len(pages_list) < self.max_pages:
+                    try:
+                        current_url = await asyncio.wait_for(to_visit_queue.get(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        break
+                        
+                    if current_url in visited_urls:
+                        to_visit_queue.task_done()
+                        continue
+                        
+                    visited_urls.add(current_url)
+                    logger.info(f"Worker {worker_id} visiting: {current_url}")
+                    
+                    if on_progress:
+                        try:
+                            on_progress(current_url, len(pages_list))
+                        except Exception:
+                            pass
+                            
+                    try:
+                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=12000)
+                        await worker_page.wait_for_timeout(800)
+                        
+                        # Scroll to trigger lazy elements
+                        await worker_page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        await worker_page.wait_for_timeout(400)
+                        
+                        fingerprint = await self.get_dom_fingerprint(worker_page)
+                        norm_path = urlparse(current_url).path
+                        norm_path_pattern = re.sub(r'\d+', ':id', norm_path)
+                        fingerprint_key = f"{norm_path_pattern}-{fingerprint}"
+                        
+                        if fingerprint_key in self.dom_fingerprints:
+                            to_visit_queue.task_done()
+                            continue
+                        self.dom_fingerprints.add(fingerprint_key)
+                        
+                        title = await worker_page.title()
+                        forms = await self.extract_forms(worker_page)
+                        buttons = await self.extract_buttons(worker_page)
+                        
+                        pages_list.append({
+                            "url": current_url,
+                            "title": title,
+                            "forms": forms,
+                            "buttons": buttons,
+                            "page_type": "dashboard" if any(kw in current_url.lower() for kw in ["dashboard", "admin", "settings", "profile"]) else "general"
+                        })
+                        
+                        # Enqueue new links
+                        links = await worker_page.locator("a").all()
+                        for link in links:
+                            try:
+                                href = await link.get_attribute("href")
+                                if href:
+                                    abs_url = urljoin(current_url, href)
+                                    norm_url = abs_url.split('#')[0].split('?')[0]
+                                    if (self.is_same_domain(norm_url, start_url, login_url) and 
+                                            norm_url not in visited_urls):
+                                        await to_visit_queue.put(norm_url)
+                            except Exception:
+                                continue
+                                
+                        # Proactive interaction: click tabs, menus, settings buttons to trigger dynamic AJAX
+                        interactive_elements = await worker_page.locator("button, [role='tab'], .tab, .menu-item, .nav-link, a[role='button']").all()
+                        click_count = 0
+                        for el in interactive_elements:
+                            if click_count >= 15:
+                                break
+                            try:
+                                if await el.is_visible() and await el.is_enabled():
+                                    text = (await el.inner_text() or "").strip().lower()
+                                    if any(logout_kw in text for logout_kw in ["logout", "log out", "signout", "sign out", "exit", "delete", "clear"]):
+                                        continue
+                                    
+                                    await el.click(timeout=1500, force=True)
+                                    click_count += 1
+                                    await worker_page.wait_for_timeout(800)
+                                    
+                                    new_url = worker_page.url
+                                    norm_new = new_url.split('#')[0].split('?')[0]
+                                    if norm_new != current_url.split('#')[0].split('?')[0]:
+                                        if (self.is_same_domain(norm_new, start_url, login_url) and 
+                                                norm_new not in visited_urls):
+                                            logger.info(f"Worker {worker_id} found new route via interactive click: {norm_new}")
+                                            await to_visit_queue.put(norm_new)
+                                        
+                                        # Navigate back to original URL so we can continue clicking other menu items
+                                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=12000)
+                                        await worker_page.wait_for_timeout(500)
+                            except Exception:
+                                continue
+                                
+                    except Exception as e:
+                        logger.error(f"Worker {worker_id} failed on {current_url}: {e}")
+                    finally:
+                        to_visit_queue.task_done()
+                        
+                await worker_page.close()
+                logger.info(f"Worker {worker_id} closed.")
+
+            workers = [crawl_worker(i) for i in range(3)]
+            await asyncio.gather(*workers)
+            
+            # Check OpenAPI schema Swagger
+            openapi_apis = await self.discover_openapi(start_url)
+            if openapi_apis:
+                async with api_logs_lock:
+                    api_logs.extend(openapi_apis)
+            
             captured_storage = None
             try:
-                if self.login_successful:
-                    captured_storage = json.dumps(context.storage_state())
+                if self.login_successful or logged_in:
+                    captured_storage = json.dumps(await context.storage_state())
             except Exception as st_err:
-                logger.error(f"Failed to extract storage state from context: {st_err}")
+                logger.error(f"Failed extracting storage state: {st_err}")
                 
-            browser.close()
+            await browser.close()
             
             return {
                 "pages": pages_list,
-                "login_successful": self.login_successful,
+                "login_successful": self.login_successful or logged_in,
                 "login_error": self.login_error_message,
                 "storage_state": captured_storage,
                 "api_logs": api_logs

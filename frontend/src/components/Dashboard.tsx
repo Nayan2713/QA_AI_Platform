@@ -139,6 +139,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
                   <span className="metric-val">{app.page_count}</span>
                 </div>
                 <div className="metric">
+                  <span className="metric-lbl">APIs</span>
+                  <span className="metric-val">{app.api_count}</span>
+                </div>
+                <div className="metric">
                   <span className="metric-lbl">Tests</span>
                   <span className="metric-val">{app.test_case_count}</span>
                 </div>

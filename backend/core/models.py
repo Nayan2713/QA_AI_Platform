@@ -61,6 +61,7 @@ class Application(models.Model):
     login_status = models.CharField(max_length=20, choices=LOGIN_STATUS_CHOICES, default='NOT_ATTEMPTED')
     storage_state = models.TextField(blank=True, null=True)
     login_error = models.TextField(blank=True, null=True)
+    industry = models.CharField(max_length=100, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -73,6 +74,9 @@ class Page(models.Model):
     title = models.CharField(max_length=500, blank=True, null=True)
     forms = models.JSONField(default=list)  # [{"id": "...", "fields": [...], "action": "...", "method": "..."}]
     buttons = models.JSONField(default=list)  # [{"text": "...", "selector": "..."}]
+    page_type = models.CharField(max_length=64, blank=True, null=True)
+    elements = models.JSONField(default=dict, blank=True, null=True)
+    workflows = models.JSONField(default=list, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -94,6 +98,7 @@ class TestCase(models.Model):
         ],
         default='DRAFT'
     )
+    generation_context = models.JSONField(default=dict, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -158,15 +163,35 @@ class Bug(models.Model):
         ('medium', 'Medium'),
         ('low', 'Low'),
     ]
-    test_run = models.ForeignKey(TestRun, on_delete=models.CASCADE, related_name='bugs')
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='bugs', null=True, blank=True)
+    test_run = models.ForeignKey(TestRun, on_delete=models.CASCADE, related_name='bugs', null=True, blank=True)
+    bug_type = models.CharField(max_length=64, blank=True, null=True)
+    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='medium')
     title = models.CharField(max_length=255)
     description = models.TextField()
-    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='medium')
+    steps_to_reproduce = models.JSONField(default=list, blank=True, null=True)
+    screenshot = models.ImageField(upload_to='bugs/', null=True, blank=True)
+    element_selector = models.CharField(max_length=512, null=True, blank=True)
+    status = models.CharField(max_length=32, default='open')
     api_endpoint = models.ForeignKey(APIEndpoint, on_delete=models.SET_NULL, blank=True, null=True, related_name='bugs')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"[{self.severity.upper()}] {self.title}"
+
+class AgentSession(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='agent_sessions')
+    task_type = models.CharField(max_length=64)   # discovery, test_execution, bug_detection
+    status = models.CharField(max_length=32)      # running, completed, failed
+    llm_model = models.CharField(max_length=128)
+    steps_taken = models.JSONField(default=list)  # log of agent actions
+    tokens_used = models.IntegerField(default=0)
+    duration_seconds = models.FloatField(null=True)
+    result_summary = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.task_type.upper()} session for {self.application.url} ({self.status})"
 
 class CeleryTask(models.Model):
     """Track all celery tasks"""

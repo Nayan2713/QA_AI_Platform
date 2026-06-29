@@ -12,56 +12,38 @@ class LLMService:
 
     def generate_test_cases(self, pages_data):
         """
-        Attempts to generate test cases using the local Ollama LLM.
-        Falls back to deterministic template generation if Ollama is unreachable.
+        Attempts to generate test cases using the configured LLM.
+        Falls back to deterministic template generation if LLM is unreachable.
         """
         pages_context = json.dumps(pages_data, indent=2)
         prompt = self.get_prompt(pages_context)
 
-        logger.info(f"Attempting to generate test cases using Ollama model '{self.model}' at {self.api_url}...")
+        logger.info(f"Attempting to generate test cases using configured LLM...")
         
         try:
-            # Call Ollama API with a 10 second timeout
-            response = requests.post(
-                self.api_url,
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.2
-                    }
-                },
-                timeout=12
-            )
+            from config.llm_config import get_llm, llm_predict
+            llm = get_llm()
             
-            if response.status_code == 200:
-                response_data = response.json()
-                raw_text = response_data.get("response", "").strip()
-                
-                # Try parsing the LLM output as JSON
-                test_cases = self.parse_json_response(raw_text)
-                if test_cases:
-                    logger.info(f"Successfully generated {len(test_cases)} tests via Ollama.")
-                    return test_cases, True
-                else:
-                    logger.warning("LLM response was not valid JSON. Falling back to deterministic tests.")
+            raw_text = llm_predict(llm, prompt).strip()
+            
+            result = self.parse_json_response(raw_text)
+            if result:
+                test_cases, industry = result
+                logger.info(f"Successfully generated {len(test_cases)} tests via LLM.")
+                return test_cases, industry, True
             else:
-                logger.warning(f"Ollama server returned status code: {response.status_code}")
+                logger.warning("LLM response was not valid JSON. Falling back to deterministic tests.")
                 
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Could not connect to Ollama server: {e}. Falling back to deterministic tests.")
         except Exception as e:
-            logger.warning(f"Unexpected LLM error: {e}. Falling back to deterministic tests.")
+            logger.warning(f"LLM connection or execution failed: {e}. Falling back to deterministic tests.")
 
-        # Fallback to local template-based test cases if Ollama failed/was offline
-        fallback_cases = self.generate_fallback_test_cases(pages_data)
+        fallback_cases, industry = self.generate_fallback_test_cases(pages_data)
         logger.info(f"Successfully generated {len(fallback_cases)} fallback tests.")
-        return fallback_cases, False
+        return fallback_cases, industry, False
 
     def get_prompt(self, pages_context):
         return f"""You are an expert QA Automation Engineer.
-Your task is to analyze a website structure and its background API endpoints to generate functional, executable test cases.
+Your task is to analyze a website structure and its background API endpoints to auto-classify its industry and generate high-quality, executable automated test cases tailored to that industry.
 
 Here is the JSON representing discovered pages, forms, buttons, and API endpoints triggered by actions on the web application:
 {pages_context}
@@ -77,40 +59,45 @@ Supported actions for each test step:
 8. "select": Select option in dropdown. Parameter keys: "selector" (CSS selector of select element), "value" (value or label to select). "target" should be empty.
 9. "screenshot": Manually capture screenshot checkpoint. Parameter keys: "value" (screenshot label, optional). "selector" and "target" should be empty.
 
-CRITICAL INSTRUCTIONS FOR SELECTORS & DATA VALIDATION:
-- You MUST generate at least one dedicated test case for EACH and EVERY API endpoint listed under "api_endpoints". Each of these test cases should:
-  1. Navigate to the page that triggers this endpoint.
-  2. Perform the interaction (form submission or button click) using the correct inputs/selectors.
-  3. Include an "assert" step checking that the resulting UI matches the expected API "response_schema" fields.
-- Leverage the provided API endpoints request/response schemas to design test cases. For instance, when a form triggers an API endpoint, make assertions checking that the text results match the fields returned in the api_endpoints response schema.
-- You MUST only use the exact page URLs, form input field selectors/names/IDs, and button selectors that are listed in the JSON context above. Do not invent or hallucinate any selectors or URLs.
-- If a form field has an ID (e.g. "email"), use its ID selector (e.g., "#email"). If it only has a name, use its name attribute selector (e.g., "[name='email']").
-- When generating "fill" actions, the "value" you provide MUST be contextually valid for the field type:
-  - If the field is an email input (contains 'email' in name/id/type), you MUST fill it with a valid email format, e.g., "testuser@example.com".
-  - If the field is a phone number input (contains 'phone', 'mobile', 'tel' in name/id/type), you MUST fill it with a valid numeric phone format, e.g., "1234567890".
-  - If the field is a password input, use a valid password like "Secr3tP@ss123".
-  - Do NOT fill email fields with personal names, or phone fields with generic text.
+CRITICAL INSTRUCTIONS FOR INDUSTRY-TAILORED FLOWS & SELECTORS:
+- **INDUSTRY CLASSIFICATION**: Deduce the industry type of the website (e.g. "E-commerce", "SaaS", "FinTech", "Healthcare", "General") by analyzing the URL patterns, text, form fields, and button labels.
+- **INDUSTRY-TAILORED FLOWS**:
+  - For **E-commerce**: Focus on item searches, filtering dropdowns, adding items to cart, and checking out.
+  - For **SaaS / CRM**: Focus on creating resources, team settings, user management, and dashboards.
+  - For **Healthcare**: Focus on medical forms, schedule/appointment pickers, patient profiles, and dropdown options.
+  - For **FinTech / Banking**: Focus on transfers, transaction statements, pay buttons, and secure assertions.
+- **NO HALLUCINATED SELECTORS**: You MUST use the exact selectors (like ID '#email', name 'input[name="email"]', XPath selectors, etc.) from the 'forms' and 'buttons' lists. Do not guess, shorten, or invent any selectors.
+- **COMPLETE FORM FILLING**: For form submissions, you MUST fill out all the input fields of that form sequentially before performing the click action on the submit button.
+- **TEST DIVERSITY**: Do not generate identical or nearly identical test cases. Generate a diverse suite of at least 3-5 scenarios including positive flows, negative constraints check (e.g., login fails, invalid field formats), and dynamic assertions.
+- **REALISTIC DATA VALIDATION**: When generating "fill" values, the values must be format-compliant (valid email, numeric phone, strong password).
+- **API RESPONSE QUALITY ASSERTION**: For test cases validating specific API endpoints, leverage the provided "response_schema" fields for the "assert" action values (e.g., asserting a specific success message key is present in the UI body) to verify response quality and correctness.
 
-Generate a JSON array of comprehensive test cases covering these requirements. Each test case MUST follow this schema exactly:
+Generate a JSON object containing the classified industry and the list of comprehensive test cases. The object MUST follow this schema exactly:
 {{
-  "title": "Descriptive test case title",
-  "steps": [
+  "industry": "E-commerce | SaaS | FinTech | Healthcare | General",
+  "test_cases": [
     {{
-      "action": "navigate | fill | click | wait | assert | hover | scroll | select | screenshot",
-      "selector": "CSS selector or locator if applicable, else empty string",
-      "target": "target url for navigate action, else empty string",
-      "value": "value for fill, wait, assert, scroll, select actions, else empty string"
+      "title": "Unique and descriptive test case title (e.g. 'Verify E-commerce Checkout with Invalid Card')",
+      "steps": [
+        {{
+          "action": "navigate | fill | click | wait | assert | hover | scroll | select | screenshot",
+          "selector": "CSS selector or locator if applicable, else empty string",
+          "target": "target url for navigate action, else empty string",
+          "value": "value for fill, wait, assert, scroll, select actions, else empty string"
+        }}
+      ],
+      "expected_result": "Descriptive expected result statement"
     }}
-  ],
-  "expected_result": "Descriptive expected result statement"
+  ]
 }}
 
-CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdown or include any conversational intro/outro text. The response must start with '[' and end with ']'.
+CRITICAL: Return ONLY a valid JSON object. Do not wrap the JSON in ```json markdown or include any conversational intro/outro text. The response must start with '{{' and end with '}}'.
 """
 
     def parse_json_response(self, text):
         """
-        Cleans the LLM response text of markdown wrappers and parses it as a list of dicts.
+        Cleans the LLM response text of markdown wrappers and parses it as a list/dict.
+        Returns (test_cases, industry) or None.
         """
         cleaned = text.strip()
         if cleaned.startswith("```json"):
@@ -124,10 +111,18 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
         
         try:
             data = json.loads(cleaned)
-            if isinstance(data, list):
-                # Basic validation of keys
+            industry = "General"
+            test_cases_list = []
+            
+            if isinstance(data, dict):
+                industry = data.get("industry", "General")
+                test_cases_list = data.get("test_cases", [])
+            elif isinstance(data, list):
+                test_cases_list = data
+                
+            if isinstance(test_cases_list, list):
                 validated_data = []
-                for idx, tc in enumerate(data):
+                for idx, tc in enumerate(test_cases_list):
                     title = tc.get("title", f"AI Generated Test {idx+1}")
                     steps = tc.get("steps", [])
                     expected = tc.get("expected_result", "Test completes successfully")
@@ -149,7 +144,7 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                             "steps": clean_steps,
                             "expected_result": expected
                         })
-                return validated_data
+                return validated_data, industry
         except Exception as e:
             logger.error(f"Failed parsing LLM output: {e}. Output was:\n{text}")
         return None
@@ -157,19 +152,35 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
     def generate_fallback_test_cases(self, pages_data):
         """
         Deterministically constructs test cases when the AI server is not available.
-        Analyzes the pages structure and creates:
-        1. Site accessibility tests
-        2. Form submission tests (for each page's forms)
-        3. Standalone inputs tests (inputs outside forms)
-        4. Interactive button checks (separate click flows)
-        5. Negative/validation form rejects tests
-        6. Subpage navigation flows
+        Also classifies the application industry using simple regex heuristics.
         """
         test_cases = []
         pages = pages_data.get("pages", [])
         
+        # Simple industry classification heuristic
+        industry = "General"
+        all_text = ""
+        for p in pages:
+            all_text += f" {p.get('url', '')} {p.get('title', '')} "
+            for f in p.get("forms", []):
+                all_text += f" {f.get('action', '')} "
+                for field in f.get("fields", []):
+                    all_text += f" {field.get('name', '')} {field.get('id', '')} "
+            for btn in p.get("buttons", []):
+                all_text += f" {btn.get('text', '')} {btn.get('selector', '')} "
+                
+        all_text_lower = all_text.lower()
+        if any(w in all_text_lower for w in ["cart", "checkout", "shop", "product", "store", "price", "buy", "order"]):
+            industry = "E-commerce"
+        elif any(w in all_text_lower for w in ["patient", "doctor", "medical", "appointment", "clinic", "health", "care"]):
+            industry = "Healthcare"
+        elif any(w in all_text_lower for w in ["bank", "pay", "card", "finance", "transfer", "transaction", "invoice", "billing"]):
+            industry = "FinTech"
+        elif any(w in all_text_lower for w in ["dashboard", "team", "settings", "project", "manage", "admin", "crm", "tenant"]):
+            industry = "SaaS"
+
         if not pages:
-            return test_cases
+            return test_cases, industry
 
         # Test Case 1: Base Application Navigation and Structure Check
         first_page = pages[0]
@@ -455,14 +466,24 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                     "expected_result": f"Submitting the form triggers [{method}] {url_pattern} API and returns a successful response."
                 })
             else:
-                # If no matching form, and it's a GET, try to find the page where it triggers
+                # Retrieve the exact page URL that triggered this API from request_schema metadata
+                trigger_page_url = api.get("request_schema", {}).get("_trigger_page_url")
                 best_page = None
-                for page in pages:
-                    page_path = urlparse(page["url"]).path.strip('/')
-                    api_path = url_pattern.strip('/')
-                    if page_path and api_path and (page_path in api_path or api_path in page_path):
-                        best_page = page
-                        break
+                if trigger_page_url:
+                    for page in pages:
+                        if page["url"].split('#')[0].split('?')[0] == trigger_page_url.split('#')[0].split('?')[0]:
+                            best_page = page
+                            break
+                    if not best_page:
+                        best_page = {"url": trigger_page_url, "title": "Dashboard"}
+                
+                if not best_page:
+                    for page in pages:
+                        page_path = urlparse(page["url"]).path.strip('/')
+                        api_path = url_pattern.strip('/')
+                        if page_path and api_path and (page_path in api_path or api_path in page_path):
+                            best_page = page
+                            break
                 if not best_page:
                     best_page = first_page
                     
@@ -494,5 +515,5 @@ CRITICAL: Return ONLY a valid JSON array. Do not wrap the JSON in ```json markdo
                     "expected_result": f"Visiting the page/triggering interaction invokes the [{method}] {url_pattern} API successfully."
                 })
                 
-        return test_cases
+        return test_cases, industry
 

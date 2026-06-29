@@ -1,6 +1,9 @@
 import logging
 import base64
 import threading
+import json
+import os
+from django.conf import settings
 from django.utils import timezone
 from celery import shared_task
 from django.db import transaction
@@ -9,6 +12,91 @@ from playwright.sync_api import sync_playwright
 from core.models import TestRun, TestResult, TestCase, CeleryTask
 
 logger = logging.getLogger(__name__)
+
+def ensure_authenticated(page, context, app):
+    if not (app.login_url and app.username and app.password):
+        return True
+    
+    # Check if we are currently on the login URL or if a password field is visible
+    is_login_url = page.url.split('?')[0].rstrip('/') == app.login_url.split('?')[0].rstrip('/')
+    password_selectors = ["input[type='password']", "input[name='password']", "input[id='password']"]
+    has_password_field = False
+    for sel in password_selectors:
+        try:
+            if page.locator(sel).first.is_visible():
+                has_password_field = True
+                break
+        except Exception:
+            continue
+            
+    if is_login_url or has_password_field:
+        logger.info(f"Session lost or on login page. Performing auto re-authentication for {app.url}...")
+        try:
+            if is_login_url:
+                page.goto(app.login_url, wait_until="domcontentloaded", timeout=15000)
+            
+            # Find elements and log in
+            username_selectors = ["input[name='username']", "input[name='email']", "input[id='username']", "input[id='email']", "input[type='email']", "input[type='text']"]
+            submit_selectors = ["button[type='submit']", "input[type='submit']", "button:has-text('Login')", "button:has-text('Sign In')", "button:has-text('Log In')"]
+            
+            user_el = None
+            for sel in username_selectors:
+                try:
+                    if page.locator(sel).first.is_visible():
+                        user_el = page.locator(sel).first
+                        break
+                except Exception:
+                    continue
+            
+            pass_el = None
+            for sel in password_selectors:
+                try:
+                    if page.locator(sel).first.is_visible():
+                        pass_el = page.locator(sel).first
+                        break
+                except Exception:
+                    continue
+                    
+            if user_el and pass_el:
+                user_el.fill(app.username)
+                pass_el.fill(app.password)
+                
+                submitted = False
+                for sel in submit_selectors:
+                    try:
+                        if page.locator(sel).first.is_visible():
+                            page.locator(sel).first.click()
+                            submitted = True
+                            break
+                    except Exception:
+                        continue
+                if not submitted:
+                    pass_el.press("Enter")
+                page.wait_for_timeout(3000)
+                
+                # Check success
+                still_has_password = False
+                for sel in password_selectors:
+                    try:
+                        if page.locator(sel).first.is_visible():
+                            still_has_password = True
+                            break
+                    except Exception:
+                        continue
+                if not still_has_password:
+                    new_state = context.storage_state()
+                    def save_new_storage():
+                        app.storage_state = json.dumps(new_state)
+                        app.login_status = 'SUCCESS'
+                        app.save()
+                    run_in_thread(save_new_storage)
+                    logger.info("Auto re-authentication completed successfully.")
+                    return True
+        except Exception as e:
+            logger.error(f"Auto re-authentication failed: {e}")
+            return False
+    return True
+
 
 def run_in_thread(func, *args, **kwargs):
     """
@@ -82,8 +170,83 @@ def execute_test(self, test_run_id):
         test_case = run_in_thread(lambda: test_run.test_case)
         app = run_in_thread(lambda: test_case.app)
         
+        from services.test_classifier import TestClassifier
+        engine = TestClassifier.classify_test_case(test_case)
+        
+        if engine == 'BROWSER_USE':
+            logger.info(f"Executing test run {test_run_id} via BROWSER-USE Agent...")
+            from services.browser_use_agent import BrowserUseAgent
+            from tasks.discovery import run_async
+            
+            def run_agentic_test():
+                agent = BrowserUseAgent()
+                credentials = {
+                    "username": app.username,
+                    "password": app.password
+                } if app.username else None
+                
+                task_record.progress = 40
+                task_record.result = {"status_text": "AI agent executing test case dynamically..."}
+                task_record.save()
+                
+                return run_async(agent.generate_and_execute_test(test_case, app.url, credentials))
+                
+            agent_result = run_in_thread(run_agentic_test)
+            status_val = agent_result.get("status")
+            result_summary = agent_result.get("result")
+            screenshot_path = agent_result.get("screenshot_path")
+            bug_details = agent_result.get("bug_details")
+            
+            def save_agent_results():
+                with transaction.atomic():
+                    test_run.status = 'COMPLETED' if status_val == 'COMPLETED' else 'FAILED'
+                    test_run.metadata = {
+                        "engine_used": "BROWSER_USE",
+                        "summary": result_summary,
+                        "screenshot_path": screenshot_path
+                    }
+                    test_run.save()
+                    
+                    # Create a single summary TestResult step
+                    TestResult.objects.create(
+                        test_run=test_run,
+                        step_number=1,
+                        status='PASSED' if status_val == 'COMPLETED' else 'FAILED',
+                        error=None if status_val == 'COMPLETED' else result_summary,
+                        screenshot=screenshot_path
+                    )
+                    
+                    # If failed, log bug ticket
+                    if bug_details:
+                        from core.models import Bug
+                        Bug.objects.create(
+                            application=app,
+                            test_run=test_run,
+                            bug_type=bug_details.get("bug_type", "functional"),
+                            severity=bug_details.get("severity", "medium"),
+                            title=bug_details.get("title", "AI Agent Failure"),
+                            description=bug_details.get("description", "Agent failed to verify expected result."),
+                            screenshot=screenshot_path
+                        )
+                        test_run.bugs_found = 1
+                        test_run.save()
+                        
+                    task_record.status = 'success'
+                    task_record.progress = 100
+                    task_record.result = {
+                        "status_text": f"Agent finished. Status: {status_val}",
+                        "passed_steps": 1 if status_val == 'COMPLETED' else 0,
+                        "total_steps": 1
+                    }
+                    task_record.completed_at = timezone.now()
+                    task_record.save()
+                    
+            run_in_thread(save_agent_results)
+            return {"status": "SUCCESS", "engine": "BROWSER_USE", "result": status_val}
+
         def init_test_run():
             test_run.status = 'RUNNING'
+            test_run.metadata = {"engine_used": "PLAYWRIGHT"}
             test_run.save()
             # Clear previous results
             TestResult.objects.filter(test_run=test_run).delete()
@@ -121,9 +284,23 @@ def execute_test(self, test_run_id):
                 storage_state = run_in_thread(get_storage)
                 
                 import json
+                import os
+                
+                # Configure video capture
+                video_dir = os.path.join(settings.MEDIA_ROOT, 'videos')
+                os.makedirs(video_dir, exist_ok=True)
+                
+                # Configure HAR capture
+                har_dir = os.path.join(settings.MEDIA_ROOT, 'har')
+                os.makedirs(har_dir, exist_ok=True)
+                har_file_path = os.path.join(har_dir, f"run_{test_run.id}.har")
+                
                 context_kwargs = {
                     "viewport": {"width": 1280, "height": 720},
-                    "ignore_https_errors": True
+                    "ignore_https_errors": True,
+                    "record_video_dir": video_dir,
+                    "record_har_path": har_file_path,
+                    "record_har_mode": "minimal"
                 }
                 if storage_state:
                     try:
@@ -134,6 +311,10 @@ def execute_test(self, test_run_id):
                 
                 context = browser.new_context(**context_kwargs)
                 page = context.new_page()
+                
+                # Listen to console messages
+                console_logs = []
+                page.on("console", lambda msg: console_logs.append(f"[{msg.type}] {msg.text}"))
                 
                 # Register background API response listener (registered BEFORE login/navigation)
                 request_timestamps = {}
@@ -160,7 +341,14 @@ def execute_test(self, test_run_id):
                             try:
                                 content_type = response.headers.get("content-type", "").lower()
                                 if any(t in content_type for t in ["json", "text", "javascript", "xml"]):
-                                    body_text = response.text()
+                                    raw_bytes = response.body()
+                                    if raw_bytes.startswith(b'\x1f\x8b'):
+                                        import gzip
+                                        try:
+                                            raw_bytes = gzip.decompress(raw_bytes)
+                                        except Exception:
+                                            pass
+                                    body_text = raw_bytes.decode('utf-8', errors='replace')
                             except Exception:
                                 pass
 
@@ -302,10 +490,23 @@ def execute_test(self, test_run_id):
                                 app.save()
                             run_in_thread(save_login_exception)
                 
+                # Log browser initialized checkpoint
+                def log_browser_initialized():
+                    TestResult.objects.create(
+                        test_run=test_run,
+                        step_number=0,
+                        status='PASSED',
+                        error="Browser environment initialized. Executing actions..."
+                    )
+                run_in_thread(log_browser_initialized)
+
                 # Set default timeout to 15 seconds to allow slower websites to load
                 page.set_default_timeout(15000)
                 
                 for index, step in enumerate(steps):
+                    # Ensure the browser is still authenticated before executing the step
+                    ensure_authenticated(page, context, app)
+
                     step_num = index + 1
                     action = step.get("action")
                     selector = step.get("selector", "")
@@ -358,9 +559,17 @@ def execute_test(self, test_run_id):
                             elif action == "click":
                                 if not selector:
                                     raise ValueError("Click action requires a selector")
-                                page.locator(selector).first.wait_for(state="visible", timeout=4000)
-                                page.locator(selector).first.click()
-                                # Brief wait to let transitions or state updates settle
+                                locator = page.locator(selector).first
+                                locator.wait_for(state="visible", timeout=4000)
+                                try:
+                                    locator.click(timeout=3000)
+                                except Exception as click_err:
+                                    logger.warning(f"Standard click failed on {selector}: {click_err}. Trying force click...")
+                                    try:
+                                        locator.click(force=True, timeout=2000)
+                                    except Exception as force_err:
+                                        logger.warning(f"Force click failed on {selector}: {force_err}. Falling back to JS click...")
+                                        locator.evaluate("el => el.click()")
                                 page.wait_for_timeout(500)
                                 
                             elif action == "wait":
@@ -397,9 +606,63 @@ def execute_test(self, test_run_id):
                             elif action == "select":
                                 if not selector:
                                     raise ValueError("Select action requires a selector")
-                                page.locator(selector).first.wait_for(state="visible", timeout=4000)
-                                page.locator(selector).first.select_option(value)
-                                page.wait_for_timeout(200)
+                                locator = page.locator(selector).first
+                                locator.wait_for(state="visible", timeout=4000)
+                                
+                                # Check if it is a standard HTML select element
+                                is_select = locator.evaluate("el => el.tagName.toLowerCase() === 'select'")
+                                if is_select:
+                                    locator.select_option(value)
+                                else:
+                                    # Custom dropdown handler
+                                    logger.info(f"Custom select dropdown detected for selector '{selector}'. Expanding dropdown...")
+                                    try:
+                                        locator.click(timeout=2000)
+                                    except Exception:
+                                        locator.evaluate("el => el.click()")
+                                    page.wait_for_timeout(600)
+                                    
+                                    option_clicked = False
+                                    text_locators = [
+                                        page.locator(f"text={value}"),
+                                        page.locator(f"p:has-text('{value}')"),
+                                        page.locator(f"span:has-text('{value}')"),
+                                        page.locator(f"div:has-text('{value}')"),
+                                        page.locator(f"li:has-text('{value}')")
+                                    ]
+                                    for t_loc in text_locators:
+                                        try:
+                                            candidates = t_loc.all()
+                                            for candidate in candidates:
+                                                if candidate.is_visible():
+                                                    candidate.click(timeout=1500)
+                                                    option_clicked = True
+                                                    break
+                                            if option_clicked:
+                                                break
+                                        except Exception:
+                                            continue
+                                            
+                                    if not option_clicked:
+                                        try:
+                                            val_loc = page.locator(f"[value='{value}']")
+                                            if val_loc.first.is_visible():
+                                                val_loc.first.click(timeout=1500)
+                                                option_clicked = True
+                                        except Exception:
+                                            pass
+                                            
+                                    if not option_clicked:
+                                        logger.warning(f"Could not find clickable option for custom dropdown '{value}'. Attempting keyboard input fallback...")
+                                        try:
+                                            locator.fill(value)
+                                            page.wait_for_timeout(400)
+                                            page.keyboard.press("Enter")
+                                            option_clicked = True
+                                        except Exception as fill_err:
+                                            logger.error(f"Keyboard input fallback failed: {fill_err}")
+                                            
+                                page.wait_for_timeout(300)
                                 
                             elif action == "screenshot":
                                 try:
@@ -434,8 +697,8 @@ def execute_test(self, test_run_id):
                     if step_passed:
                         passed_steps += 1
                     
-                    # Save step result in a thread
-                    def create_step_result(step_passed_local, error_msg_local, screenshot_b64_local):
+                    # Save step result and update metadata incrementally in a thread
+                    def save_incremental_results(step_passed_local, error_msg_local, screenshot_b64_local, passed_local, total_local, api_logs_local, console_logs_local):
                         TestResult.objects.create(
                             test_run=test_run,
                             step_number=step_num,
@@ -443,7 +706,26 @@ def execute_test(self, test_run_id):
                             error=error_msg_local,
                             screenshot=screenshot_b64_local
                         )
-                    run_in_thread(create_step_result, step_passed, error_msg, screenshot_b64)
+                        # Fetch the latest test_run instance from DB to avoid overriding final status
+                        tr = TestRun.objects.get(id=test_run.id)
+                        meta = tr.metadata or {}
+                        meta["passed_steps"] = passed_local
+                        meta["total_steps"] = total_local
+                        meta["api_calls"] = api_logs_local
+                        meta["console_logs"] = console_logs_local
+                        tr.metadata = meta
+                        tr.save()
+                        
+                    run_in_thread(
+                        save_incremental_results, 
+                        step_passed, 
+                        error_msg, 
+                        screenshot_b64, 
+                        passed_steps, 
+                        total_steps, 
+                        list(api_logs), 
+                        list(console_logs)
+                    )
                     
                     if not step_passed:
                         logger.warning(f"Aborting execution at step {step_num} due to failure.")
@@ -470,7 +752,15 @@ def execute_test(self, test_run_id):
                 # Inspect background API logs for response quality warnings/errors
                 try:
                     from services.quality_analyzer import ResponseQualityAnalyzer
-                    quality_issues = ResponseQualityAnalyzer.analyze_response_quality(api_logs, prev_calls, expected_result=test_case.expected_result, base_url=test_case.app.url, app=test_case.app)
+                    def run_quality_analysis():
+                        return ResponseQualityAnalyzer.analyze_response_quality(
+                            api_logs, 
+                            prev_calls, 
+                            expected_result=test_case.expected_result, 
+                            base_url=test_case.app.url, 
+                            app=test_case.app
+                        )
+                    quality_issues = run_in_thread(run_quality_analysis)
                     # Filter out latency warnings from being fatal errors (they are performance warnings)
                     fatal_quality_issues = [q for q in quality_issues if q['type'] in ['content_error', 'schema_regression', 'semantic_error', 'schema_conformance']]
                     
@@ -492,7 +782,21 @@ def execute_test(self, test_run_id):
                 except Exception as qual_err:
                     logger.error(f"Error executing response quality analyzer: {qual_err}")
 
+                video_full_path = None
+                try:
+                    if page.video:
+                        video_full_path = page.video.path()
+                except Exception:
+                    pass
+
+                context.close()
                 browser.close()
+                
+                video_relative_path = None
+                if video_full_path and os.path.exists(video_full_path):
+                    video_relative_path = f"videos/{os.path.basename(video_full_path)}"
+                
+                har_relative_path = f"har/run_{test_run.id}.har"
                 
             except Exception as global_err:
                 run_failed = True
@@ -516,7 +820,10 @@ def execute_test(self, test_run_id):
             test_run.metadata = {
                 "passed_steps": passed_steps_local,
                 "total_steps": total_steps_local,
-                "api_calls": api_logs
+                "api_calls": api_logs,
+                "console_logs": console_logs if 'console_logs' in locals() or 'console_logs' in globals() else [],
+                "video_path": video_relative_path if 'video_relative_path' in locals() else None,
+                "har_path": har_relative_path if 'har_relative_path' in locals() else None
             }
             test_run.save()
 

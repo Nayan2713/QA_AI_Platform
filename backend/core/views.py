@@ -5,12 +5,12 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession
 from .serializers import (
     RegisterSerializer, UserSerializer, ApplicationSerializer, 
     PageSerializer, TestCaseSerializer, TestRunSerializer, 
     TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer,
-    APIEndpointSerializer
+    APIEndpointSerializer, AgentSessionSerializer
 )
 from services.test_validation_service import TestValidationService
 
@@ -87,6 +87,75 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             "discovery_source": app.discovery_source,
             "page_count": app.pages.count()
         })
+
+    @action(detail=True, methods=['post'], url_path='run-tests')
+    def run_tests(self, request, pk=None):
+        app = self.get_object()
+        test_cases = app.test_cases.all()
+        if not test_cases.exists():
+            return Response({"error": "No test cases found for this application."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        task_ids = []
+        test_run_ids = []
+        from tasks.execution import execute_test
+        import uuid
+        
+        for tc in test_cases:
+            test_run = TestRun.objects.create(test_case=tc, status='PENDING')
+            task_id = str(uuid.uuid4())
+            CeleryTask.objects.create(
+                task_id=task_id,
+                task_type='execution',
+                status='pending',
+                progress=0,
+                result={"status_text": f"Starting test execution run for {tc.title}..."}
+            )
+            execute_test.apply_async(args=[test_run.id], task_id=task_id)
+            task_ids.append(task_id)
+            test_run_ids.append(test_run.id)
+            
+        return Response({
+            "status": "Test execution runs started",
+            "test_run_ids": test_run_ids,
+            "task_ids": task_ids
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='detect-bugs')
+    def detect_bugs(self, request, pk=None):
+        app = self.get_object()
+        import uuid
+        task_id = str(uuid.uuid4())
+        
+        CeleryTask.objects.create(
+            task_id=task_id,
+            task_type='bug_detection',
+            status='pending',
+            progress=0,
+            result={"status_text": "Initializing agentic bug audit..."}
+        )
+        
+        from tasks.bug_detection import start_agentic_bug_detection
+        task = start_agentic_bug_detection.apply_async(args=[app.id], task_id=task_id)
+        
+        return Response({
+            "status": "Bug detection started",
+            "task_id": task_id
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'])
+    def bugs(self, request, pk=None):
+        app = self.get_object()
+        from django.db.models import Q
+        bugs = Bug.objects.filter(Q(application=app) | Q(test_run__test_case__app=app)).distinct().order_by('-created_at')
+        serializer = BugSerializer(bugs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='api-dependency-graph')
+    def api_dependency_graph(self, request, pk=None):
+        app = self.get_object()
+        from services.dependency_mapper import APIDependencyMapper
+        graph = APIDependencyMapper.build_dependency_graph(app)
+        return Response(graph)
 
 
 class TestCaseViewSet(viewsets.ModelViewSet):
@@ -213,6 +282,33 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
         if app_id:
             queryset = queryset.filter(test_run__test_case__app_id=app_id)
         return queryset
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        import re
+        unique_bugs = []
+        seen = set()
+        
+        for bug in queryset:
+            endpoint_id = bug.api_endpoint_id if bug.api_endpoint_id else 0
+            # Group identical failures together by normalizing "Step X Failed"
+            norm_title = re.sub(r'Step \d+ Failed', 'Step Failed', bug.title)
+            
+            app_id = bug.application_id or (bug.test_run.test_case.app_id if bug.test_run and bug.test_run.test_case else None)
+            key = (app_id, norm_title, endpoint_id, bug.severity)
+            
+            if key not in seen:
+                seen.add(key)
+                unique_bugs.append(bug)
+                
+        page = self.paginate_queryset(unique_bugs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+            
+        serializer = self.get_serializer(unique_bugs, many=True)
+        return Response(serializer.data)
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -357,3 +453,26 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CeleryTaskSerializer
     permission_classes = (permissions.IsAuthenticated,)
     lookup_field = 'task_id'
+
+    @action(detail=True, methods=['get'])
+    def status(self, request, task_id=None):
+        task = self.get_object()
+        return Response({
+            "task_id": task.task_id,
+            "task_type": task.task_type,
+            "status": task.status,
+            "progress": task.progress,
+            "result": task.result,
+            "error": task.error
+        })
+
+class AgentSessionViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = AgentSessionSerializer
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get_queryset(self):
+        queryset = AgentSession.objects.filter(application__user=self.request.user).order_by('-created_at')
+        app_id = self.request.query_params.get('app')
+        if app_id:
+            queryset = queryset.filter(application_id=app_id)
+        return queryset
