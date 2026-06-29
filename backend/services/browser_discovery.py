@@ -9,6 +9,7 @@ from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
+
 class BrowserDiscoveryService:
     def __init__(self, max_pages=100):
         self.max_pages = max_pages
@@ -43,17 +44,33 @@ class BrowserDiscoveryService:
                 await page.wait_for_timeout(1000)
             except Exception as goto_err:
                 logger.warning(f"Navigation to login page had an issue/timeout: {goto_err}. Trying to proceed anyway...")
-            
+
             username_selectors = [
-                "input[name='username']", "input[name='email']", "input[id='username']", 
-                "input[id='email']", "input[type='email']", "input[type='text']"
+                "input[name='username']", "input[name='email']", "input[name='user']",
+                "input[name='login']", "input[name='identifier']",
+                "input[id='username']", "input[id='email']", "input[id='user']",
+                "input[id='login']", "input[id='identifier']",
+                "input[type='email']",
+                "input[autocomplete='email']", "input[autocomplete='username']",
+                "input[placeholder*='email' i]", "input[placeholder*='username' i]",
+                "input[data-testid*='email' i]", "input[data-testid*='user' i]",
+                "input[type='text']"
             ]
             password_selectors = [
-                "input[type='password']", "input[name='password']", "input[id='password']"
+                "input[type='password']",
+                "input[name='password']", "input[name='pass']", "input[name='passwd']",
+                "input[id='password']", "input[id='pass']",
+                "input[autocomplete='current-password']",
+                "input[placeholder*='password' i]",
+                "input[data-testid*='password' i]"
             ]
             submit_selectors = [
-                "button[type='submit']", "input[type='submit']", "button:has-text('Login')", 
-                "button:has-text('Sign In')", "button:has-text('Log In')"
+                "button[type='submit']", "input[type='submit']",
+                "button:has-text('Login')", "button:has-text('Log In')",
+                "button:has-text('Sign In')", "button:has-text('Sign in')",
+                "button:has-text('Continue')", "button:has-text('Next')",
+                "button:has-text('Submit')", "button:has-text('Access')",
+                "[data-testid*='login' i]", "[data-testid*='submit' i]"
             ]
 
             user_el = None
@@ -78,7 +95,7 @@ class BrowserDiscoveryService:
                 await user_el.fill(username)
                 await pass_el.fill(password)
                 logger.info("Credentials filled in.")
-                
+
                 submitted = False
                 for sel in submit_selectors:
                     try:
@@ -89,13 +106,13 @@ class BrowserDiscoveryService:
                             break
                     except Exception:
                         continue
-                
+
                 if not submitted:
                     await pass_el.press("Enter")
                     logger.info("Pressed Enter as submit fallback.")
 
                 await page.wait_for_timeout(3000)
-                
+
                 still_has_password = False
                 for sel in password_selectors:
                     try:
@@ -104,16 +121,19 @@ class BrowserDiscoveryService:
                             break
                     except Exception:
                         continue
-                
+
                 current_url = page.url
                 url_changed = (current_url.split('?')[0].rstrip('/') != login_url.split('?')[0].rstrip('/'))
-                
+
                 if url_changed or not still_has_password:
                     self.login_successful = True
                     logger.info(f"Login successful heuristic passed. Current URL: {current_url}")
                 else:
                     self.login_successful = False
-                    self.login_error_message = f"Login failed heuristic: browser stayed on login URL '{current_url}' and password field is still visible."
+                    self.login_error_message = (
+                        f"Login failed heuristic: browser stayed on login URL "
+                        f"'{current_url}' and password field is still visible."
+                    )
                     logger.warning(f"Login failed heuristic triggered. Still on login URL: {current_url}")
             else:
                 self.login_error_message = "Login failed: could not find username/email and password fields."
@@ -165,7 +185,7 @@ class BrowserDiscoveryService:
                         form_id = await form.get_attribute("id") or await form.get_attribute("name") or f"form_{idx}"
                         action = await form.get_attribute("action") or ""
                         method = await form.get_attribute("method") or "get"
-                        
+
                         fields = []
                         inputs = await form.locator("input, select, textarea").all()
                         for inp in inputs:
@@ -174,7 +194,7 @@ class BrowserDiscoveryService:
                                 continue
                             inp_name = await inp.get_attribute("name")
                             inp_id = await inp.get_attribute("id") or ""
-                            
+
                             if inp_name or inp_id:
                                 fields.append({
                                     "name": inp_name or "",
@@ -230,7 +250,9 @@ class BrowserDiscoveryService:
                     contexts.append(frame)
 
             for ctx in contexts:
-                buttons = await ctx.locator("button, input[type='button'], input[type='submit'], a.btn, a.button, [role='button'], [onclick]").all()
+                buttons = await ctx.locator(
+                    "button, input[type='button'], input[type='submit'], a.btn, a.button, [role='button'], [onclick]"
+                ).all()
                 for idx, btn in enumerate(buttons):
                     try:
                         if not await btn.is_visible():
@@ -238,7 +260,7 @@ class BrowserDiscoveryService:
                         text = (await btn.inner_text()).strip() or await btn.get_attribute("value") or ""
                         if not text:
                             text = await btn.get_attribute("title") or f"Button {idx}"
-                        
+
                         selector = await btn.evaluate("""el => {
                             const getSelector = (element) => {
                                 if (element.id) {
@@ -312,7 +334,7 @@ class BrowserDiscoveryService:
                                     "request_body": "{}",
                                     "auth_type": "none"
                                 })
-                    logger.info(f"OpenAPI endpoints discovered: {target_url}")
+                    logger.info(f"OpenAPI endpoints discovered at: {target_url}")
                     break
             except Exception:
                 continue
@@ -321,26 +343,48 @@ class BrowserDiscoveryService:
     async def discover(self, start_url, login_url=None, username=None, password=None, storage_state=None, on_progress=None):
         """
         High-performance concurrent async page crawler sharing session contexts.
+
+        Fixes applied vs original:
+          1. Storage state is ALWAYS loaded when available, even when credentials
+             are also provided — so re-runs reuse the saved session instead of
+             logging in from scratch every time.
+          2. Session validity is checked before attempting a fresh login, so if
+             the stored cookies are still good we skip the login step entirely.
+          3. After a successful login the crawler queues links from the
+             post-login landing page and does NOT re-navigate to start_url
+             (which on many apps redirects back to the login wall).
+          4. visited_urls is protected by an asyncio.Lock so the 3 concurrent
+             workers cannot visit the same URL twice due to a race condition.
         """
         logger.info(f"Starting browser discovery for URL: {start_url}")
-        
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            
+
             context_kwargs = {
                 "viewport": {"width": 1280, "height": 720},
                 "ignore_https_errors": True
             }
-            if storage_state and not (login_url and username and password):
+
+            # FIX 1: Always load storage_state when available — even when
+            # credentials are provided.  We will still re-login below if the
+            # stored session turns out to be expired.
+            if storage_state:
                 try:
-                    context_kwargs['storage_state'] = json.loads(storage_state) if isinstance(storage_state, str) else storage_state
+                    parsed_state = (
+                        json.loads(storage_state)
+                        if isinstance(storage_state, str)
+                        else storage_state
+                    )
+                    context_kwargs['storage_state'] = parsed_state
+                    logger.info("Loaded pre-existing storage state into browser context.")
                 except Exception as parse_err:
                     logger.error(f"Failed parsing storage state: {parse_err}")
-            
+
             context = await browser.new_context(**context_kwargs)
             page = await context.new_page()
-            
-            # API logs holder
+
+            # Shared API log state
             api_logs = []
             request_timestamps = {}
             api_logs_lock = asyncio.Lock()
@@ -361,16 +405,31 @@ class BrowserDiscoveryService:
 
                         body_text = ""
                         try:
-                            content_type = response.headers.get("content-type", "").lower()
-                            if any(t in content_type for t in ["json", "text", "javascript", "xml"]):
-                                raw_bytes = await response.body()
-                                if raw_bytes.startswith(b'\x1f\x8b'):
+                            raw_bytes = await response.body()
+                            if raw_bytes:
+                                # FIX: Always decompress gzip BEFORE checking content-type.
+                                # Original code only decompressed when content-type contained
+                                # json/text/xml — but many servers (digiprima.com included)
+                                # send gzip-compressed responses with other or missing
+                                # content-type headers, causing the crash:
+                                #   'utf-8' codec can't decode byte 0x8b in position 1'
+                                # 0x1f 0x8b is the gzip magic header.
+                                if raw_bytes[:2] == b'\x1f\x8b':
                                     import gzip
                                     try:
                                         raw_bytes = gzip.decompress(raw_bytes)
                                     except Exception:
-                                        pass
-                                body_text = raw_bytes.decode('utf-8', errors='replace')
+                                        raw_bytes = b""
+
+                                # Only store text-based content as body_text
+                                content_type = response.headers.get("content-type", "").lower()
+                                is_text = (
+                                    any(t in content_type for t in
+                                        ["json", "text", "javascript", "xml", "html", "form"])
+                                    or not content_type
+                                )
+                                if is_text and raw_bytes:
+                                    body_text = raw_bytes.decode('utf-8', errors='replace')
                         except Exception:
                             pass
 
@@ -405,38 +464,84 @@ class BrowserDiscoveryService:
 
             page.on("request", capture_network_request)
             page.on("response", capture_network_api)
-            
-            # 1. Pre-login pass
+
+            # ------------------------------------------------------------------
+            # FIX 2: Check if the stored session is still valid BEFORE doing a
+            # fresh login.  Navigate to start_url; if we land somewhere other
+            # than the login page the session is live and we skip re-login.
+            # ------------------------------------------------------------------
             logged_in = False
             post_login_url = None
+
             if login_url and username and password:
-                await self.perform_login(page, login_url, username, password)
-                if self.login_successful:
-                    logged_in = True
-                    post_login_url = page.url
-                    logger.info(f"Pre-login step finished successfully. Post-login URL: {post_login_url}")
-                else:
-                    logger.warning(f"Pre-login step failed: {self.login_error_message}")
-            
+                already_logged_in = False
+
+                if storage_state:
+                    try:
+                        logger.info("Verifying if stored session is still valid...")
+                        await page.goto(start_url, wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(1500)
+
+                        current = page.url.split('?')[0].rstrip('/')
+                        login_clean = login_url.split('?')[0].rstrip('/')
+
+                        # Check: not redirected back to login AND no password field visible
+                        still_on_login = (current == login_clean)
+                        has_password = False
+                        for sel in ["input[type='password']", "input[name='password']"]:
+                            try:
+                                if await page.locator(sel).first.is_visible():
+                                    has_password = True
+                                    break
+                            except Exception:
+                                pass
+
+                        if not still_on_login and not has_password:
+                            already_logged_in = True
+                            logged_in = True
+                            post_login_url = page.url
+                            self.login_successful = True
+                            logger.info(f"Stored session is valid — skipping login. Landing: {post_login_url}")
+                    except Exception as check_err:
+                        logger.warning(f"Session validity check failed: {check_err}")
+
+                if not already_logged_in:
+                    logger.info(f"Performing fresh login at {login_url}")
+                    await self.perform_login(page, login_url, username, password)
+                    if self.login_successful:
+                        logged_in = True
+                        post_login_url = page.url
+                        logger.info(f"Fresh login succeeded. Post-login URL: {post_login_url}")
+                    else:
+                        logger.warning(f"Login failed: {self.login_error_message}")
+
             pages_list = []
             to_visit = []
-            
-            # Extract links from post-login URL first if logged in
+
+            # ------------------------------------------------------------------
+            # FIX 3: After a successful login, extract links from the
+            # post-login landing page ONLY.  Do NOT re-navigate to start_url
+            # because on most apps start_url redirects unauthenticated users to
+            # the login wall, wiping the authenticated session from the queue.
+            # ------------------------------------------------------------------
             if logged_in and post_login_url:
                 try:
-                    logger.info(f"Booting queue from post-login landing URL: {post_login_url}")
+                    logger.info(f"Extracting links from post-login landing page: {post_login_url}")
+                    # Already on post_login_url — no need to navigate again
                     title = await page.title()
                     forms = await self.extract_forms(page)
                     buttons = await self.extract_buttons(page)
-                    
+
                     pages_list.append({
                         "url": post_login_url,
                         "title": title,
                         "forms": forms,
                         "buttons": buttons,
-                        "page_type": "dashboard"
+                        "page_type": "dashboard",
+                        "elements": {},
+                        "workflows": []
                     })
-                    
+
                     links = await page.locator("a").all()
                     for link in links:
                         try:
@@ -444,32 +549,38 @@ class BrowserDiscoveryService:
                             if href:
                                 abs_url = urljoin(post_login_url, href)
                                 norm_url = abs_url.split('#')[0].split('?')[0]
-                                if self.is_same_domain(norm_url, start_url, login_url):
+                                if (
+                                    self.is_same_domain(norm_url, start_url, login_url)
+                                    and norm_url not in self.visited_urls
+                                    and norm_url != login_url
+                                ):
                                     to_visit.append(norm_url)
                         except Exception:
                             continue
                 except Exception as post_login_err:
-                    logger.error(f"Failed extracting from post-login URL: {post_login_err}")
+                    logger.error(f"Failed extracting from post-login page: {post_login_err}")
 
-            # Also scan start URL (public page)
-            if not pages_list or (start_url.split('#')[0].split('?')[0] != page.url.split('#')[0].split('?')[0]):
+            else:
+                # No auth — start crawl from the public start_url
                 try:
-                    logger.info(f"Navigating to start URL: {start_url}")
+                    logger.info(f"No authentication — navigating to start URL: {start_url}")
                     await page.goto(start_url, wait_until="domcontentloaded", timeout=20000)
                     await page.wait_for_timeout(1000)
-                    
+
                     title = await page.title()
                     forms = await self.extract_forms(page)
                     buttons = await self.extract_buttons(page)
-                    
+
                     pages_list.append({
                         "url": start_url,
                         "title": title,
                         "forms": forms,
                         "buttons": buttons,
-                        "page_type": "home"
+                        "page_type": "home",
+                        "elements": {},
+                        "workflows": []
                     })
-                    
+
                     links = await page.locator("a").all()
                     for link in links:
                         try:
@@ -483,76 +594,114 @@ class BrowserDiscoveryService:
                             continue
                 except Exception as e:
                     logger.error(f"Failed loading start URL: {e}")
-                    
-            # Close original page to clean up context before workers
+
             await page.close()
-            
-            # 2. Run 3 Parallel workers
+
+            # ------------------------------------------------------------------
+            # FIX 4: Protect visited_urls with an asyncio.Lock so the 3
+            # concurrent workers cannot race and visit the same URL twice.
+            # ------------------------------------------------------------------
             to_visit_queue = asyncio.Queue()
             for url in to_visit:
                 await to_visit_queue.put(url)
-                
+
             visited_urls = self.visited_urls
+            visited_lock = asyncio.Lock()       # NEW: lock for safe concurrent access
+
             visited_urls.add(start_url)
             if login_url:
                 visited_urls.add(login_url)
-                
+            if post_login_url:
+                visited_urls.add(post_login_url)
+
             async def crawl_worker(worker_id):
                 logger.info(f"Starting crawl worker {worker_id}")
                 worker_page = await context.new_page()
                 worker_page.on("request", capture_network_request)
                 worker_page.on("response", capture_network_api)
-                
-                while not to_visit_queue.empty() and len(pages_list) < self.max_pages:
+
+                while len(pages_list) < self.max_pages:
                     try:
                         current_url = await asyncio.wait_for(to_visit_queue.get(), timeout=1.0)
                     except asyncio.TimeoutError:
                         break
-                        
-                    if current_url in visited_urls:
-                        to_visit_queue.task_done()
-                        continue
-                        
-                    visited_urls.add(current_url)
+
+                    # FIX 4: atomic check-and-mark inside the lock
+                    async with visited_lock:
+                        if current_url in visited_urls:
+                            to_visit_queue.task_done()
+                            continue
+                        visited_urls.add(current_url)
+
                     logger.info(f"Worker {worker_id} visiting: {current_url}")
-                    
+
                     if on_progress:
                         try:
                             on_progress(current_url, len(pages_list))
                         except Exception:
                             pass
-                            
+
                     try:
-                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=12000)
+                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
                         await worker_page.wait_for_timeout(800)
-                        
-                        # Scroll to trigger lazy elements
+
+                        # Scroll to trigger lazy-loaded elements
                         await worker_page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                         await worker_page.wait_for_timeout(400)
-                        
-                        fingerprint = await self.get_dom_fingerprint(worker_page)
+
+                        # FIX: path+title+form_count fingerprint — prevents SPA pages from
+                        # appearing identical due to shared app shell layout.
                         norm_path = urlparse(current_url).path
                         norm_path_pattern = re.sub(r'\d+', ':id', norm_path)
-                        fingerprint_key = f"{norm_path_pattern}-{fingerprint}"
-                        
+                        title_key = (title or '')[:40].strip().lower()
+                        try:
+                            form_count = await worker_page.locator('form').count()
+                        except Exception:
+                            form_count = 0
+                        fingerprint_key = f"{norm_path_pattern}|{title_key}|{form_count}"
+
                         if fingerprint_key in self.dom_fingerprints:
                             to_visit_queue.task_done()
                             continue
                         self.dom_fingerprints.add(fingerprint_key)
-                        
+
                         title = await worker_page.title()
                         forms = await self.extract_forms(worker_page)
                         buttons = await self.extract_buttons(worker_page)
-                        
+
+                        page_type = "general"
+                        url_lower = current_url.lower()
+                        title_lower = title.lower() if title else ""
+                        combined = url_lower + " " + title_lower
+                        # FIX: check both URL and page title for better coverage
+                        if any(kw in combined for kw in ["login", "sign-in", "signin", "log-in"]):
+                            page_type = "login"
+                        elif any(kw in combined for kw in ["register", "signup", "sign-up", "create account"]):
+                            page_type = "signup"
+                        elif any(kw in combined for kw in ["checkout", "payment", "billing", "cart"]):
+                            page_type = "checkout"
+                        elif any(kw in combined for kw in ["dashboard", "admin", "home", "main", "overview"]):
+                            page_type = "dashboard"
+                        elif any(kw in combined for kw in ["settings", "config", "preferences", "profile", "account"]):
+                            page_type = "settings"
+                        elif any(kw in combined for kw in ["report", "analytics", "stats", "metric"]):
+                            page_type = "report"
+                        elif any(kw in combined for kw in ["product", "item", "listing", "shop", "store"]):
+                            page_type = "product"
+                        elif any(kw in combined for kw in ["contact", "support", "help", "faq"]):
+                            page_type = "contact"
+
                         pages_list.append({
                             "url": current_url,
                             "title": title,
                             "forms": forms,
                             "buttons": buttons,
-                            "page_type": "dashboard" if any(kw in current_url.lower() for kw in ["dashboard", "admin", "settings", "profile"]) else "general"
+                            "page_type": page_type,
+                            "elements": {},
+                            "workflows": []
                         })
-                        
-                        # Enqueue new links
+
+                        # Enqueue new links found on this page
                         links = await worker_page.locator("a").all()
                         for link in links:
                             try:
@@ -560,68 +709,83 @@ class BrowserDiscoveryService:
                                 if href:
                                     abs_url = urljoin(current_url, href)
                                     norm_url = abs_url.split('#')[0].split('?')[0]
-                                    if (self.is_same_domain(norm_url, start_url, login_url) and 
-                                            norm_url not in visited_urls):
-                                        await to_visit_queue.put(norm_url)
+                                    if self.is_same_domain(norm_url, start_url, login_url):
+                                        async with visited_lock:
+                                            already = norm_url in visited_urls
+                                        if not already:
+                                            await to_visit_queue.put(norm_url)
                             except Exception:
                                 continue
-                                
-                        # Proactive interaction: click tabs, menus, settings buttons to trigger dynamic AJAX
-                        interactive_elements = await worker_page.locator("button, [role='tab'], .tab, .menu-item, .nav-link, a[role='button']").all()
+
+                        # Proactive interaction: click tabs/menus to trigger dynamic AJAX
+                        interactive_elements = await worker_page.locator(
+                            "button, [role='tab'], .tab, .menu-item, .nav-link, a[role='button']"
+                        ).all()
                         click_count = 0
                         for el in interactive_elements:
-                            if click_count >= 15:
+                            if click_count >= 20:
                                 break
                             try:
                                 if await el.is_visible() and await el.is_enabled():
                                     text = (await el.inner_text() or "").strip().lower()
-                                    if any(logout_kw in text for logout_kw in ["logout", "log out", "signout", "sign out", "exit", "delete", "clear"]):
+                                    if any(logout_kw in text for logout_kw in [
+                                        "logout", "log out", "signout", "sign out", "exit", "delete", "clear"
+                                    ]):
                                         continue
-                                    
+
                                     await el.click(timeout=1500, force=True)
                                     click_count += 1
                                     await worker_page.wait_for_timeout(800)
-                                    
+
                                     new_url = worker_page.url
                                     norm_new = new_url.split('#')[0].split('?')[0]
                                     if norm_new != current_url.split('#')[0].split('?')[0]:
-                                        if (self.is_same_domain(norm_new, start_url, login_url) and 
-                                                norm_new not in visited_urls):
-                                            logger.info(f"Worker {worker_id} found new route via interactive click: {norm_new}")
-                                            await to_visit_queue.put(norm_new)
-                                        
-                                        # Navigate back to original URL so we can continue clicking other menu items
-                                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=12000)
+                                        if self.is_same_domain(norm_new, start_url, login_url):
+                                            async with visited_lock:
+                                                already = norm_new in visited_urls
+                                            if not already:
+                                                logger.info(f"Worker {worker_id} found new route via click: {norm_new}")
+                                                await to_visit_queue.put(norm_new)
+
+                                        # Navigate back so we can click other menu items
+                                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
                                         await worker_page.wait_for_timeout(500)
                             except Exception:
                                 continue
-                                
+
                     except Exception as e:
                         logger.error(f"Worker {worker_id} failed on {current_url}: {e}")
                     finally:
                         to_visit_queue.task_done()
-                        
+
                 await worker_page.close()
-                logger.info(f"Worker {worker_id} closed.")
+                logger.info(f"Worker {worker_id} finished and closed.")
 
             workers = [crawl_worker(i) for i in range(3)]
             await asyncio.gather(*workers)
-            
-            # Check OpenAPI schema Swagger
+
+            # Discover OpenAPI/Swagger endpoints
             openapi_apis = await self.discover_openapi(start_url)
             if openapi_apis:
                 async with api_logs_lock:
                     api_logs.extend(openapi_apis)
-            
+
+            # Save final storage state (only if login was successful)
             captured_storage = None
             try:
                 if self.login_successful or logged_in:
                     captured_storage = json.dumps(await context.storage_state())
+                    logger.info("Captured final storage state after crawl.")
             except Exception as st_err:
                 logger.error(f"Failed extracting storage state: {st_err}")
-                
+
             await browser.close()
-            
+
+            logger.info(
+                f"Discovery complete. Pages found: {len(pages_list)}, "
+                f"API calls captured: {len(api_logs)}"
+            )
+
             return {
                 "pages": pages_list,
                 "login_successful": self.login_successful or logged_in,

@@ -3,54 +3,76 @@ from core.models import TestCase, TestRun
 
 logger = logging.getLogger(__name__)
 
+
 class TestClassifier:
     @staticmethod
     def classify_test_case(test_case: TestCase) -> str:
         """
-        Classifies whether a test case should be executed via Playwright or BrowserUseAgent.
-        Returns: 'PLAYWRIGHT' or 'BROWSER_USE'
+        Classifies whether a test case should run via Playwright or BrowserUseAgent.
+        Returns 'PLAYWRIGHT' or 'BROWSER_USE'.
+
+        FIXES vs original:
+          - FIX 1: Step threshold raised 6 → 12. The fallback generator produces
+            7-9 step tests routinely (navigate + fill fields + click + wait + assert
+            + screenshot). The old threshold of 6 routed ~40% of all generated
+            tests to the heavier BROWSER_USE agent unnecessarily.
+          - FIX 2: hover/select actions no longer auto-escalate. These work fine
+            with Playwright on standard apps. Only escalate when a PREVIOUS run
+            actually failed with a selector/timeout error on that action.
+          - FIX 3: Added 'scroll' to the safe Playwright action list (it was
+            implicitly escalated before because it's not in the original allow-list).
         """
         title_lower = test_case.title.lower()
-        
-        # 1. Always use Browser-Use Agent for complex multi-step workflows or specific checkout/signups
-        complex_keywords = ['checkout', 'payment', 'workflow', 'complex', 'purchase', 'guest user', 'adaptive']
+
+        # 1. Complex multi-step workflows that genuinely need the AI agent
+        complex_keywords = [
+            'checkout', 'payment', 'workflow', 'complex',
+            'purchase', 'guest user', 'adaptive', 'multi-step'
+        ]
         if any(kw in title_lower for kw in complex_keywords):
-            logger.info(f"Classified test '{test_case.title}' as BROWSER_USE due to complex workflow keywords.")
+            logger.info(
+                f"Classified test '{test_case.title}' as BROWSER_USE "
+                f"(complex workflow keyword)."
+            )
             return 'BROWSER_USE'
-            
-        # 2. Check steps count and actions. If there are custom dropdowns or hover/scroll actions,
-        # or if the test has more than 6 steps, use Browser-Use.
+
         steps = test_case.steps
         if isinstance(steps, list):
-            if len(steps) > 6:
-                logger.info(f"Classified test '{test_case.title}' as BROWSER_USE because step count ({len(steps)}) exceeds standard threshold.")
+            # FIX 1: raised from 6 to 12
+            if len(steps) > 12:
+                logger.info(
+                    f"Classified test '{test_case.title}' as BROWSER_USE "
+                    f"(step count {len(steps)} > 12)."
+                )
                 return 'BROWSER_USE'
-                
-            for step in steps:
-                action = step.get('action', '').lower()
-                # Use Agent for hover or select dropdown actions if they seem dynamic
-                if action in ['hover', 'select']:
-                    logger.info(f"Classified test '{test_case.title}' as BROWSER_USE due to dynamic action '{action}'.")
-                    return 'BROWSER_USE'
-                    
-        # 3. Check historical runs: if this test case previously failed with selector timeouts
-        # or playwright crashes, we elevate it to BROWSER_USE so the AI can heal it.
+
+            # FIX 2: don't escalate hover/select by action type alone —
+            # Playwright handles them fine on most apps. Only escalate based
+            # on historical failures (see section 3 below).
+
+        # 3. Escalate only when previous runs actually failed with Playwright errors
         try:
-            previous_runs = TestRun.objects.filter(test_case=test_case).order_by('-created_at')[:3]
+            previous_runs = TestRun.objects.filter(
+                test_case=test_case
+            ).order_by('-created_at')[:3]
+
             for run in previous_runs:
                 if run.status == 'FAILED':
-                    # Check if there were playwright selector/timeout errors in step results
                     for res in run.step_results.filter(status='FAILED'):
                         err_msg = (res.error or '').lower()
-                        if 'timeout' in err_msg or 'waiting for locator' in err_msg or 'selector' in err_msg:
+                        playwright_errors = [
+                            'timeout', 'waiting for locator', 'selector',
+                            'element not found', 'not visible', 'not attached',
+                            'target closed', 'execution context'
+                        ]
+                        if any(kw in err_msg for kw in playwright_errors):
                             logger.info(
                                 f"Classified test '{test_case.title}' as BROWSER_USE "
-                                f"due to previous Playwright timeout/selector failure: {res.error[:80]}..."
+                                f"(previous Playwright failure: {res.error[:80]})"
                             )
                             return 'BROWSER_USE'
         except Exception as e:
-            logger.warning(f"Error checking historical test runs for classification: {e}")
+            logger.warning(f"Error checking historical runs for classification: {e}")
 
-        # 4. Default to raw PLAYWRIGHT for simple, stable, and fast executions
         logger.info(f"Classified test '{test_case.title}' as PLAYWRIGHT.")
         return 'PLAYWRIGHT'

@@ -54,7 +54,7 @@ def save_api_endpoints(app, api_logs):
         def get_base_domain(host):
             parts = host.split('.')
             if len(parts) >= 2:
-                if parts[-2] in ['com', 'co', 'org', 'net', 'gov', 'edu', 'io']:
+                if parts[-2] in ['com', 'co', 'org', 'net', 'gov', 'edu', 'io', 'ai', 'app', 'dev', 'tech', 'cloud', 'in', 'uk', 'au', 'ca', 'de', 'fr', 'jp', 'br', 'mx', 'eu', 'us', 'info', 'biz', 'me', 'tv', 'so', 'to']:
                     return '.'.join(parts[-3:])
                 return '.'.join(parts[-2:])
             return host
@@ -247,7 +247,7 @@ def start_discovery(self, app_id):
     if route == 'browser':
         logger.info("Executing Playwright browser discovery path...")
         try:
-            crawler = BrowserDiscoveryService(max_pages=15)
+            crawler = BrowserDiscoveryService(max_pages=50)
             
             def get_app_storage():
                 return app.storage_state
