@@ -597,7 +597,11 @@ class BrowserDiscoveryService:
             if login_url:
                 visited_urls.add(login_url)
 
+            active_workers = 0
+            active_workers_lock = asyncio.Lock()
+
             async def crawl_worker(worker_id):
+                nonlocal active_workers
                 logger.info(f"Starting crawl worker {worker_id}")
                 worker_page = await context.new_page()
                 worker_page.on("request", capture_network_request)
@@ -607,7 +611,10 @@ class BrowserDiscoveryService:
                     try:
                         current_url = await asyncio.wait_for(to_visit_queue.get(), timeout=1.0)
                     except asyncio.TimeoutError:
-                        break
+                        async with active_workers_lock:
+                            if active_workers == 0:
+                                break
+                        continue
 
                     # FIX 4: atomic check-and-mark inside the lock
                     async with visited_lock:
@@ -615,6 +622,9 @@ class BrowserDiscoveryService:
                             to_visit_queue.task_done()
                             continue
                         visited_urls.add(current_url)
+
+                    async with active_workers_lock:
+                        active_workers += 1
 
                     logger.info(f"Worker {worker_id} visiting: {current_url}")
 
@@ -741,6 +751,8 @@ class BrowserDiscoveryService:
                     except Exception as e:
                         logger.error(f"Worker {worker_id} failed on {current_url}: {e}")
                     finally:
+                        async with active_workers_lock:
+                            active_workers -= 1
                         to_visit_queue.task_done()
 
                 await worker_page.close()

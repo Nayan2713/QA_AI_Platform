@@ -268,38 +268,36 @@ class TestRunViewSet(viewsets.ModelViewSet):
         if not test_case_ids:
             return Response({"error": "test_case_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
         
-        from django.db import transaction
         runs = []
-        with transaction.atomic():
-            for tc_id in test_case_ids:
-                try:
-                    test_case = TestCase.objects.get(id=tc_id, app__user=request.user)
-                    test_run = TestRun.objects.create(
-                        test_case=test_case,
-                        status='PENDING'
-                    )
-                    
-                    import uuid
-                    task_id = str(uuid.uuid4())
-                    
-                    CeleryTask.objects.create(
-                        task_id=task_id,
-                        task_type='execution',
-                        status='pending',
-                        progress=0,
-                        result={"status_text": "Starting test execution run..."}
-                    )
-                    
-                    from tasks.execution import execute_test
-                    execute_test.apply_async(args=[test_run.id], task_id=task_id)
-                    
-                    runs.append({
-                        "test_run_id": test_run.id,
-                        "test_case_id": tc_id,
-                        "task_id": task_id
-                    })
-                except TestCase.DoesNotExist:
-                    continue
+        for tc_id in test_case_ids:
+            try:
+                test_case = TestCase.objects.get(id=tc_id, app__user=request.user)
+                test_run = TestRun.objects.create(
+                    test_case=test_case,
+                    status='PENDING'
+                )
+                
+                import uuid
+                task_id = str(uuid.uuid4())
+                
+                CeleryTask.objects.create(
+                    task_id=task_id,
+                    task_type='execution',
+                    status='pending',
+                    progress=0,
+                    result={"status_text": "Starting test execution run..."}
+                )
+                
+                from tasks.execution import execute_test
+                execute_test.apply_async(args=[test_run.id], task_id=task_id)
+                
+                runs.append({
+                    "test_run_id": test_run.id,
+                    "test_case_id": tc_id,
+                    "task_id": task_id
+                })
+            except TestCase.DoesNotExist:
+                continue
         return Response({"runs": runs}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['get'])
