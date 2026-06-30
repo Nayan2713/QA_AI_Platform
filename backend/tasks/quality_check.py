@@ -792,11 +792,13 @@ def run_full_quality_check(self, application_id):
         task_record = run_in_thread(get_task)
         
         def update_progress(progress, status_text):
-            if task_record:
-                task_record.status = 'progress'
-                task_record.progress = progress
-                task_record.result = {"status_text": status_text}
-                task_record.save()
+            from core.models import CeleryTask
+            task_rec = CeleryTask.objects.filter(task_id=task_id).first()
+            if task_rec:
+                task_rec.status = 'progress'
+                task_rec.progress = progress
+                task_rec.result = {"status_text": status_text}
+                task_rec.save()
         
         run_in_thread(update_progress, 10, "Initializing quality check pipeline...")
         
@@ -818,43 +820,45 @@ def run_full_quality_check(self, application_id):
         run_in_thread(update_progress, 20, f"Step 1/5: Checking relevance for {len(test_cases)} tests...")
         first_page_url = pages[0].url if pages else ''
         for test in test_cases[:10]:
-            validate_test_relevance(test.id, first_page_url)
+            run_in_thread(validate_test_relevance, test.id, first_page_url)
             results['tests_checked'] += 1
             
         # 2. Analyze coverage
         run_in_thread(update_progress, 45, "Step 2/5: Analyzing test coverage...")
-        analyze_coverage(application_id)
+        run_in_thread(analyze_coverage, application_id)
         results['coverage_analyzed'] = True
         
         # 3. Validate bugs
         run_in_thread(update_progress, 65, f"Step 3/5: Checking false positives for {len(bugs)} bugs...")
         for bug in bugs[:20]:
-            validate_bug_accuracy(bug.id)
+            run_in_thread(validate_bug_accuracy, bug.id)
             results['bugs_validated'] += 1
             
         # 4. Detect flakiness
         run_in_thread(update_progress, 80, f"Step 4/5: Detecting stability/flakiness for {len(test_cases)} tests...")
         for test in test_cases[:10]:
-            detect_flakiness(test.id, 5)
+            run_in_thread(detect_flakiness, test.id, 5)
             results['flakiness_checked'] += 1
             
         # 5. Calculate overall metrics
         run_in_thread(update_progress, 95, "Step 5/5: Computing overall quality scores and grade...")
-        calculate_quality_metrics(application_id)
+        run_in_thread(calculate_quality_metrics, application_id)
         results['metrics_calculated'] = True
         
         # Final success update
         def mark_success():
-            if task_record:
-                task_record.status = 'success'
-                task_record.progress = 100
-                task_record.result = {
+            from core.models import CeleryTask
+            task_rec = CeleryTask.objects.filter(task_id=task_id).first()
+            if task_rec:
+                task_rec.status = 'success'
+                task_rec.progress = 100
+                task_rec.result = {
                     "status_text": "Full quality check completed successfully!",
                     "tests_checked": results['tests_checked'],
                     "bugs_validated": results['bugs_validated']
                 }
-                task_record.completed_at = timezone.now()
-                task_record.save()
+                task_rec.completed_at = timezone.now()
+                task_rec.save()
         run_in_thread(mark_success)
         
         results['completed_at'] = timezone.now().isoformat()

@@ -90,10 +90,10 @@ You can run the application either **locally on your machine** (optimal for debu
    # Activate your virtual environment
    .\venv\Scripts\activate
    
-   celery -A qa_engine worker -l info
-   celery -A qa_engine worker -l info -P solo
-   celery -A qa_engine worker -l info -P threads --concurrency=6
-   celery -A qa_engine purge -f
+celery -A qa_engine worker -l info
+celery -A qa_engine worker -l info -P solo
+celery -A qa_engine worker -l info -P threads --concurrency=6
+celery -A qa_engine purge -f
    ```
 
 4. **Frontend Setup**:

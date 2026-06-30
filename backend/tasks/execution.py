@@ -83,9 +83,14 @@ os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 
 def run_in_thread(func, *args, **kwargs):
     """
-    Directly executes the function on the main thread (thread-spawning bypassed).
+    Directly executes the function on the main thread (thread-spawning bypassed)
+    while ensuring the database connection is closed afterwards to prevent leaks.
     """
-    return func(*args, **kwargs)
+    from django.db import connection
+    try:
+        return func(*args, **kwargs)
+    finally:
+        connection.close()
 
 
 def perform_login(page, context, app) -> bool:
@@ -279,7 +284,7 @@ def execute_test(self, test_run_id):
         # 15s was set previously — 8s is enough for most SPAs
         # and prevents long hangs on bad selectors.
         context.set_default_timeout(8000)
-        context.set_default_navigation_timeout(12000)
+        context.set_default_navigation_timeout(20000)
 
         page = context.new_page()
 

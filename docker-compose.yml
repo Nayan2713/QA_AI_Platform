@@ -30,7 +30,7 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OLLAMA_API_URL=http://host.docker.internal:11434/api/generate
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:7b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
       - MCP_SERVER_URL=http://host.docker.internal:5001
       # FIX: tell Django which origins to allow (includes the docker frontend)
       - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://frontend:3000
@@ -54,7 +54,7 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OLLAMA_API_URL=http://host.docker.internal:11434/api/generate
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen:7b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
       - MCP_SERVER_URL=http://host.docker.internal:5001
     depends_on:
       redis:
@@ -76,69 +76,3 @@ services:
       - /app/node_modules
     depends_on:
       - backend
-
-# version: '3.8'
-
-# services:
-#   redis:
-#     image: redis:7-alpine
-#     container_name: qa_redis
-#     ports:
-#       - "6379:6379"
-
-#   backend:
-#     build:
-#       context: ./backend
-#       dockerfile: Dockerfile
-#     container_name: qa_backend
-#     command: python manage.py migrate && python manage.py runserver 0.0.0.0:8000
-#     volumes:
-#       - ./backend:/app
-#     ports:
-#       - "8000:8000"
-#     environment:
-#       - SECRET_KEY=django-insecure-docker-compose-key-12345
-#       - DEBUG=True
-#       - CELERY_BROKER_URL=redis://redis:6379/0
-#       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-#       - OLLAMA_API_URL=http://host.docker.internal:11434/api/generate
-#       - OLLAMA_MODEL=qwen:7b
-#       - MCP_SERVER_URL=http://host.docker.internal:5001
-#     depends_on:
-#       - redis
-#     extra_hosts:
-#       - "host.docker.internal:host-gateway"
-
-#   celery:
-#     build:
-#       context: ./backend
-#       dockerfile: Dockerfile
-#     container_name: qa_celery
-#     command: celery -A qa_engine worker -l info
-#     volumes:
-#       - ./backend:/app
-#     environment:
-#       - SECRET_KEY=django-insecure-docker-compose-key-12345
-#       - DEBUG=True
-#       - CELERY_BROKER_URL=redis://redis:6379/0
-#       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-#       - OLLAMA_API_URL=http://host.docker.internal:11434/api/generate
-#       - OLLAMA_MODEL=qwen:7b
-#       - MCP_SERVER_URL=http://host.docker.internal:5001
-#     depends_on:
-#       - redis
-#     extra_hosts:
-#       - "host.docker.internal:host-gateway"
-
-#   frontend:
-#     build:
-#       context: ./frontend
-#       dockerfile: Dockerfile
-#     container_name: qa_frontend
-#     ports:
-#       - "3000:3000"
-#     volumes:
-#       - ./frontend:/app
-#       - /app/node_modules
-#     depends_on:
-#       - backend

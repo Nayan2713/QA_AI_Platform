@@ -2,6 +2,7 @@ import logging
 import urllib.request
 import json
 import socket
+import time
 from urllib.parse import urlparse
 from django.conf import settings
 
@@ -25,13 +26,26 @@ def is_port_open(url, timeout=0.5):
         return False
 
 
+_ollama_models_cache = None
+_ollama_cache_timestamp = 0
+OLLAMA_CACHE_TTL = 60  # Cache available models for 60 seconds
+
+
 def get_available_ollama_models(base_url):
+    global _ollama_models_cache, _ollama_cache_timestamp
+    current_time = time.time()
+    if _ollama_models_cache is not None and (current_time - _ollama_cache_timestamp) < OLLAMA_CACHE_TTL:
+        return _ollama_models_cache
+
     try:
         url = f"{base_url}/api/tags"
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=2.0) as response:
             data = json.loads(response.read().decode())
-            return [model['name'] for model in data.get('models', [])]
+            models = [model['name'] for model in data.get('models', [])]
+            _ollama_models_cache = models
+            _ollama_cache_timestamp = current_time
+            return models
     except Exception:
         return []
 
@@ -107,7 +121,7 @@ def get_llm(application=None):
                 timeout=60,
                 temperature=0.2,        # FIX 2: was inside ollama_options={}
                 num_predict=4096,
-                num_ctx=16000,
+                num_ctx=4096,
             )
         else:
             logger.warning(f"Ollama port not open at {base_url}. Skipping.")
