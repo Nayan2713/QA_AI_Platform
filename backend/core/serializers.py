@@ -138,16 +138,40 @@ class TestCaseSerializer(serializers.ModelSerializer):
         return value
 
 
+class TestCaseListSerializer(serializers.ModelSerializer):
+    steps = serializers.JSONField()
+    
+    class Meta:
+        model = TestCase
+        fields = ('id', 'app', 'title', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'created_at')
+
+
 class TestResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestResult
         fields = ('id', 'test_run', 'step_number', 'status', 'error', 'screenshot', 'created_at')
 
 
+class TestResultListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TestResult
+        fields = ('id', 'test_run', 'step_number', 'status', 'error', 'created_at')
+
+
 class TestRunSerializer(serializers.ModelSerializer):
     test_case_title = serializers.CharField(source='test_case.title', read_only=True)
     app_url = serializers.CharField(source='test_case.app.url', read_only=True)
     results = TestResultSerializer(source='step_results', many=True, read_only=True)
+
+    class Meta:
+        model = TestRun
+        fields = ('id', 'test_case', 'test_case_title', 'app_url', 'status', 'metadata', 'results', 'bugs_found', 'created_at')
+
+
+class TestRunListSerializer(serializers.ModelSerializer):
+    test_case_title = serializers.CharField(source='test_case.title', read_only=True)
+    app_url = serializers.CharField(source='test_case.app.url', read_only=True)
+    results = TestResultListSerializer(source='step_results', many=True, read_only=True)
 
     class Meta:
         model = TestRun
@@ -198,7 +222,7 @@ class BugSerializer(serializers.ModelSerializer):
         
     def get_test_run_results(self, obj):
         if obj.test_run:
-            return TestResultSerializer(obj.test_run.step_results.all(), many=True).data
+            return TestResultListSerializer(obj.test_run.step_results.all(), many=True).data
         return []
 
 

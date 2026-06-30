@@ -314,6 +314,8 @@ def execute_test(self, test_run_id):
                             except Exception:
                                 pass
                         body_text = raw.decode('utf-8', errors='replace')
+                        if body_text and len(body_text) > 2000:
+                            body_text = body_text[:2000] + "\n...[TRUNCATED FOR DATABASE PERFORMANCE]..."
                 except Exception:
                     pass
                 api_logs.append({
@@ -425,16 +427,28 @@ def execute_test(self, test_run_id):
                             raw_ms = int(value) if str(value).isdigit() else 1000
                             page.wait_for_timeout(min(raw_ms, 800))
 
+                        # elif action == "assert":
+                        #     if selector:
+                        #         # ─── FIX 7: Wait FOR the element + text
+                        #         #     instead of just reading body immediately.
+                        #         #     This replaces the pattern of
+                        #         #     wait(1500) → assert that appears in
+                        #         #     many generated test cases.
+                        #         try:
+                        #             page.wait_for_selector(
+                        #                 f"{selector}:has-text('{value}')",
+                        #                 timeout=5000,
+                        #                 state="visible"
+                        #             )
                         elif action == "assert":
+                            # Escape the value so quotes/specials don't produce
+                            # an invalid selector that throws (and gets mislabeled
+                            # as an application bug).
+                            safe_value = value.replace("\\", "\\\\").replace('"', '\\"')
                             if selector:
-                                # ─── FIX 7: Wait FOR the element + text
-                                #     instead of just reading body immediately.
-                                #     This replaces the pattern of
-                                #     wait(1500) → assert that appears in
-                                #     many generated test cases.
                                 try:
                                     page.wait_for_selector(
-                                        f"{selector}:has-text('{value}')",
+                                        f'{selector}:has-text("{safe_value}")',
                                         timeout=5000,
                                         state="visible"
                                     )
@@ -448,10 +462,8 @@ def execute_test(self, test_run_id):
                                         )
                             else:
                                 try:
-                                    page.wait_for_selector(
-                                        f"text={value}",
-                                        timeout=5000,
-                                        state="visible"
+                                    page.get_by_text(value, exact=False).first.wait_for(
+                                        timeout=5000, state="visible"
                                     )
                                 except Exception:
                                     content = page.locator("body").inner_text()

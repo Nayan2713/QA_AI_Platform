@@ -19,27 +19,57 @@ def classify_severity(error_message):
     """
     err = error_message.lower()
     
-    # Critical keywords
-    critical_kws = ['crash', 'error', 'timeout', '500', 'exception', 'failed to load', 'not reachable', 'network failures']
+    critical_kws = [
+        'crash', 'exception', 'traceback', 'internal server error',
+        '500', '502', '503', 'failed to load', 'not reachable',
+        'network failure', 'database error', 'sql error',
+    ]
     if any(kw in err for kw in critical_kws):
         return 'critical'
-        
-    # High keywords
-    high_kws = ['invalid', 'not found', 'unexpected', 'wrong', 'assertion', 'regression', 'schema regression', 'quality failures']
+
+    # High: functional / data correctness failures.
+    high_kws = [
+        'invalid', 'not found', '404', 'unexpected', 'assertion failed',
+        'schema regression', 'schema conformance', 'quality failure',
+        'success=false', '401', '403',
+    ]
     if any(kw in err for kw in high_kws):
         return 'high'
-        
-    # Medium keywords
-    medium_kws = ['missing', 'slow', 'layout', 'display', 'visible', 'wait_for']
+
+    # Medium: UI / rendering / content issues.
+    # 'visible' and 'wait_for' removed — they collide with normal
+    # Playwright "waiting for element to be visible" prose.
+    medium_kws = ['missing field', 'slow', 'high response latency', 'layout', 'display']
     if any(kw in err for kw in medium_kws):
         return 'medium'
-        
-    # Low keywords
+
+    # Low: cosmetic.
     low_kws = ['typo', 'spacing', 'color']
     if any(kw in err for kw in low_kws):
         return 'low'
-        
+
     return 'medium'
+    # # Critical keywords
+    # critical_kws = ['crash', 'error', 'timeout', '500', 'exception', 'failed to load', 'not reachable', 'network failures']
+    # if any(kw in err for kw in critical_kws):
+    #     return 'critical'
+        
+    # # High keywords
+    # high_kws = ['invalid', 'not found', 'unexpected', 'wrong', 'assertion', 'regression', 'schema regression', 'quality failures']
+    # if any(kw in err for kw in high_kws):
+    #     return 'high'
+        
+    # # Medium keywords
+    # medium_kws = ['missing', 'slow', 'layout', 'display', 'visible', 'wait_for']
+    # if any(kw in err for kw in medium_kws):
+    #     return 'medium'
+        
+    # # Low keywords
+    # low_kws = ['typo', 'spacing', 'color']
+    # if any(kw in err for kw in low_kws):
+    #     return 'low'
+        
+    # return 'medium'
 
 
 @shared_task(name="tasks.bug_detection.detect_bugs")
@@ -64,7 +94,9 @@ def detect_bugs(test_run_id):
     try:
         with transaction.atomic():
             # Clear previous bugs for this test case to avoid duplicates across runs
-            Bug.objects.filter(test_run__test_case=test_run.test_case).delete()
+            #Bug.objects.filter(test_run__test_case=test_run.test_case).delete()
+            Bug.objects.filter(test_run=test_run).delete()
+
             
             seen_bugs_in_run = set()
             for result in failed_results:

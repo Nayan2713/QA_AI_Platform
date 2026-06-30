@@ -156,11 +156,15 @@ def generate_tests(self, app_id):
         def save_test_cases():
             with transaction.atomic():
                 # Save industry back to Application model if it has changed/was empty
-                if industry_val and not app.industry:
+                # if industry_val and not app.industry:
+                if industry_val:
                     app.industry = industry_val
                     app.save()
 
-                TestCase.objects.filter(app=app).delete()
+                # TestCase.objects.filter(app=app).delete()
+                TestCase.objects.filter(app=app).exclude(
+                    validation_status='VERIFIED'
+                ).delete()
                 for tc in test_cases_data:
                     TestCase.objects.create(
                         app=app,

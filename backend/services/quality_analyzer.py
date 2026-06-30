@@ -72,20 +72,38 @@ class ResponseQualityAnalyzer:
         try:
             data = json.loads(body_text)
             if isinstance(data, dict):
-                # success = false
-                if data.get('success') is False or data.get('success') == 'false':
-                    return "API response returned success=false flag."
+                # Only treat success=false as an error when it's paired with a
+                # 5xx-style signal. A plain {"success": false, "message": "No results"}
+                # is a normal business response, not a bug.
+                if (data.get('success') is False or data.get('success') == 'false') \
+                        and status >= 500:
+                    return "API response returned success=false on a server error."
 
-                # explicit error fields
-                if 'error' in data or 'errors' in data:
-                    err = data.get('error') or data.get('errors')
-                    if err:
-                        return f"API response contains error field: {err}"
+                # Explicit error fields — ignore null / empty / empty-collection,
+                # which healthy APIs return routinely (e.g. {"errors": []}).
+                err = data.get('error') if 'error' in data else data.get('errors')
+                if err not in (None, '', [], {}, 'null', False):
+                    return f"API response contains error field: {err}"
 
-                # status = error / fail
-                if data.get('status') in ['error', 'fail']:
+                # status = error / fail (this one is a reliable signal)
+                if str(data.get('status')).lower() in ['error', 'fail']:
                     msg = data.get('message') or data.get('detail') or 'Unknown failure'
                     return f"API status is '{data.get('status')}': {msg}"
+            # if isinstance(data, dict):
+            #     # success = false
+            #     if data.get('success') is False or data.get('success') == 'false':
+            #         return "API response returned success=false flag."
+
+            #     # explicit error fields
+            #     if 'error' in data or 'errors' in data:
+            #         err = data.get('error') or data.get('errors')
+            #         if err:
+            #             return f"API response contains error field: {err}"
+
+            #     # status = error / fail
+            #     if data.get('status') in ['error', 'fail']:
+            #         msg = data.get('message') or data.get('detail') or 'Unknown failure'
+            #         return f"API status is '{data.get('status')}': {msg}"
         except Exception:
             # Not JSON — check raw text for crash keywords
             lower_body = body_text.lower()

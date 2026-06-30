@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -8,11 +9,16 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession
 from .serializers import (
     RegisterSerializer, UserSerializer, ApplicationSerializer, 
-    PageSerializer, TestCaseSerializer, TestRunSerializer, 
+    PageSerializer, TestCaseSerializer, TestCaseListSerializer, TestRunSerializer, TestRunListSerializer,
     TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer,
     APIEndpointSerializer, AgentSessionSerializer
 )
 from services.test_validation_service import TestValidationService
+
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 # Celery task imports - imported inside methods to prevent circular dependency
 # or loading issues before Celery is ready.
@@ -146,7 +152,16 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     def bugs(self, request, pk=None):
         app = self.get_object()
         from django.db.models import Q
-        bugs = Bug.objects.filter(Q(application=app) | Q(test_run__test_case__app=app)).distinct().order_by('-created_at')
+        bugs = (
+            Bug.objects.filter(Q(application=app) | Q(test_run__test_case__app=app))
+            .select_related('application', 'test_run', 'test_run__test_case', 'test_run__test_case__app')
+            .distinct()
+            .order_by('-created_at')
+        )
+        page = self.paginate_queryset(bugs)
+        if page is not None:
+            serializer = BugSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = BugSerializer(bugs, many=True)
         return Response(serializer.data)
 
@@ -161,13 +176,19 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 class TestCaseViewSet(viewsets.ModelViewSet):
     serializer_class = TestCaseSerializer
     permission_classes = (permissions.IsAuthenticated,)
+    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        queryset = TestCase.objects.filter(app__user=self.request.user).order_by('-created_at')
+        queryset = TestCase.objects.filter(app__user=self.request.user).select_related('app').order_by('-created_at')
         app_id = self.request.query_params.get('app')
         if app_id:
             queryset = queryset.filter(app_id=app_id)
         return queryset
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return TestCaseListSerializer
+        return TestCaseSerializer
 
     @action(detail=False, methods=['post'])
     def generate(self, request):
@@ -220,9 +241,20 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 class TestRunViewSet(viewsets.ModelViewSet):
     serializer_class = TestRunSerializer
     permission_classes = (permissions.IsAuthenticated,)
+    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        return TestRun.objects.filter(test_case__app__user=self.request.user).order_by('-created_at')
+        return (
+            TestRun.objects.filter(test_case__app__user=self.request.user)
+            .select_related('test_case', 'test_case__app')
+            .prefetch_related('step_results')
+            .order_by('-created_at')
+        )
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return TestRunListSerializer
+        return TestRunSerializer
 
     @action(detail=False, methods=['post'])
     def execute(self, request):
@@ -313,9 +345,14 @@ class TestRunViewSet(viewsets.ModelViewSet):
 
 class BugViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
+    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        queryset = Bug.objects.filter(test_run__test_case__app__user=self.request.user).order_by('-created_at')
+        queryset = (
+            Bug.objects.filter(test_run__test_case__app__user=self.request.user)
+            .select_related('application', 'test_run', 'test_run__test_case', 'test_run__test_case__app')
+            .order_by('-created_at')
+        )
         app_id = self.request.query_params.get('app')
         if app_id:
             queryset = queryset.filter(test_run__test_case__app_id=app_id)
