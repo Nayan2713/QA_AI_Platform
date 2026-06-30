@@ -28,12 +28,78 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Suite Progress Tracking State
+  const [suiteRuns, setSuiteRuns] = useState<Array<{ id: number, testCaseId: number, title: string, status: string }>>([]);
+  const [suiteRunStartTime, setSuiteRunStartTime] = useState<number | null>(null);
+  const [showSuiteProgress, setShowSuiteProgress] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
   useEffect(() => {
     if (!activeTaskId) {
       setGenerating(false);
       setSuccessMsg('');
     }
   }, [activeTaskId]);
+
+  // Live ticking timer for elapsed duration
+  useEffect(() => {
+    if (!showSuiteProgress || !suiteRunStartTime) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const hasUnfinished = suiteRuns.some(r => r.status === 'PENDING' || r.status === 'RUNNING');
+    if (!hasUnfinished) return;
+
+    const intervalId = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - suiteRunStartTime) / 1000));
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [showSuiteProgress, suiteRunStartTime, suiteRuns]);
+
+  // Polling suite runs statuses
+  useEffect(() => {
+    if (!showSuiteProgress || suiteRuns.length === 0) return;
+
+    const hasUnfinished = suiteRuns.some(r => r.status === 'PENDING' || r.status === 'RUNNING');
+    if (!hasUnfinished) return;
+
+    let isMounted = true;
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await api.get('test-runs/');
+        if (!isMounted) return;
+
+        const latestRuns = res.data;
+        const updatedRuns = suiteRuns.map(r => {
+          const match = latestRuns.find((lr: any) => lr.id === r.id);
+          return match ? { ...r, status: match.status } : r;
+        });
+
+        const hasChanges = updatedRuns.some((r, i) => r.status !== suiteRuns[i].status);
+        if (hasChanges) {
+          setSuiteRuns(updatedRuns);
+          const stillUnfinished = updatedRuns.some(r => r.status === 'PENDING' || r.status === 'RUNNING');
+          if (!stillUnfinished) {
+            onRefreshTests();
+          }
+        }
+      } catch (err) {
+        console.error('Error polling suite runs:', err);
+      }
+    }, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [showSuiteProgress, suiteRuns]);
+
+  const formatDuration = (secs: number) => {
+    const mins = Math.floor(secs / 60);
+    const remainingSecs = Math.floor(secs % 60);
+    return `${mins.toString().padStart(2, '0')}:${remainingSecs.toString().padStart(2, '0')}`;
+  };
 
   const handleGenerateTests = async () => {
     setGenerating(true);
@@ -61,6 +127,16 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       setSuccessMsg(`Test run execution started successfully.`);
       if (response.data.test_run_id) {
         onTestExecuted(response.data.test_run_id, response.data.task_id);
+        
+        const tc = testCases.find(t => t.id === testCaseId);
+        setSuiteRuns([{
+          id: response.data.test_run_id,
+          testCaseId: testCaseId,
+          title: tc?.title || `Test Case #${testCaseId}`,
+          status: 'PENDING'
+        }]);
+        setSuiteRunStartTime(Date.now());
+        setShowSuiteProgress(true);
       }
     } catch (err: any) {
       console.error(err);
@@ -120,12 +196,22 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     setSuccessMsg('');
     try {
       setSuccessMsg(`Queueing execution for all ${testCases.length} tests...`);
-      for (const tc of testCases) {
-        const response = await api.post('test-runs/execute/', { test_case_id: tc.id });
-        if (response.data.test_run_id) {
-          onTestExecuted(response.data.test_run_id, response.data.task_id);
-        }
-      }
+      const testCaseIds = testCases.map(tc => tc.id);
+      const response = await api.post('test-runs/execute_batch/', { test_case_ids: testCaseIds });
+      
+      const runs = response.data.runs.map((r: any) => {
+        const tc = testCases.find(t => t.id === r.test_case_id);
+        return {
+          id: r.test_run_id,
+          testCaseId: r.test_case_id,
+          title: tc?.title || `Test Case #${r.test_case_id}`,
+          status: 'PENDING'
+        };
+      });
+      
+      setSuiteRuns(runs);
+      setSuiteRunStartTime(Date.now());
+      setShowSuiteProgress(true);
       setSuccessMsg(`Successfully queued all ${testCases.length} tests for execution.`);
     } catch (err: any) {
       console.error(err);
@@ -219,6 +305,148 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
 
       {error && <div className="error-alert">{error}</div>}
       {successMsg && <div className="success-alert">{successMsg}</div>}
+
+      {(() => {
+        const completedCount = suiteRuns.filter(r => r.status === 'COMPLETED' || r.status === 'FAILED').length;
+        const remainingCount = suiteRuns.length - completedCount;
+        const totalCount = suiteRuns.length;
+        const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+        let estRemainingSeconds = 0;
+        if (remainingCount > 0) {
+          if (completedCount > 0) {
+            const avgSecondsPerTest = elapsedSeconds / completedCount;
+            estRemainingSeconds = Math.round(avgSecondsPerTest * remainingCount);
+          } else {
+            estRemainingSeconds = remainingCount * 15;
+          }
+        }
+
+        return showSuiteProgress && suiteRuns.length > 0 ? (
+          <div className="suite-progress-panel" style={{
+            background: 'rgba(30, 41, 59, 0.4)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '12px',
+            padding: '20px',
+            margin: '0 20px 20px 20px',
+            backdropFilter: 'blur(8px)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', color: '#60a5fa' }}>
+                ⚡ AI Test Execution Status
+              </h4>
+              <button 
+                onClick={() => setShowSuiteProgress(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'rgba(255,255,255,0.4)',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem'
+                }}
+              >
+                ✕ Close Tracker
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginBottom: '16px' }}>
+              <div style={{ flex: 1, minWidth: '200px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px', color: 'rgba(255,255,255,0.7)' }}>
+                  <span>Overall Progress</span>
+                  <span>{completedCount} / {totalCount} Completed ({pct}%)</span>
+                </div>
+                <div style={{ height: '8px', background: 'rgba(255,255,255,0.08)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${pct}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #3b82f6 0%, #10b981 100%)',
+                    borderRadius: '4px',
+                    transition: 'width 0.5s ease-out'
+                  }} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>Elapsed Time</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#f59e0b', fontFamily: 'monospace' }}>
+                    {formatDuration(elapsedSeconds)}
+                  </div>
+                </div>
+                
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>Est. Remaining</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: remainingCount > 0 ? '#10b981' : 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
+                    {remainingCount > 0 ? formatDuration(estRemainingSeconds) : 'Finished'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="suite-runs-grid" style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', 
+              gap: '8px',
+              maxHeight: '120px',
+              overflowY: 'auto',
+              paddingRight: '6px'
+            }}>
+              {suiteRuns.map((run) => {
+                let badgeColor = '#94a3b8';
+                let badgeBg = 'rgba(148, 163, 184, 0.15)';
+                let statusText = 'Pending';
+                
+                if (run.status === 'RUNNING') {
+                  badgeColor = '#3b82f6';
+                  badgeBg = 'rgba(59, 130, 246, 0.15)';
+                  statusText = 'Running';
+                } else if (run.status === 'COMPLETED') {
+                  badgeColor = '#10b981';
+                  badgeBg = 'rgba(16, 185, 129, 0.15)';
+                  statusText = 'Passed';
+                } else if (run.status === 'FAILED') {
+                  badgeColor = '#ef4444';
+                  badgeBg = 'rgba(239, 68, 68, 0.15)';
+                  statusText = 'Failed';
+                }
+
+                return (
+                  <div key={run.id} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between', 
+                    padding: '6px 10px', 
+                    background: 'rgba(255,255,255,0.02)', 
+                    border: '1px solid rgba(255,255,255,0.05)',
+                    borderRadius: '6px',
+                    fontSize: '0.8rem'
+                  }}>
+                    <span style={{ 
+                      whiteSpace: 'nowrap', 
+                      overflow: 'hidden', 
+                      textOverflow: 'ellipsis', 
+                      maxWidth: '130px',
+                      color: 'rgba(255,255,255,0.8)'
+                    }} title={run.title}>
+                      {run.title}
+                    </span>
+                    <span style={{
+                      color: badgeColor,
+                      background: badgeBg,
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      fontWeight: '600'
+                    }}>
+                      {statusText}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null;
+      })()}
 
       {testCases.length === 0 ? (
         <div className="empty-state">

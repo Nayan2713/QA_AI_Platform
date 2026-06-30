@@ -92,6 +92,7 @@ You can run the application either **locally on your machine** (optimal for debu
    
    celery -A qa_engine worker -l info
    celery -A qa_engine worker -l info -P solo
+   celery -A qa_engine worker -l info -P threads --concurrency=6
    celery -A qa_engine purge -f
    ```
 

@@ -440,7 +440,22 @@ class BrowserDiscoveryService:
                         elif 'cookie' in headers:
                             auth_type = 'cookie'
 
-                        request_body = response.request.post_data or ""
+                        request_body = ""
+                        try:
+                            post_bytes = response.request.post_data_bytes
+                            if post_bytes:
+                                if post_bytes[:2] == b'\x1f\x8b':
+                                    import gzip
+                                    try:
+                                        post_bytes = gzip.decompress(post_bytes)
+                                    except Exception:
+                                        pass
+                                request_body = post_bytes.decode('utf-8', errors='replace')
+                        except Exception:
+                            try:
+                                request_body = response.request.post_data or ""
+                            except Exception:
+                                request_body = ""
 
                         page_url = ""
                         try:
@@ -527,21 +542,6 @@ class BrowserDiscoveryService:
             if logged_in and post_login_url:
                 try:
                     logger.info(f"Extracting links from post-login landing page: {post_login_url}")
-                    # Already on post_login_url — no need to navigate again
-                    title = await page.title()
-                    forms = await self.extract_forms(page)
-                    buttons = await self.extract_buttons(page)
-
-                    pages_list.append({
-                        "url": post_login_url,
-                        "title": title,
-                        "forms": forms,
-                        "buttons": buttons,
-                        "page_type": "dashboard",
-                        "elements": {},
-                        "workflows": []
-                    })
-
                     links = await page.locator("a").all()
                     for link in links:
                         try:
@@ -551,7 +551,6 @@ class BrowserDiscoveryService:
                                 norm_url = abs_url.split('#')[0].split('?')[0]
                                 if (
                                     self.is_same_domain(norm_url, start_url, login_url)
-                                    and norm_url not in self.visited_urls
                                     and norm_url != login_url
                                 ):
                                     to_visit.append(norm_url)
@@ -567,20 +566,6 @@ class BrowserDiscoveryService:
                     await page.goto(start_url, wait_until="domcontentloaded", timeout=20000)
                     await page.wait_for_timeout(1000)
 
-                    title = await page.title()
-                    forms = await self.extract_forms(page)
-                    buttons = await self.extract_buttons(page)
-
-                    pages_list.append({
-                        "url": start_url,
-                        "title": title,
-                        "forms": forms,
-                        "buttons": buttons,
-                        "page_type": "home",
-                        "elements": {},
-                        "workflows": []
-                    })
-
                     links = await page.locator("a").all()
                     for link in links:
                         try:
@@ -588,7 +573,7 @@ class BrowserDiscoveryService:
                             if href:
                                 abs_url = urljoin(start_url, href)
                                 norm_url = abs_url.split('#')[0].split('?')[0]
-                                if self.is_same_domain(norm_url, start_url, login_url):
+                                if self.is_same_domain(norm_url, start_url, login_url) and norm_url != login_url:
                                     to_visit.append(norm_url)
                         except Exception:
                             continue
@@ -597,22 +582,20 @@ class BrowserDiscoveryService:
 
             await page.close()
 
-            # ------------------------------------------------------------------
-            # FIX 4: Protect visited_urls with an asyncio.Lock so the 3
-            # concurrent workers cannot race and visit the same URL twice.
-            # ------------------------------------------------------------------
             to_visit_queue = asyncio.Queue()
+            initial_url = post_login_url if (logged_in and post_login_url) else start_url
+            
+            # Workers start directly on initial_url so they run click events and extract all forms/menus
+            await to_visit_queue.put(initial_url)
             for url in to_visit:
-                await to_visit_queue.put(url)
+                if url != initial_url:
+                    await to_visit_queue.put(url)
 
             visited_urls = self.visited_urls
             visited_lock = asyncio.Lock()       # NEW: lock for safe concurrent access
 
-            visited_urls.add(start_url)
             if login_url:
                 visited_urls.add(login_url)
-            if post_login_url:
-                visited_urls.add(post_login_url)
 
             async def crawl_worker(worker_id):
                 logger.info(f"Starting crawl worker {worker_id}")
@@ -649,8 +632,12 @@ class BrowserDiscoveryService:
                         await worker_page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                         await worker_page.wait_for_timeout(400)
 
-                        # FIX: path+title+form_count fingerprint — prevents SPA pages from
-                        # appearing identical due to shared app shell layout.
+                        try:
+                            await worker_page.wait_for_load_state("networkidle", timeout=1500)
+                        except Exception:
+                            pass
+
+                        title = await worker_page.title()
                         norm_path = urlparse(current_url).path
                         norm_path_pattern = re.sub(r'\d+', ':id', norm_path)
                         title_key = (title or '')[:40].strip().lower()
@@ -661,11 +648,9 @@ class BrowserDiscoveryService:
                         fingerprint_key = f"{norm_path_pattern}|{title_key}|{form_count}"
 
                         if fingerprint_key in self.dom_fingerprints:
-                            to_visit_queue.task_done()
                             continue
                         self.dom_fingerprints.add(fingerprint_key)
 
-                        title = await worker_page.title()
                         forms = await self.extract_forms(worker_page)
                         buttons = await self.extract_buttons(worker_page)
 

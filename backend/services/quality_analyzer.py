@@ -257,7 +257,7 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
         return None
 
     @classmethod
-    def check_schema_conformance(cls, call, app):
+    def check_schema_conformance(cls, call, app, endpoints_cache=None):
         """
         Validates if the API response body conforms to the discovered
         APIEndpoint schema stored during discovery.
@@ -279,12 +279,15 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
             logger.debug(f"Failed to generate url pattern for conformance check: {err}")
             return None
 
-        from core.models import APIEndpoint
-        endpoint = APIEndpoint.objects.filter(
-            application=app,
-            method=method,
-            url_pattern=url_pattern
-        ).first()
+        if endpoints_cache is not None:
+            endpoint = endpoints_cache.get((method, url_pattern))
+        else:
+            from core.models import APIEndpoint
+            endpoint = APIEndpoint.objects.filter(
+                application=app,
+                method=method,
+                url_pattern=url_pattern
+            ).first()
 
         if not endpoint or not endpoint.response_schema:
             return None
@@ -356,7 +359,8 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
     @classmethod
     def analyze_response_quality(
         cls, current_calls, previous_calls,
-        expected_result=None, base_url=None, app=None
+        expected_result=None, base_url=None, app=None,
+        endpoints_cache=None
     ):
         """
         Runs all quality scans and returns a list of detected warnings and errors.
@@ -400,7 +404,7 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
 
             # 4. Schema conformance (vs discovered API schema)
             if app:
-                conformance_issue = cls.check_schema_conformance(call, app)
+                conformance_issue = cls.check_schema_conformance(call, app, endpoints_cache=endpoints_cache)
                 if conformance_issue:
                     issues.append({
                         "url": url, "method": method,
