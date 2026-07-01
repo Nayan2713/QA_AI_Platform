@@ -27,6 +27,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   const [validationResults, setValidationResults] = useState<Record<number, any>>({});
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [selectedModel, setSelectedModel] = useState('auto');
 
   // Suite Progress Tracking State
   const [suiteRuns, setSuiteRuns] = useState<Array<{ id: number, testCaseId: number, title: string, status: string }>>([]);
@@ -106,7 +107,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     setError('');
     setSuccessMsg('');
     try {
-      const res = await api.post('test-cases/generate/', { app_id: appId });
+      const res = await api.post('test-cases/generate/', { app_id: appId, model_choice: selectedModel });
       setSuccessMsg('Test suite generation started! Polling database...');
       if (res.data.task_id && onTaskTriggered) {
         onTaskTriggered(res.data.task_id);
@@ -115,6 +116,19 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       console.error(err);
       setError('Failed to trigger AI test case generation.');
       setGenerating(false);
+    }
+  };
+
+  const handleStopGeneration = async () => {
+    if (!activeTaskId) return;
+    try {
+      await api.post(`tasks/${activeTaskId}/stop/`);
+      setGenerating(false);
+      setSuccessMsg('Generation task stopped by user.');
+      onRefreshTests();
+    } catch (err) {
+      console.error('Failed to stop task:', err);
+      setError('Failed to stop the generation task.');
     }
   };
 
@@ -286,6 +300,27 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
             </button>
           )}
           
+          <select 
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            disabled={generating || !!activeTaskId}
+            style={{
+              backgroundColor: '#1e293b',
+              color: '#ffffff',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              padding: '10px 14px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              outline: 'none',
+            }}
+          >
+            <option value="auto">Auto-Select LLM</option>
+            <option value="ollama_qwen">Ollama / Qwen (Local)</option>
+            <option value="ollama_groq">Ollama / Groq (Local)</option>
+            <option value="openai">ChatGPT / OpenAI (Cloud)</option>
+          </select>
+
           <button 
             onClick={handleGenerateTests} 
             disabled={generating || !!activeTaskId} 
@@ -300,6 +335,27 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
               '✨ Generate Tests with AI'
             )}
           </button>
+
+          {(generating || activeTaskId) && (
+            <button 
+              onClick={handleStopGeneration} 
+              className="btn-danger btn-stop"
+              style={{
+                backgroundColor: '#ef4444',
+                color: '#ffffff',
+                border: 'none',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: '600',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              🛑 Stop Generation
+            </button>
+          )}
         </div>
       </div>
 
@@ -463,7 +519,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
                     <div className="test-case-title-row" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                       <h5 style={{ margin: 0 }}>{tc.title}</h5>
                       <span className={`badge-ai ${tc.ai_generated ? 'badge-ai-model' : 'badge-ai-fallback'}`}>
-                        {tc.ai_generated ? '🤖 AI Generated' : '📋 Fallback Template'}
+                        {tc.ai_generated ? `🤖 AI Generated (${tc.model_used || 'Local LLM'})` : '📋 Fallback Template'}
                       </span>
                       {getValidationBadge(tc.validation_status)}
                     </div>

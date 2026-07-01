@@ -146,6 +146,18 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     };
   }, [activeTaskId]);
 
+  const handleStopTask = async () => {
+    if (!activeTaskId) return;
+    try {
+      await api.post(`tasks/${activeTaskId}/stop/`);
+      setActiveTaskId(null);
+      setCurrentTask(null);
+      await fetchAppDetails();
+    } catch (err) {
+      console.error('Failed to stop task:', err);
+    }
+  };
+
   const handleStartDiscovery = async () => {
     if (!app) return;
     setDiscovering(true);
@@ -545,9 +557,37 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             <span style={{ fontSize: '0.9rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#a0a0ff' }}>
               ⚙️ Internal Progress: {currentTask.task_type.replace('_', ' ')}
             </span>
-            <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#ffffff' }}>
-              {currentTask.progress}%
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#ffffff' }}>
+                {currentTask.progress}%
+              </span>
+              {(currentTask.status === 'pending' || currentTask.status === 'progress') && (
+                <button
+                  onClick={handleStopTask}
+                  style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    color: '#ff8888',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    fontSize: '0.75rem',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.4)';
+                    e.currentTarget.style.color = '#ffffff';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+                    e.currentTarget.style.color = '#ff8888';
+                  }}
+                >
+                  🛑 Stop
+                </button>
+              )}
+            </div>
           </div>
           
           <div style={{

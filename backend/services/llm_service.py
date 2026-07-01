@@ -23,7 +23,8 @@ _SKIP_SEGMENTS = frozenset({
 
 
 class LLMService:
-    def __init__(self):
+    def __init__(self, model_choice=None):
+        self.model_choice = model_choice
         self.api_url = getattr(settings, 'OLLAMA_API_URL', 'http://localhost:11434/api/generate')
         self.model = getattr(settings, 'OLLAMA_MODEL', 'qwen2.5:7b')
 
@@ -35,22 +36,39 @@ class LLMService:
         """
         Attempts to generate test cases using the configured LLM.
         Falls back to deterministic template generation if LLM is unreachable.
-        Returns (test_cases, industry, was_ai_generated).
+        Returns (test_cases, industry, was_ai_generated, resolved_model).
         """
         pages_context = json.dumps(pages_data, indent=2)
         prompt = self.get_prompt(pages_context)
 
-        logger.info("Attempting to generate test cases using configured LLM...")
+        logger.info(f"Attempting to generate test cases using configured LLM (choice: {self.model_choice})...")
 
         try:
             from config.llm_config import get_llm, llm_predict
-            llm = get_llm()
-            raw_text = llm_predict(llm, prompt).strip()
+            llm = get_llm(model_choice=self.model_choice)
+            
+            # Resolve model name:
+            if self.model_choice == 'openai':
+                resolved_model = "ChatGPT (gpt-4o-mini)"
+            elif self.model_choice == 'ollama_groq':
+                resolved_model = "Ollama (groq)"
+            elif self.model_choice in ('ollama', 'ollama_qwen'):
+                resolved_model = f"Ollama ({getattr(llm, 'model', 'Qwen')})"
+            else:
+                # auto fallback detection
+                if getattr(llm, 'model_name', None) == 'gpt-4o-mini':
+                    resolved_model = "ChatGPT (gpt-4o-mini)"
+                elif 'groq.com' in getattr(llm, 'base_url', ''):
+                    resolved_model = "Groq (Llama-3.3-70b)"
+                else:
+                    resolved_model = f"Ollama ({getattr(llm, 'model', 'Qwen')})"
+
+            raw_text = llm_predict(llm, prompt, model_choice=self.model_choice).strip()
             result = self.parse_json_response(raw_text)
             if result:
                 test_cases, industry = result
-                logger.info(f"LLM generated {len(test_cases)} test cases.")
-                return test_cases, industry, True
+                logger.info(f"LLM generated {len(test_cases)} test cases using model {resolved_model}.")
+                return test_cases, industry, True, resolved_model
             else:
                 logger.warning("LLM response was not valid JSON. Falling back to deterministic tests.")
         except Exception as e:
@@ -58,7 +76,7 @@ class LLMService:
 
         fallback_cases, industry = self.generate_fallback_test_cases(pages_data)
         logger.info(f"Deterministic fallback generated {len(fallback_cases)} test cases.")
-        return fallback_cases, industry, False
+        return fallback_cases, industry, False, "Fallback Template"
 
     # ------------------------------------------------------------------ #
     # LLM prompt                                                           #

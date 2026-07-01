@@ -87,14 +87,21 @@ class BrowserUseAgent:
                 logger.error(f"Failed parsing storage state in BrowserUseAgent: {e}")
 
         browser = Browser(headless=True, storage_state=storage_state_dict)
-        agent = Agent(task=task, llm=self.llm, browser=browser)
+        agent = Agent(
+            task=task,
+            llm=self.llm,
+            browser=browser,
+            use_vision=False,        # skip screenshot-based reasoning — much faster per step
+            max_actions_per_step=3,  # default, but explicit
+            max_failures=2,          # stop retrying broken steps quickly instead of default 3
+        )
         
         steps = []
         status = "completed"
         result_summary = ""
         
         try:
-            history = await agent.run()
+            history = await agent.run(max_steps=15)
             result_summary = history.final_result() or "Discovery finished."
             
             # Export updated storage state
@@ -188,7 +195,14 @@ class BrowserUseAgent:
                 logger.error(f"Failed parsing storage state in BrowserUseAgent execution: {e}")
 
         browser = Browser(headless=True, storage_state=storage_state_dict)
-        agent = Agent(task=task, llm=self.llm, browser=browser)
+        agent = Agent(
+            task=task,
+            llm=self.llm,
+            browser=browser,
+            use_vision=False,        # skip screenshot-based reasoning — much faster per step
+            max_actions_per_step=3,  # default, but explicit
+            max_failures=2,          # stop retrying broken steps quickly instead of default 3
+        )
         
         steps = []
         status = "completed"
@@ -197,7 +211,7 @@ class BrowserUseAgent:
         bug_details = None
 
         try:
-            history = await agent.run()
+            history = await agent.run(max_steps=15)
             result_summary = history.final_result() or "Test execution finished."
             
             # Export updated storage state
@@ -227,6 +241,18 @@ class BrowserUseAgent:
                 last_step = history.history[-1] if history.history else None
                 if last_step and getattr(last_step, 'screenshot', None):
                     screenshot_path = await self.save_screenshot(last_step.screenshot, application.id)
+                else:
+                    # Vision is disabled, capture screenshot manually via playwright if pages exist
+                    try:
+                        playwright_browser = await browser.get_playwright_browser()
+                        if playwright_browser.contexts:
+                            context = playwright_browser.contexts[0]
+                            if context.pages:
+                                page = context.pages[0]
+                                ss_bytes = await page.screenshot(full_page=False)
+                                screenshot_path = await self.save_screenshot(base64.b64encode(ss_bytes).decode('utf-8'), application.id)
+                    except Exception as ss_err:
+                        logger.error(f"Failed capturing fallback error screenshot: {ss_err}")
                     bug_details = {
                         "bug_type": "functional",
                         "severity": "major",
@@ -307,7 +333,14 @@ class BrowserUseAgent:
         )
 
         browser = Browser(headless=True)
-        agent = Agent(task=task, llm=self.llm, browser=browser)
+        agent = Agent(
+            task=task,
+            llm=self.llm,
+            browser=browser,
+            use_vision=False,        # skip screenshot-based reasoning — much faster per step
+            max_actions_per_step=3,  # default, but explicit
+            max_failures=2,          # stop retrying broken steps quickly instead of default 3
+        )
         
         steps = []
         status = "completed"
@@ -315,7 +348,7 @@ class BrowserUseAgent:
         bugs_found = []
 
         try:
-            history = await agent.run()
+            history = await agent.run(max_steps=15)
             result_summary = history.final_result() or "Bug detection finished."
             
             for idx, step in enumerate(history.history):
@@ -401,14 +434,21 @@ class BrowserUseAgent:
         )
 
         browser = Browser(headless=True)
-        agent = Agent(task=task, llm=self.llm, browser=browser)
+        agent = Agent(
+            task=task,
+            llm=self.llm,
+            browser=browser,
+            use_vision=False,        # skip screenshot-based reasoning — much faster per step
+            max_actions_per_step=3,  # default, but explicit
+            max_failures=2,          # stop retrying broken steps quickly instead of default 3
+        )
         
         steps = []
         status = "completed"
         result_summary = ""
 
         try:
-            history = await agent.run()
+            history = await agent.run(max_steps=15)
             result_summary = history.final_result() or "Workflow test finished."
             
             for idx, step in enumerate(history.history):

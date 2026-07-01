@@ -1,3 +1,4 @@
+# backend/config/llm_config.py
 import logging
 import urllib.request
 import json
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def is_port_open(url, timeout=0.5):
     """
-    Check if a TCP port is open. Uses 0.5s timeout (was 1.0s) to minimise
+    Check if a TCP port is open. Uses 0.5s timeout to minimise
     the delay when both Ollama and LM Studio are offline.
     """
     try:
@@ -68,7 +69,6 @@ def _is_valid_openai_key(key):
     """
     Returns True only if the key looks like a real OpenAI API key.
     Prevents the infinite-retry loop when OPENAI_API_KEY is None/empty.
-    Real keys start with 'sk-' and are at least 40 characters long.
     """
     if not key:
         return False
@@ -84,25 +84,80 @@ def _is_valid_openai_key(key):
     return False
 
 
-def get_llm(application=None):
+def get_llm(application=None, model_choice=None):
     """
-    Returns an LLM instance in priority order:
-      1. Local Ollama
-      2. Local OpenAI-compatible gateway (LM Studio / vLLM)
-      3. Cloud OpenAI — ONLY if OPENAI_API_KEY is present and valid
+    Returns an LLM instance in priority order, or forced based on model_choice:
+      - 'ollama': Local Ollama
+      - 'openai': Cloud OpenAI (gpt-4o-mini)
+      - 'groq': Groq (llama-3.3-70b-versatile)
+      - 'auto' / None: Priority order (Ollama -> Local Gateway -> Cloud OpenAI)
+    """
+    # ---- Forced Choices ----
+    if model_choice in ('ollama', 'ollama_qwen'):
+        try:
+            ollama_api_url = getattr(settings, 'OLLAMA_API_URL', 'http://localhost:11434/api/generate')
+            base_url = ollama_api_url.split('/api')[0]
+            if is_port_open(base_url, timeout=0.5):
+                from langchain_ollama import ChatOllama
+                model_name = getattr(settings, 'OLLAMA_MODEL', 'qwen2.5:7b')
+                available_models = get_available_ollama_models(base_url)
+                model_name = _resolve_ollama_model(model_name, available_models)
+                logger.info(f"Forced Ollama (Qwen model): base_url={base_url}, model={model_name}")
+                return ChatOllama(
+                    model=model_name,
+                    base_url=base_url,
+                    timeout=30,
+                    temperature=0.2,
+                    num_predict=4096,
+                    num_ctx=8192,
+                )
+            else:
+                raise RuntimeError(f"Ollama port not open at {base_url}.")
+        except Exception as e:
+            logger.error(f"Forced Ollama (Qwen) instantiation failed: {e}")
+            raise RuntimeError(f"Failed to initialize local Ollama model: {e}")
 
-    FIXES vs original:
-      - FIX 1: base_url= not host= for ChatOllama (host= was silently ignored)
-      - FIX 2: temperature/num_predict as top-level kwargs, not ollama_options={}
-      - FIX 3: max_retries=1 on ChatOpenAI — was unlimited, caused infinite hang
-      - FIX 4: timeout=30s not 120s — logs showed 2-minute hang per attempt
-      - FIX 5: _is_valid_openai_key() guard — skips Cloud OpenAI when key is
-               None/blank so task falls through to deterministic fallback instantly
-      - FIX 6: is_port_open timeout reduced 1.0s → 0.5s per gateway to halve
-               the dead-gateway penalty (1s × 2 gateways → 0.5s × 2 = saved
-               ~1 minute across 140 tests when nothing is running)
-    """
-    # ---- 1. Local Ollama ----
+    elif model_choice == 'ollama_groq':
+        try:
+            ollama_api_url = getattr(settings, 'OLLAMA_API_URL', 'http://localhost:11434/api/generate')
+            base_url = ollama_api_url.split('/api')[0]
+            if is_port_open(base_url, timeout=0.5):
+                from langchain_ollama import ChatOllama
+                logger.info(f"Forced Ollama (Groq model): base_url={base_url}, model=groq")
+                return ChatOllama(
+                    model="groq",
+                    base_url=base_url,
+                    timeout=30,
+                    temperature=0.2,
+                    num_predict=4096,
+                    num_ctx=8192,
+                )
+            else:
+                raise RuntimeError(f"Ollama port not open at {base_url}.")
+        except Exception as e:
+            logger.error(f"Forced Ollama (Groq) instantiation failed: {e}")
+            raise RuntimeError(f"Failed to initialize local Ollama model 'groq': {e}")
+
+    elif model_choice == 'openai':
+        cloud_api_key = getattr(settings, 'OPENAI_API_KEY', None)
+        if not _is_valid_openai_key(cloud_api_key):
+            raise RuntimeError("OPENAI_API_KEY is not set or invalid in settings.")
+        try:
+            from langchain_openai import ChatOpenAI
+            logger.info("Forced Cloud OpenAI (gpt-4o-mini).")
+            return ChatOpenAI(
+                api_key=cloud_api_key,
+                model="gpt-4o-mini",
+                temperature=0.2,
+                timeout=30.0,
+                max_retries=1,
+            )
+        except Exception as e:
+            logger.error(f"Forced Cloud OpenAI initialization failed: {e}")
+            raise RuntimeError(f"Failed to initialize ChatGPT: {e}")
+
+    # ---- Fallback Sequence (Auto / None) ----
+    # 1. Local Ollama
     try:
         ollama_api_url = getattr(settings, 'OLLAMA_API_URL', 'http://localhost:11434/api/generate')
         base_url = ollama_api_url.split('/api')[0]
@@ -117,18 +172,18 @@ def get_llm(application=None):
             logger.info(f"Instantiating ChatOllama: base_url={base_url}, model={model_name}")
             return ChatOllama(
                 model=model_name,
-                base_url=base_url,      # FIX 1: was host=
-                timeout=60,
-                temperature=0.2,        # FIX 2: was inside ollama_options={}
+                base_url=base_url,
+                timeout=30,
+                temperature=0.2,
                 num_predict=4096,
-                num_ctx=4096,
+                num_ctx=8192,
             )
         else:
             logger.warning(f"Ollama port not open at {base_url}. Skipping.")
     except Exception as e:
         logger.warning(f"Ollama init failed: {e}. Trying next gateway...")
 
-    # ---- 2. Local OpenAI-compatible gateway ----
+    # 2. Local OpenAI-compatible gateway
     try:
         local_url = getattr(settings, 'LOCAL_LLM_API_URL', 'http://localhost:1234/v1')
         if is_port_open(local_url, timeout=0.5):
@@ -141,14 +196,14 @@ def get_llm(application=None):
                 model=getattr(settings, 'LOCAL_LLM_MODEL', 'qwen2.5-7b-instruct'),
                 temperature=0.2,
                 timeout=60.0,
-                max_retries=1,          # FIX 3
+                max_retries=1,
             )
         else:
             logger.warning(f"Local OpenAI gateway port closed at {local_url}. Skipping.")
     except Exception as e:
         logger.warning(f"Local OpenAI gateway init failed: {e}. Trying cloud...")
 
-    # ---- 3. Cloud OpenAI — only when key is valid ----
+    # 3. Cloud OpenAI — only when key is valid
     cloud_api_key = getattr(settings, 'OPENAI_API_KEY', None)
 
     if not _is_valid_openai_key(cloud_api_key):
@@ -166,92 +221,31 @@ def get_llm(application=None):
             api_key=cloud_api_key,
             model="gpt-4o-mini",
             temperature=0.2,
-            timeout=30.0,       # FIX 4: was 120s
-            max_retries=1,      # FIX 3: was unlimited
+            timeout=30.0,
+            max_retries=1,
         )
     except Exception as e:
         logger.error(f"Cloud OpenAI init failed: {e}")
         raise RuntimeError(f"All LLM gateways failed: {e}")
 
 
-def execute_llm_prompt(prompt):
+def llm_predict(llm, prompt=None, model_choice=None):
     """
-    Executes a prompt with sequential gateway failover.
-    Same fixes as get_llm().
+    Runs a single prompt through get_llm()'s configured instance and
+    returns plain text. Backwards compatible with:
+      - llm_predict(prompt)
+      - llm_predict(llm, prompt)
+      - llm_predict(llm, prompt, model_choice=...)
     """
-    # ---- 1. Ollama ----
-    try:
-        ollama_api_url = getattr(settings, 'OLLAMA_API_URL', 'http://localhost:11434/api/generate')
-        base_url = ollama_api_url.split('/api')[0]
+    if prompt is None:
+        actual_prompt = llm
+        actual_llm = get_llm()
+    else:
+        actual_prompt = prompt
+        actual_llm = llm if not isinstance(llm, str) else get_llm(model_choice=model_choice)
 
-        if is_port_open(base_url, timeout=0.5):
-            from langchain_ollama import ChatOllama
-
-            model_name = getattr(settings, 'OLLAMA_MODEL', 'qwen2.5:7b')
-            available_models = get_available_ollama_models(base_url)
-            model_name = _resolve_ollama_model(model_name, available_models)
-
-            logger.info(f"Invoking Ollama model '{model_name}'...")
-            llm = ChatOllama(
-                model=model_name,
-                base_url=base_url,
-                timeout=60,
-                temperature=0.2,
-                num_predict=4096,
-            )
-            response = llm.invoke(prompt)
-            return response.content.strip() if hasattr(response, "content") else str(response).strip()
-    except Exception as e:
-        logger.warning(f"Ollama prompt failed: {e}. Trying local OpenAI...")
-
-    # ---- 2. Local OpenAI gateway ----
-    try:
-        local_url = getattr(settings, 'LOCAL_LLM_API_URL', 'http://localhost:1234/v1')
-        if is_port_open(local_url, timeout=0.5):
-            from langchain_openai import ChatOpenAI
-
-            logger.info(f"Invoking local OpenAI at {local_url}...")
-            llm = ChatOpenAI(
-                base_url=local_url,
-                api_key=getattr(settings, 'LOCAL_LLM_API_KEY', 'lm-studio'),
-                model=getattr(settings, 'LOCAL_LLM_MODEL', 'qwen2.5-7b-instruct'),
-                temperature=0.2,
-                timeout=60.0,
-                max_retries=1,
-            )
-            response = llm.invoke(prompt)
-            return response.content.strip() if hasattr(response, "content") else str(response).strip()
-    except Exception as e:
-        logger.warning(f"Local OpenAI prompt failed: {e}. Trying cloud...")
-
-    # ---- 3. Cloud OpenAI ----
-    cloud_api_key = getattr(settings, 'OPENAI_API_KEY', None)
-
-    if not _is_valid_openai_key(cloud_api_key):
-        logger.warning("No valid OPENAI_API_KEY — skipping cloud. Using deterministic fallback.")
-        raise RuntimeError("No LLM available. Using deterministic fallback.")
-
-    try:
-        from langchain_openai import ChatOpenAI
-
-        logger.info("Invoking Cloud OpenAI (gpt-4o-mini)...")
-        llm = ChatOpenAI(
-            api_key=cloud_api_key,
-            model="gpt-4o-mini",
-            temperature=0.2,
-            timeout=30.0,
-            max_retries=1,
-        )
-        response = llm.invoke(prompt)
-        return response.content.strip() if hasattr(response, "content") else str(response).strip()
-    except Exception as e:
-        logger.error(f"Cloud OpenAI prompt failed: {e}")
-        raise RuntimeError(f"All LLM gateways failed: {e}")
-
-
-def llm_predict(llm, prompt):
-    """Wrapper used by LLMService — delegates to the failover executor."""
-    return execute_llm_prompt(prompt)
+    response = actual_llm.invoke(actual_prompt)
+    return response.content.strip() if hasattr(response, "content") else str(response).strip()
 
 
 def estimate_tokens(text):

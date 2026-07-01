@@ -176,7 +176,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 class TestCaseViewSet(viewsets.ModelViewSet):
     serializer_class = TestCaseSerializer
     permission_classes = (permissions.IsAuthenticated,)
-    pagination_class = StandardResultsSetPagination
+    pagination_class = None
 
     def get_queryset(self):
         queryset = TestCase.objects.filter(app__user=self.request.user).select_related('app').order_by('-created_at')
@@ -193,6 +193,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def generate(self, request):
         app_id = request.data.get('app_id')
+        model_choice = request.data.get('model_choice')
         if not app_id:
             return Response({"error": "app_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -214,7 +215,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
         # Trigger Celery Task
         from tasks.test_generation import generate_tests
-        task = generate_tests.apply_async(args=[app.id], task_id=task_id)
+        task = generate_tests.apply_async(args=[app.id, model_choice], task_id=task_id)
         
         return Response({
             "status": "Test case generation started",
@@ -241,7 +242,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 class TestRunViewSet(viewsets.ModelViewSet):
     serializer_class = TestRunSerializer
     permission_classes = (permissions.IsAuthenticated,)
-    pagination_class = StandardResultsSetPagination
+    pagination_class = None
 
     def get_queryset(self):
         return (
@@ -345,7 +346,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
 
 class BugViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
-    pagination_class = StandardResultsSetPagination
+    pagination_class = None
 
     def get_queryset(self):
         queryset = (
@@ -539,6 +540,29 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
             "progress": task.progress,
             "result": task.result,
             "error": task.error
+        })
+
+    @action(detail=True, methods=['post'])
+    def stop(self, request, task_id=None):
+        task = self.get_object()
+        
+        # 1. Revoke the Celery task
+        from qa_engine.celery import app as celery_app
+        celery_app.control.revoke(task.task_id, terminate=True, signal='SIGKILL')
+        
+        # 2. Update status in database
+        task.status = 'failed'
+        task.error = "Task stopped by user."
+        task.save()
+        
+        # 3. Handle Application status revert if needed
+        if task.task_type == 'discovery':
+            from core.models import Application
+            Application.objects.filter(status='DISCOVERING').update(status='IDLE')
+            
+        return Response({
+            "status": "success",
+            "message": "Task stopped successfully."
         })
 
 class AgentSessionViewSet(viewsets.ReadOnlyModelViewSet):

@@ -85,3 +85,20 @@ class TestCaseSerializerTests(TestCase):
         serializer = TestCaseSerializer(data=data)
         self.assertFalse(serializer.is_valid())
         self.assertIn('steps', serializer.errors)
+
+    def test_model_used_serialization(self):
+        """Test model_used field is correctly retrieved from generation_context"""
+        from core.models import TestCase as TestCaseModel
+        from core.serializers import TestCaseListSerializer
+        tc = TestCaseModel.objects.create(
+            app=self.app,
+            title='Test Model Used',
+            steps=[{'action': 'navigate', 'target': 'https://example.com'}],
+            expected_result='Success',
+            generation_context={'model_used': 'ChatGPT (gpt-4o-mini)'}
+        )
+        serializer = TestCaseSerializer(tc)
+        self.assertEqual(serializer.data['model_used'], 'ChatGPT (gpt-4o-mini)')
+        
+        list_serializer = TestCaseListSerializer(tc)
+        self.assertEqual(list_serializer.data['model_used'], 'ChatGPT (gpt-4o-mini)')

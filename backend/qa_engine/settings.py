@@ -107,13 +107,25 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'qa_engine.wsgi.application'
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#         'OPTIONS': {
+#             'timeout': 60,
+#         }
+#     }
+# }
+
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-        'OPTIONS': {
-            'timeout': 60,
-        }
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'qa_ai_platform',
+        'USER': 'postgres',
+        'PASSWORD': 'root',
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
 }
 
@@ -207,6 +219,8 @@ CELERY_TIMEZONE = 'UTC'
 OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generate')
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen2.5:7b')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', None)
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', None)
 
 MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')
+
 

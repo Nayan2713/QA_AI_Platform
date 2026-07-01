@@ -107,11 +107,17 @@ class PageSerializer(serializers.ModelSerializer):
 
 class TestCaseSerializer(serializers.ModelSerializer):
     steps = serializers.JSONField()
+    model_used = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = TestCase
-        fields = ('id', 'app', 'title', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'generation_context', 'created_at')
+        fields = ('id', 'app', 'title', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'generation_context', 'created_at')
         read_only_fields = ('generation_context',)
+        
+    def get_model_used(self, obj):
+        if obj.generation_context and isinstance(obj.generation_context, dict):
+            return obj.generation_context.get("model_used")
+        return None
     
     def validate_steps(self, value):
         """Validate test case steps"""
@@ -140,10 +146,16 @@ class TestCaseSerializer(serializers.ModelSerializer):
 
 class TestCaseListSerializer(serializers.ModelSerializer):
     steps = serializers.JSONField()
+    model_used = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = TestCase
-        fields = ('id', 'app', 'title', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'created_at')
+        fields = ('id', 'app', 'title', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'created_at')
+
+    def get_model_used(self, obj):
+        if obj.generation_context and isinstance(obj.generation_context, dict):
+            return obj.generation_context.get("model_used")
+        return None
 
 
 class TestResultSerializer(serializers.ModelSerializer):

@@ -43,12 +43,12 @@ def run_in_thread(func, *args, **kwargs):
 
 
 @shared_task(bind=True, name="tasks.test_generation.generate_tests")
-def generate_tests(self, app_id):
+def generate_tests(self, app_id, model_choice=None):
     """
     Celery task that retrieves discovered pages/forms, sends them to the LLM
     service to generate test cases, and stores them in the database.
     """
-    logger.info(f"Starting test generation task for application ID: {app_id}")
+    logger.info(f"Starting test generation task for application ID: {app_id} (choice: {model_choice})")
 
     task_id = self.request.id or "dummy_task_id"
 
@@ -130,12 +130,12 @@ def generate_tests(self, app_id):
 
         def update_progress_50():
             task_record.progress = 50
-            task_record.result = {"status_text": "Generating test cases using local Ollama AI model..."}
+            task_record.result = {"status_text": f"Generating test cases using {model_choice or 'configured'} AI model..."}
             task_record.save()
         run_in_thread(update_progress_50)
 
-        llm_service = LLMService()
-        test_cases_data, industry_val, was_ai = llm_service.generate_test_cases(pages_data)
+        llm_service = LLMService(model_choice=model_choice)
+        test_cases_data, industry_val, was_ai, resolved_model = llm_service.generate_test_cases(pages_data)
 
         if not test_cases_data:
             logger.error("Failed to generate any test cases.")
@@ -156,12 +156,10 @@ def generate_tests(self, app_id):
         def save_test_cases():
             with transaction.atomic():
                 # Save industry back to Application model if it has changed/was empty
-                # if industry_val and not app.industry:
                 if industry_val:
                     app.industry = industry_val
                     app.save()
 
-                # TestCase.objects.filter(app=app).delete()
                 TestCase.objects.filter(app=app).exclude(
                     validation_status='VERIFIED'
                 ).delete()
@@ -172,15 +170,19 @@ def generate_tests(self, app_id):
                         steps=tc["steps"],
                         expected_result=tc["expected_result"],
                         ai_generated=was_ai,
-                        generation_context=pages_data,
+                        generation_context={
+                            **pages_data,
+                            "model_used": resolved_model
+                        },
                     )
                 logger.info(f"Saved {len(test_cases_data)} test cases to database.")
                 task_record.status = 'success'
                 task_record.progress = 100
                 task_record.result = {
-                    "status_text": f"Successfully generated {len(test_cases_data)} test cases for {industry_val or 'General'} industry.",
+                    "status_text": f"Successfully generated {len(test_cases_data)} test cases using {resolved_model}.",
                     "tests_generated": len(test_cases_data),
                     "ai_generated": was_ai,
+                    "model_used": resolved_model
                 }
                 task_record.completed_at = timezone.now()
                 task_record.save()
