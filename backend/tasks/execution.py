@@ -281,9 +281,9 @@ def execute_test(self, test_run_id):
         context: BrowserContext = browser.new_context(**context_kwargs)
 
         # ─── FIX 4: Aggressive default timeouts ───
-        # 15s was set previously — 8s is enough for most SPAs
+        # 15s was set previously — 3s is enough for most SPAs
         # and prevents long hangs on bad selectors.
-        context.set_default_timeout(8000)
+        context.set_default_timeout(3000)
         context.set_default_navigation_timeout(20000)
 
         page = context.new_page()
@@ -393,67 +393,41 @@ def execute_test(self, test_run_id):
                             if not target:
                                 raise ValueError("Navigate requires target URL")
                             page.goto(target, wait_until="domcontentloaded")
-                            # ─── FIX 3: Don't wait for networkidle on
-                            #     every navigate. Only wait for the DOM.
-                            #     networkidle can add 3s on SPAs.
-                            # ─────────────────────────────────────────
 
                         elif action == "fill":
                             if not selector:
                                 raise ValueError("Fill requires a selector")
-                            page.locator(selector).first.wait_for(state="visible", timeout=4000)
+                            page.locator(selector).first.wait_for(state="visible", timeout=2000)
                             page.locator(selector).first.fill(value)
 
                         elif action == "click":
                             if not selector:
                                 raise ValueError("Click requires a selector")
                             loc = page.locator(selector).first
-                            loc.wait_for(state="visible", timeout=4000)
+                            loc.wait_for(state="visible", timeout=2000)
                             try:
-                                loc.click(timeout=3000)
+                                loc.click(timeout=2000)
                             except Exception:
                                 try:
-                                    loc.click(force=True, timeout=2000)
+                                    loc.click(force=True, timeout=1500)
                                 except Exception:
                                     loc.evaluate("el => el.click()")
-                            # ─── FIX 3: Removed 500ms blanket wait after click.
-                            #     If the next step needs to wait, it will wait
-                            #     for its own selector to be visible.
 
                         elif action == "wait":
-                            # ─── FIX 3: Cap fixed waits at 800ms.
-                            #     Tests should use assert/wait_for steps
-                            #     instead of blind sleeps.
                             raw_ms = int(value) if str(value).isdigit() else 1000
                             page.wait_for_timeout(min(raw_ms, 800))
 
-                        # elif action == "assert":
-                        #     if selector:
-                        #         # ─── FIX 7: Wait FOR the element + text
-                        #         #     instead of just reading body immediately.
-                        #         #     This replaces the pattern of
-                        #         #     wait(1500) → assert that appears in
-                        #         #     many generated test cases.
-                        #         try:
-                        #             page.wait_for_selector(
-                        #                 f"{selector}:has-text('{value}')",
-                        #                 timeout=5000,
-                        #                 state="visible"
-                        #             )
                         elif action == "assert":
-                            # Escape the value so quotes/specials don't produce
-                            # an invalid selector that throws (and gets mislabeled
-                            # as an application bug).
                             safe_value = value.replace("\\", "\\\\").replace('"', '\\"')
                             if selector:
                                 try:
                                     page.wait_for_selector(
                                         f'{selector}:has-text("{safe_value}")',
-                                        timeout=5000,
+                                        timeout=2000,
                                         state="visible"
                                     )
                                 except Exception:
-                                    page.locator(selector).first.wait_for(state="visible", timeout=3000)
+                                    page.locator(selector).first.wait_for(state="visible", timeout=2000)
                                     content = page.locator(selector).first.inner_text()
                                     if value.lower() not in content.lower():
                                         raise AssertionError(
@@ -463,7 +437,7 @@ def execute_test(self, test_run_id):
                             else:
                                 try:
                                     page.get_by_text(value, exact=False).first.wait_for(
-                                        timeout=5000, state="visible"
+                                        timeout=2000, state="visible"
                                     )
                                 except Exception:
                                     content = page.locator("body").inner_text()
@@ -476,7 +450,7 @@ def execute_test(self, test_run_id):
                         elif action == "hover":
                             if not selector:
                                 raise ValueError("Hover requires a selector")
-                            page.locator(selector).first.wait_for(state="visible", timeout=4000)
+                            page.locator(selector).first.wait_for(state="visible", timeout=2000)
                             page.locator(selector).first.hover()
 
                         elif action == "scroll":
@@ -490,13 +464,13 @@ def execute_test(self, test_run_id):
                             if not selector:
                                 raise ValueError("Select requires a selector")
                             loc = page.locator(selector).first
-                            loc.wait_for(state="visible", timeout=4000)
+                            loc.wait_for(state="visible", timeout=2000)
                             is_select = loc.evaluate("el => el.tagName.toLowerCase() === 'select'")
                             if is_select:
                                 loc.select_option(value)
                             else:
                                 try:
-                                    loc.click(timeout=2000)
+                                    loc.click(timeout=1500)
                                 except Exception:
                                     loc.evaluate("el => el.click()")
                                 page.wait_for_timeout(400)
@@ -509,7 +483,7 @@ def execute_test(self, test_run_id):
                                     try:
                                         for candidate in t_loc.all():
                                             if candidate.is_visible():
-                                                candidate.click(timeout=1500)
+                                                candidate.click(timeout=1000)
                                                 option_clicked = True
                                                 break
                                         if option_clicked:
@@ -543,8 +517,7 @@ def execute_test(self, test_run_id):
                             logger.warning(
                                 f"Step {step_num} failed attempt 1, retrying in 1s... {error_msg}"
                             )
-                            # ─── FIX 3: Reduced retry sleep 1500ms → 1000ms
-                            page.wait_for_timeout(1000)
+                            page.wait_for_timeout(400)
                         else:
                             run_failed = True
                             logger.error(f"Step {step_num} final failure: {error_msg}")
@@ -617,54 +590,7 @@ def execute_test(self, test_run_id):
                 run_in_thread(log_api_failures)
                 total_steps += 1
 
-            # ─── Response quality analysis ─────────────────
-            try:
-                prev_calls = []
-                def get_prev():
-                    prev = TestRun.objects.filter(
-                        test_case=test_case, status='COMPLETED'
-                    ).order_by('-created_at').first()
-                    if prev and isinstance(prev.metadata, dict):
-                        return prev.metadata.get('api_calls', [])
-                    return []
-                prev_calls = run_in_thread(get_prev)
 
-                from services.quality_analyzer import ResponseQualityAnalyzer
-                from core.models import APIEndpoint
-                def run_quality():
-                    endpoints = {
-                        (ep.method, ep.url_pattern): ep
-                        for ep in APIEndpoint.objects.filter(application=app)
-                    }
-                    return ResponseQualityAnalyzer.analyze_response_quality(
-                        api_logs, prev_calls,
-                        expected_result=test_case.expected_result,
-                        base_url=test_case.app.url,
-                        app=test_case.app,
-                        endpoints_cache=endpoints
-                    )
-                quality_issues = run_in_thread(run_quality)
-                fatal = [q for q in quality_issues if q['type'] in (
-                    'content_error', 'schema_regression',
-                    'semantic_error', 'schema_conformance'
-                )]
-                if fatal:
-                    run_failed = True
-                    details = "\n".join(
-                        f"- {q['method']} {q['url']}\n  [{q['type'].upper()}]: {q['issue']}"
-                        for q in fatal
-                    )
-                    def log_quality():
-                        TestResult.objects.create(
-                            test_run=test_run,
-                            step_number=total_steps + 1,
-                            status='FAILED',
-                            error=f"Quality failures:\n{details}"
-                        )
-                    run_in_thread(log_quality)
-                    total_steps += 1
-            except Exception as qe:
-                logger.error(f"Quality analyzer error: {qe}")
 
             # ─── Close context only, NOT the browser ─────────
             context.close()
@@ -716,8 +642,8 @@ def execute_test(self, test_run_id):
             task_record.save()
         run_in_thread(complete_run)
 
-        from tasks.bug_detection import detect_bugs
-        detect_bugs.delay(test_run.id)
+        # Trigger quality analysis asynchronously (which will trigger bug detection when done)
+        run_quality_analysis.delay(test_run.id, api_logs)
 
     except Exception as e:
         logger.error(f"execute_test outer failure: {e}")
@@ -796,3 +722,84 @@ def _run_browser_use_test(test_run, test_case, app, task_record):
 
     run_in_thread(save_agent_results)
     return {"status": "SUCCESS", "engine": "BROWSER_USE", "result": status_val}
+
+
+@shared_task(name="tasks.execution.run_quality_analysis")
+def run_quality_analysis(test_run_id, api_logs):
+    logger.info(f"Starting async quality analysis task for TestRun ID: {test_run_id}")
+    
+    def analyze():
+        from core.models import TestRun, TestResult, APIEndpoint
+        from services.quality_analyzer import ResponseQualityAnalyzer
+        
+        try:
+            test_run = TestRun.objects.get(id=test_run_id)
+        except TestRun.DoesNotExist:
+            logger.error(f"TestRun {test_run_id} does not exist in run_quality_analysis.")
+            return
+
+        test_case = test_run.test_case
+        app = test_case.app
+        
+        try:
+            # Query prev_calls inside the async task
+            prev = TestRun.objects.filter(
+                test_case=test_case, status='COMPLETED'
+            ).exclude(id=test_run_id).order_by('-created_at').first()
+            prev_calls = prev.metadata.get('api_calls', []) if prev and isinstance(prev.metadata, dict) else []
+            
+            endpoints = {
+                (ep.method, ep.url_pattern): ep
+                for ep in APIEndpoint.objects.filter(application=app)
+            }
+            
+            quality_issues = ResponseQualityAnalyzer.analyze_response_quality(
+                api_logs, prev_calls,
+                expected_result=test_case.expected_result,
+                base_url=test_case.app.url,
+                app=test_case.app,
+                endpoints_cache=endpoints
+            )
+            
+            fatal = [q for q in quality_issues if q['type'] in (
+                'content_error', 'schema_regression',
+                'semantic_error', 'schema_conformance'
+            )]
+            
+            if fatal:
+                details = "\n".join(
+                    f"- {q['method']} {q['url']}\n  [{q['type'].upper()}]: {q['issue']}"
+                    for q in fatal
+                )
+                
+                total_steps = TestResult.objects.filter(test_run=test_run).count()
+                
+                with transaction.atomic():
+                    TestResult.objects.create(
+                        test_run=test_run,
+                        step_number=total_steps + 1,
+                        status='FAILED',
+                        error=f"Quality failures:\n{details}"
+                    )
+                    
+                    test_run.status = 'FAILED'
+                    test_run.save()
+                    
+            # Recalculate passed and total steps in metadata
+            with transaction.atomic():
+                tr = TestRun.objects.get(id=test_run.id)
+                meta = tr.metadata or {}
+                meta["passed_steps"] = TestResult.objects.filter(test_run=tr, status='PASSED').count()
+                meta["total_steps"] = TestResult.objects.filter(test_run=tr).count()
+                tr.metadata = meta
+                tr.save()
+                
+        except Exception as qe:
+            logger.error(f"Quality analyzer error for TestRun ID {test_run_id}: {qe}")
+            
+        finally:
+            # Bug detection runs after the quality checks are finished
+            from tasks.bug_detection import detect_bugs
+            detect_bugs.delay(test_run_id)
+
+    run_in_thread(analyze)

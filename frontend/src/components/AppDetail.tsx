@@ -103,10 +103,19 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let errorCount = 0;
     let isMounted = true;
     let pollCount = 0;
-    const MAX_POLLS = 400; // Stop polling after 10 minutes (400 * 1.5 sec)
+    const MAX_POLLS = 1200; // Increased to 30 minutes to support long crawls
     
     const fetchTaskStatus = async () => {
-      if (!isMounted || pollCount >= MAX_POLLS) return;
+      if (!isMounted) return;
+      
+      if (pollCount >= MAX_POLLS) {
+        if (isMounted) {
+          setActiveTaskId(null);
+          setCurrentTask(null);
+          alert("Task monitoring timed out. The task might still be running in the background. Please refresh the page to check status.");
+        }
+        return;
+      }
       
       pollCount++;
       
@@ -547,15 +556,26 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         <div className="glass-card task-progress-tracker" style={{
           margin: '20px 0',
           padding: '16px',
-          border: '1px solid rgba(255, 255, 255, 0.15)',
+          border: `1px solid ${
+            currentTask.status === 'success' ? 'rgba(34, 197, 94, 0.35)' :
+            currentTask.status === 'failed' ? 'rgba(239, 68, 68, 0.35)' :
+            'rgba(255, 255, 255, 0.15)'
+          }`,
           background: 'rgba(30, 30, 40, 0.65)',
           backdropFilter: 'blur(16px)',
           borderRadius: '12px',
           boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.9rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#a0a0ff' }}>
-              ⚙️ Internal Progress: {currentTask.task_type.replace('_', ' ')}
+            <span style={{ 
+              fontSize: '0.9rem', 
+              fontWeight: 'bold', 
+              textTransform: 'uppercase', 
+              letterSpacing: '0.05em', 
+              color: currentTask.status === 'success' ? '#22c55e' : currentTask.status === 'failed' ? '#ff4d4d' : '#a0a0ff' 
+            }}>
+              {currentTask.status === 'success' ? '✓ ' : currentTask.status === 'failed' ? '✗ ' : '⚙️ '} 
+              Internal Progress: {currentTask.task_type.replace('_', ' ')}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#ffffff' }}>
@@ -601,7 +621,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             <div style={{
               width: `${currentTask.progress}%`,
               height: '100%',
-              backgroundColor: currentTask.status === 'failed' ? '#ff4d4d' : '#a0a0ff',
+              backgroundColor: 
+                currentTask.status === 'success' ? '#22c55e' : 
+                currentTask.status === 'failed' ? '#ff4d4d' : 
+                '#a0a0ff',
               transition: 'width 0.4s ease-in-out',
               borderRadius: '4px'
             }} />
@@ -610,7 +633,19 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {currentTask.status === 'progress' && <div className="spinner-small" />}
             <span style={{ fontSize: '0.9rem', color: 'rgba(255, 255, 255, 0.85)' }}>
-              {currentTask.result?.status_text || currentTask.error || 'Running internal tasks...'}
+              {currentTask.status === 'success' ? (
+                currentTask.task_type === 'discovery' ? (
+                  `Discovery complete! Found ${currentTask.result?.pages_discovered || 0} pages and cataloged ${currentTask.result?.apis_cataloged || 0} APIs.`
+                ) : currentTask.task_type === 'test_generation' ? (
+                  `Test generation complete! Created ${currentTask.result?.tests_generated || 0} test cases.`
+                ) : currentTask.task_type === 'execution' ? (
+                  `Execution complete! ${currentTask.result?.passed_steps || 0}/${currentTask.result?.total_steps || 0} steps passed.`
+                ) : (
+                  currentTask.result?.status_text || 'Task completed successfully.'
+                )
+              ) : (
+                currentTask.result?.status_text || currentTask.error || 'Running internal tasks...'
+              )}
             </span>
           </div>
         </div>
