@@ -12,6 +12,9 @@ from core.models import CeleryTask, Application, Page, APIEndpoint
 from services.mcp_detector import route_discovery
 from services.browser_discovery import BrowserDiscoveryService
 
+logger = logging.getLogger(__name__)
+
+
 def get_url_pattern(url, base_url):
     parsed = urlparse(url)
     path = parsed.path
@@ -37,63 +40,92 @@ def get_url_pattern(url, base_url):
     return pattern if pattern else '/'
 
 
+def _get_base_domain(host):
+    """Return the registrable domain for a host string."""
+    parts = host.split('.')
+    if len(parts) >= 2:
+        if parts[-2] in [
+            'com', 'co', 'org', 'net', 'gov', 'edu', 'io', 'ai', 'app',
+            'dev', 'tech', 'cloud', 'in', 'uk', 'au', 'ca', 'de', 'fr',
+            'jp', 'br', 'mx', 'eu', 'us', 'info', 'biz', 'me', 'tv', 'so', 'to'
+        ]:
+            return '.'.join(parts[-3:])
+        return '.'.join(parts[-2:])
+    return host
+
+
 def save_api_endpoints(app, api_logs):
     if not api_logs:
         return
-        
+
+    import json as _json
+
+    parsed_base = urlparse(app.url)
+    base_host = parsed_base.netloc.lower()
+    base_domain = _get_base_domain(base_host)
+
+    saved = 0
+    skipped_external = 0
+
     for log in api_logs:
         url = log.get('url')
+        if not url:
+            continue
+
         method = log.get('method', 'GET').upper()
-        status = log.get('status', 200)
         body = log.get('body', '')
         auth_type = log.get('auth_type')
-        
+
         parsed_url = urlparse(url)
-        parsed_base = urlparse(app.url)
-        
-        def get_base_domain(host):
-            parts = host.split('.')
-            if len(parts) >= 2:
-                if parts[-2] in ['com', 'co', 'org', 'net', 'gov', 'edu', 'io', 'ai', 'app', 'dev', 'tech', 'cloud', 'in', 'uk', 'au', 'ca', 'de', 'fr', 'jp', 'br', 'mx', 'eu', 'us', 'info', 'biz', 'me', 'tv', 'so', 'to']:
-                    return '.'.join(parts[-3:])
-                return '.'.join(parts[-2:])
-            return host
-            
-        base_domain = get_base_domain(parsed_base.netloc.lower())
-        url_domain = get_base_domain(parsed_url.netloc.lower())
-        
+        url_host = parsed_url.netloc.lower()
+        url_domain = _get_base_domain(url_host)
+
+        # Skip third-party domains
         if base_domain not in url_domain and url_domain not in base_domain:
+            logger.debug(f"Skipping external API: {url} (domain={url_domain}, base={base_domain})")
+            skipped_external += 1
             continue
-            
-        url_pattern = get_url_pattern(url, app.url)
-        
+
+        # Build url_pattern from path — preserve subdomain prefix when it differs
+        path_pattern = get_url_pattern(url, app.url)
+
+        # If the API is on a subdomain (e.g. api.example.com vs example.com), prefix it
+        if url_host != base_host and url_host not in ('', base_host):
+            # Use just the subdomain label for brevity e.g. "api."
+            url_pattern = f"[{url_host}]{path_pattern}"
+        else:
+            url_pattern = path_pattern
+
+        # Truncate to model field limit
+        url_pattern = url_pattern[:990]
+
+        # Parse response schema
         response_schema = {}
         if body:
             try:
-                import json
-                data = json.loads(body)
+                data = _json.loads(body)
                 if isinstance(data, dict):
                     response_schema = {k: type(v).__name__ for k, v in data.items()}
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
                     response_schema = {k: type(v).__name__ for k, v in data[0].items()}
             except Exception:
                 pass
-                
+
+        # Parse request schema
         request_body = log.get('request_body', '')
         request_schema = {}
         if request_body:
             try:
-                import json
-                data = json.loads(request_body)
+                data = _json.loads(request_body)
                 if isinstance(data, dict):
                     request_schema = {k: type(v).__name__ for k, v in data.items()}
             except Exception:
                 pass
-                
+
         page_url = log.get('page_url')
         if page_url:
             request_schema['_trigger_page_url'] = page_url
-                
+
         APIEndpoint.objects.update_or_create(
             application=app,
             method=method,
@@ -104,8 +136,14 @@ def save_api_endpoints(app, api_logs):
                 'auth_type': auth_type or 'none'
             }
         )
+        saved += 1
 
-logger = logging.getLogger(__name__)
+    logger.info(
+        f"save_api_endpoints: {saved} endpoints saved, "
+        f"{skipped_external} skipped (external domain), "
+        f"{len(api_logs) - saved - skipped_external} skipped (other) "
+        f"out of {len(api_logs)} total captured."
+    )
 
 import asyncio
 
@@ -349,9 +387,12 @@ def start_discovery(self, app_id):
                         workflows=page_info.get("workflows", [])
                     )
                 
-                # Catalog captured APIs
+                # Catalog captured APIs — clear stale endpoints first so
+                # re-discovery doesn't accumulate outdated records.
+                APIEndpoint.objects.filter(application=app).delete()
                 if api_logs_data:
                     save_api_endpoints(app, api_logs_data)
+
                 
                 app.status = 'DISCOVERED'
                 if app.login_url:

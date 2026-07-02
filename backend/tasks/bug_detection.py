@@ -1,13 +1,39 @@
+import base64
 import logging
+import os
 import re
+import time
 from urllib.parse import urlparse
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 
 from core.models import TestRun, TestResult, Bug, APIEndpoint
 from tasks.discovery import get_url_pattern
 
 logger = logging.getLogger(__name__)
+
+
+def save_screenshot_to_file(screenshot_b64, prefix="bug"):
+    """
+    Decodes a base64 screenshot string and saves it as a PNG file under
+    MEDIA_ROOT/bugs/. Returns the relative path (e.g. 'bugs/bug_1234.png')
+    suitable for storing in an ImageField, or None on failure.
+    """
+    if not screenshot_b64:
+        return None
+    try:
+        media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
+        os.makedirs(media_path, exist_ok=True)
+        filename = f"{prefix}_{int(time.time() * 1000)}.png"
+        filepath = os.path.join(media_path, filename)
+        image_data = base64.b64decode(screenshot_b64)
+        with open(filepath, 'wb') as f:
+            f.write(image_data)
+        return f"bugs/{filename}"
+    except Exception as err:
+        logger.error(f"Failed to save bug screenshot to file: {err}")
+        return None
 
 def classify_severity(error_message):
     """
@@ -196,12 +222,18 @@ def detect_bugs(test_run_id):
                 seen_bugs_in_run.add(run_key)
                 
                 # Create Bug
+                # TestResult.screenshot stores raw base64 — decode & save to a file
+                # so the Bug ImageField gets a proper relative path.
+                step_screenshot = save_screenshot_to_file(
+                    result.screenshot, prefix=f"bug_run{test_run_id}_step{step_num}"
+                ) if result.screenshot and result.screenshot != 'None' else None
                 Bug.objects.create(
                     test_run=test_run,
                     title=title,
                     description=description,
                     severity=severity,
-                    api_endpoint=matched_endpoint
+                    api_endpoint=matched_endpoint,
+                    screenshot=step_screenshot
                 )
                 bugs_created += 1
                 
@@ -293,6 +325,7 @@ def start_agentic_bug_detection(self, app_id):
                         title=b_info.get("title", "Discovered UI/Functional Bug"),
                         description=b_info.get("description", "Error observed during crawler audit."),
                         element_selector=b_info.get("element_selector"),
+                        screenshot=b_info.get("screenshot"),  # persist screenshot path returned by the agent
                         status="open"
                     )
                 

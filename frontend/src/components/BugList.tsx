@@ -292,9 +292,15 @@ export const BugList: React.FC<BugListProps> = ({
                                         📸 Failure Screenshot:
                                       </span>
                                       <img 
-                                        src={stepResult.screenshot.startsWith('http') || stepResult.screenshot.startsWith('/') || stepResult.screenshot.includes('bugs/')
-                                          ? `${api.defaults.baseURL?.replace('/api/', '')}/media/${stepResult.screenshot}`
-                                          : `data:image/png;base64,${stepResult.screenshot}`} 
+                                        src={(() => {
+                                          const ss = stepResult.screenshot;
+                                          const origin = api.defaults.baseURL?.replace('/api/', '') || 'http://127.0.0.1:8000';
+                                          // Long strings are base64; short strings are file paths
+                                          if (ss.length > 500) return `data:image/png;base64,${ss}`;
+                                          if (ss.startsWith('http')) return ss;
+                                          if (ss.startsWith('/')) return `${origin}${ss}`;
+                                          return `${origin}/media/${ss}`;
+                                        })()} 
                                         alt={`Step ${stepNum} Failure Screenshot`}
                                         style={{
                                           maxWidth: '100%',
@@ -368,9 +374,16 @@ export const BugList: React.FC<BugListProps> = ({
                             📸 Captured Bug Screenshot:
                           </h6>
                           <img 
-                            src={bug.screenshot.startsWith('http') || bug.screenshot.startsWith('/')
-                              ? `${api.defaults.baseURL?.replace('/api/', '')}${bug.screenshot.startsWith('/') ? '' : '/'}${bug.screenshot}`
-                              : `${api.defaults.baseURL?.replace('/api/', '')}/media/${bug.screenshot}`} 
+                            src={(() => {
+                              const ss = bug.screenshot;
+                              const origin = api.defaults.baseURL?.replace('/api/', '') || 'http://127.0.0.1:8000';
+                              // Already a full absolute URL (DRF returns full URL when request context is set)
+                              if (ss.startsWith('http')) return ss;
+                              // Starts with /media/ or / — prepend origin only
+                              if (ss.startsWith('/')) return `${origin}${ss}`;
+                              // Relative path like 'bugs/xxx.png' — add /media/ prefix
+                              return `${origin}/media/${ss}`;
+                            })()} 
                             alt="Captured Bug Screenshot" 
                             style={{
                               maxWidth: '100%',

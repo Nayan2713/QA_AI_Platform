@@ -363,7 +363,22 @@ class BrowserUseAgent:
                     screenshot_file = None
                     if getattr(step, 'screenshot', None):
                         screenshot_file = await self.save_screenshot(step.screenshot, application.id)
-                    
+                    else:
+                        # use_vision=False means step.screenshot is always None.
+                        # Fall back to a manual Playwright screenshot at the moment the error is encountered.
+                        try:
+                            playwright_browser = await browser.get_playwright_browser()
+                            if playwright_browser.contexts:
+                                context = playwright_browser.contexts[0]
+                                if context.pages:
+                                    page = context.pages[0]
+                                    ss_bytes = await page.screenshot(full_page=False)
+                                    screenshot_file = await self.save_screenshot(
+                                        base64.b64encode(ss_bytes).decode('utf-8'), application.id
+                                    )
+                        except Exception as ss_err:
+                            logger.error(f"Failed capturing fallback bug screenshot at step {idx + 1}: {ss_err}")
+
                     bugs_found.append({
                         "bug_type": "ui",
                         "severity": "minor",

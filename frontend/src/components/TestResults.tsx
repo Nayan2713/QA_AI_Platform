@@ -276,9 +276,18 @@ export const TestResults: React.FC<TestResultsProps> = ({
                     <div className="step-screenshot-box">
                       <button 
                         onClick={() => {
-                          const src = res.screenshot.startsWith('http') || res.screenshot.startsWith('/') || res.screenshot.includes('bugs/')
-                            ? `${api.defaults.baseURL?.replace('/api/', '')}/media/${res.screenshot}`
-                            : `data:image/png;base64,${res.screenshot}`;
+                          const ss = res.screenshot;
+                          const origin = api.defaults.baseURL?.replace('/api/', '') || 'http://127.0.0.1:8000';
+                          let src: string;
+                          if (ss.length > 500) {
+                            src = `data:image/png;base64,${ss}`;
+                          } else if (ss.startsWith('http')) {
+                            src = ss;
+                          } else if (ss.startsWith('/')) {
+                            src = `${origin}${ss}`;
+                          } else {
+                            src = `${origin}/media/${ss}`;
+                          }
                           setSelectedScreenshot(src);
                         }}
                         className="btn-view-screenshot"
