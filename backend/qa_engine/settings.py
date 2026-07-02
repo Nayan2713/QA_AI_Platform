@@ -172,8 +172,12 @@ _cors_origins = os.getenv(
     'CORS_ALLOWED_ORIGINS',
     'http://localhost:3000,http://127.0.0.1:3000'
 )
-CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
+CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]   # + [o.strip() for o in _cors_origins.split(',') if o.strip()]
 CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+]
 
 # Allow all origins in debug/development mode to prevent CORS issues
 if DEBUG:
