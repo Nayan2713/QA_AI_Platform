@@ -126,6 +126,14 @@ DATABASES = {
         'PASSWORD': 'root',
         'HOST': 'localhost',
         'PORT': '5432',
+        # OPTIMIZED: reuse DB connections across requests instead of
+        # opening a new connection every time (saves ~2-5ms per query).
+        'CONN_MAX_AGE': 60,
+        # FIX: health-check persistent connections before reuse so that
+        # connections dropped by Postgres (idle timeout / server restart)
+        # are detected and transparently replaced instead of raising
+        # OperationalError: "server closed the connection unexpectedly".
+        'CONN_HEALTH_CHECKS': True,
     }
 }
 
@@ -222,11 +230,37 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
+# OPTIMIZED: expire task results after 1 hour to keep Redis lean
+CELERY_TASK_RESULT_EXPIRES = 3600
+
+# OPTIMIZED: route tasks to dedicated queues so discovery/execution/quality
+# can be scaled and prioritised independently.
+CELERY_TASK_ROUTES = {
+    'tasks.discovery.start_discovery':      {'queue': 'discovery'},
+    'tasks.execution.execute_test':         {'queue': 'execution'},
+    'tasks.execution.run_quality_analysis': {'queue': 'quality'},
+    'tasks.quality_check.*':                {'queue': 'quality'},
+    'tasks.bug_detection.*':                {'queue': 'quality'},
+    'tasks.test_generation.*':              {'queue': 'discovery'},
+}
+
+# OPTIMIZED: prevent runaway tasks from piling up on the broker
+CELERY_TASK_ANNOTATIONS = {
+    'tasks.discovery.start_discovery':      {'rate_limit': '5/m'},
+    'tasks.execution.execute_test':         {'rate_limit': '6/m'},
+    'tasks.execution.run_quality_analysis': {'rate_limit': '20/m'},
+}
+
+# OPTIMIZED: avoid large message payloads being lost silently
+CELERY_TASK_SOFT_TIME_LIMIT = 600   # 10 min soft limit
+CELERY_TASK_TIME_LIMIT      = 900   # 15 min hard limit
+
 OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generate')
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen2.5:7b')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', None)
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', None)
 
 MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')
+
 
 

@@ -382,3 +382,7 @@ class QualityMetrics(models.Model):
     def __str__(self):
         app_url = self.application.url if self.application else 'N/A'
         return f"QualityMetrics for {app_url} — grade {self.grade}"
+
+# Import signals to register receivers
+from . import signals
+

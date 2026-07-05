@@ -66,6 +66,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             status='pending',
             progress=0
         )
+        from .signals import register_task_user
+        register_task_user(task_id, request.user.id)
         
         # Trigger Celery Task
         from tasks.discovery import start_discovery
@@ -116,6 +118,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 progress=0,
                 result={"status_text": f"Starting test execution run for {tc.title}..."}
             )
+            from .signals import register_task_user
+            register_task_user(task_id, request.user.id)
             execute_test.apply_async(args=[test_run.id], task_id=task_id)
             task_ids.append(task_id)
             test_run_ids.append(test_run.id)
@@ -139,6 +143,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             progress=0,
             result={"status_text": "Initializing agentic bug audit..."}
         )
+        from .signals import register_task_user
+        register_task_user(task_id, request.user.id)
         
         from tasks.bug_detection import start_agentic_bug_detection
         task = start_agentic_bug_detection.apply_async(args=[app.id], task_id=task_id)
@@ -212,6 +218,8 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             progress=0,
             result={"status_text": "Initializing test generation..."}
         )
+        from .signals import register_task_user
+        register_task_user(task_id, request.user.id)
 
         # Trigger Celery Task
         from tasks.test_generation import generate_tests
@@ -245,12 +253,10 @@ class TestRunViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
-        return (
-            TestRun.objects.filter(test_case__app__user=self.request.user)
-            .select_related('test_case', 'test_case__app')
-            .prefetch_related('step_results')
-            .order_by('-created_at')
-        )
+        queryset = TestRun.objects.filter(test_case__app__user=self.request.user).select_related('test_case', 'test_case__app')
+        if self.action == 'retrieve':
+            queryset = queryset.prefetch_related('step_results')
+        return queryset.order_by('-created_at')
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -284,6 +290,8 @@ class TestRunViewSet(viewsets.ModelViewSet):
             progress=0,
             result={"status_text": "Starting test execution run..."}
         )
+        from .signals import register_task_user
+        register_task_user(task_id, request.user.id)
 
         # Trigger Celery Task
         from tasks.execution import execute_test
@@ -320,6 +328,8 @@ class TestRunViewSet(viewsets.ModelViewSet):
                     progress=0,
                     result={"status_text": "Starting test execution run..."}
                 )
+                from .signals import register_task_user
+                register_task_user(task_id, request.user.id)
                 
                 from tasks.execution import execute_test
                 execute_test.apply_async(args=[test_run.id], task_id=task_id)

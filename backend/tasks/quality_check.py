@@ -756,56 +756,47 @@ def calculate_quality_metrics(self, application_id):
 # BATCH QUALITY CHECK TASK
 # ============================================
 
-def run_in_thread(func, *args, **kwargs):
-    import threading
-    res = []
-    err = []
-    def target():
-        from django.db import connection
-        try:
-            res.append(func(*args, **kwargs))
-        except Exception as e:
-            err.append(e)
-        finally:
-            connection.close()
-            
-    thread = threading.Thread(target=target)
-    thread.start()
-    thread.join()
-    if err:
-        raise err[0]
-    return res[0]
+# NOTE: run_in_thread is intentionally NOT used in quality_check.py.
+# These tasks run in a standard Celery synchronous worker context so
+# Django ORM calls work directly without spawning extra threads.
 
-@shared_task(bind=True)
+@shared_task(bind=True, queue="quality")
 def run_full_quality_check(self, application_id):
     """
-    Runs complete quality check pipeline for an application synchronously
-    so progress tracker displays accurate loading feedback to the UI.
+    Runs complete quality check pipeline for an application.
+    OPTIMIZED: direct DB calls instead of thread-per-operation.
     """
     try:
-        app = run_in_thread(Application.objects.get, id=application_id)
-        
+        # OPTIMIZED: fetch all related data upfront in minimal queries
+        app = Application.objects.get(id=application_id)
+
         task_id = self.request.id or "dummy_task_id"
-        
-        def get_task():
-            return CeleryTask.objects.filter(task_id=task_id).first()
-        task_record = run_in_thread(get_task)
-        
+        task_record = CeleryTask.objects.filter(task_id=task_id).first()
+
         def update_progress(progress, status_text):
-            from core.models import CeleryTask
-            task_rec = CeleryTask.objects.filter(task_id=task_id).first()
-            if task_rec:
-                task_rec.status = 'progress'
-                task_rec.progress = progress
-                task_rec.result = {"status_text": status_text}
-                task_rec.save()
-        
-        run_in_thread(update_progress, 10, "Initializing quality check pipeline...")
-        
-        test_cases = run_in_thread(lambda: list(TestCase.objects.filter(app=app)))
-        pages = run_in_thread(lambda: list(Page.objects.filter(app=app)))
-        bugs = run_in_thread(lambda: list(Bug.objects.filter(test_run__test_case__app=app)))
-        
+            nonlocal task_record
+            if task_record:
+                task_record.status = 'progress'
+                task_record.progress = progress
+                task_record.result = {"status_text": status_text}
+                task_record.save()
+            else:
+                CeleryTask.objects.filter(task_id=task_id).update(
+                    status='progress',
+                    progress=progress,
+                    result={"status_text": status_text}
+                )
+
+        update_progress(10, "Initializing quality check pipeline...")
+
+        # OPTIMIZED: fetch in three targeted queries instead of threaded lambdas
+        test_cases = list(TestCase.objects.filter(app=app))
+        pages = list(Page.objects.filter(app=app).only('url', 'title'))
+        bugs = list(
+            Bug.objects.filter(test_run__test_case__app=app)
+            .select_related('test_run__test_case', 'application')
+        )
+
         results = {
             'application_id': application_id,
             'tests_checked': 0,
@@ -815,52 +806,59 @@ def run_full_quality_check(self, application_id):
             'metrics_calculated': False,
             'started_at': timezone.now().isoformat()
         }
-        
+
         # 1. Validate test relevance
-        run_in_thread(update_progress, 20, f"Step 1/5: Checking relevance for {len(test_cases)} tests...")
+        update_progress(20, f"Step 1/5: Checking relevance for {len(test_cases)} tests...")
         first_page_url = pages[0].url if pages else ''
         for test in test_cases[:10]:
-            run_in_thread(validate_test_relevance, test.id, first_page_url)
+            validate_test_relevance(test.id, first_page_url)
             results['tests_checked'] += 1
-            
+
         # 2. Analyze coverage
-        run_in_thread(update_progress, 45, "Step 2/5: Analyzing test coverage...")
-        run_in_thread(analyze_coverage, application_id)
+        update_progress(45, "Step 2/5: Analyzing test coverage...")
+        analyze_coverage(application_id)
         results['coverage_analyzed'] = True
-        
+
         # 3. Validate bugs
-        run_in_thread(update_progress, 65, f"Step 3/5: Checking false positives for {len(bugs)} bugs...")
+        update_progress(65, f"Step 3/5: Checking false positives for {len(bugs)} bugs...")
         for bug in bugs[:20]:
-            run_in_thread(validate_bug_accuracy, bug.id)
+            validate_bug_accuracy(bug.id)
             results['bugs_validated'] += 1
-            
+
         # 4. Detect flakiness
-        run_in_thread(update_progress, 80, f"Step 4/5: Detecting stability/flakiness for {len(test_cases)} tests...")
+        update_progress(80, f"Step 4/5: Detecting stability/flakiness for {len(test_cases)} tests...")
         for test in test_cases[:10]:
-            run_in_thread(detect_flakiness, test.id, 5)
+            detect_flakiness(test.id, 5)
             results['flakiness_checked'] += 1
-            
+
         # 5. Calculate overall metrics
-        run_in_thread(update_progress, 95, "Step 5/5: Computing overall quality scores and grade...")
-        run_in_thread(calculate_quality_metrics, application_id)
+        update_progress(95, "Step 5/5: Computing overall quality scores and grade...")
+        calculate_quality_metrics(application_id)
         results['metrics_calculated'] = True
-        
+
         # Final success update
-        def mark_success():
-            from core.models import CeleryTask
-            task_rec = CeleryTask.objects.filter(task_id=task_id).first()
-            if task_rec:
-                task_rec.status = 'success'
-                task_rec.progress = 100
-                task_rec.result = {
+        if task_record:
+            task_record.status = 'success'
+            task_record.progress = 100
+            task_record.result = {
+                "status_text": "Full quality check completed successfully!",
+                "tests_checked": results['tests_checked'],
+                "bugs_validated": results['bugs_validated']
+            }
+            task_record.completed_at = timezone.now()
+            task_record.save()
+        else:
+            CeleryTask.objects.filter(task_id=task_id).update(
+                status='success',
+                progress=100,
+                result={
                     "status_text": "Full quality check completed successfully!",
                     "tests_checked": results['tests_checked'],
                     "bugs_validated": results['bugs_validated']
-                }
-                task_rec.completed_at = timezone.now()
-                task_rec.save()
-        run_in_thread(mark_success)
-        
+                },
+                completed_at=timezone.now()
+            )
+
         results['completed_at'] = timezone.now().isoformat()
         results['success'] = True
         return results
@@ -868,15 +866,18 @@ def run_full_quality_check(self, application_id):
     except Exception as e:
         logger.error(f"✗ Error running quality check: {str(e)}")
         task_id = self.request.id or "dummy_task_id"
-        def mark_failed():
-            task_rec = CeleryTask.objects.filter(task_id=task_id).first()
-            if task_rec:
-                task_rec.status = 'failed'
-                task_rec.error = str(e)
-                task_rec.completed_at = timezone.now()
-                task_rec.save()
         try:
-            run_in_thread(mark_failed)
+            if task_record:
+                task_record.status = 'failed'
+                task_record.error = str(e)
+                task_record.completed_at = timezone.now()
+                task_record.save()
+            else:
+                CeleryTask.objects.filter(task_id=task_id).update(
+                    status='failed',
+                    error=str(e),
+                    completed_at=timezone.now()
+                )
         except Exception:
             pass
         return {

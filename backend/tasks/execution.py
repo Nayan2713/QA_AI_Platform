@@ -191,8 +191,10 @@ def ensure_authenticated(page, context, app) -> bool:
     return True
 
 
-@shared_task(bind=True, name="tasks.execution.execute_test")
+
+@shared_task(bind=True, name="tasks.execution.execute_test", queue="execution")
 def execute_test(self, test_run_id):
+
     logger.info(f"Starting test execution task for TestRun ID: {test_run_id}")
     task_id = self.request.id or "dummy_task_id"
 
@@ -217,13 +219,16 @@ def execute_test(self, test_run_id):
 
     try:
         try:
-            test_run = run_in_thread(TestRun.objects.get, id=test_run_id)
+            # OPTIMIZED: load test_case and app in a single DB query
+            test_run = run_in_thread(
+                lambda: TestRun.objects.select_related('test_case__app').get(id=test_run_id)
+            )
         except TestRun.DoesNotExist:
             logger.error(f"TestRun {test_run_id} does not exist.")
             return {"error": f"TestRun {test_run_id} not found."}
 
-        test_case = run_in_thread(lambda: test_run.test_case)
-        app = run_in_thread(lambda: test_case.app)
+        test_case = test_run.test_case   # already prefetched
+        app = test_case.app              # already prefetched
 
         from services.test_classifier import TestClassifier
         engine = TestClassifier.classify_test_case(test_case)
@@ -556,14 +561,17 @@ def execute_test(self, test_run_id):
                             error=em,
                             screenshot=sc
                         )
-                        tr = TestRun.objects.get(id=test_run.id)
-                        meta = tr.metadata or {}
-                        meta["passed_steps"] = ps
-                        meta["total_steps"] = ts
-                        meta["api_calls"] = al
-                        meta["console_logs"] = cl
-                        tr.metadata = meta
-                        tr.save()
+                        # OPTIMIZED: use update_fields to avoid fetching/saving
+                        # the entire TestRun object on every step.
+                        TestRun.objects.filter(id=test_run.id).update(
+                            metadata={
+                                **(TestRun.objects.values_list('metadata', flat=True).get(id=test_run.id) or {}),
+                                "passed_steps": ps,
+                                "total_steps": ts,
+                                "api_calls": al,
+                                "console_logs": cl,
+                            }
+                        )
 
                 run_in_thread(save_step)
                 pending_init_result = False
@@ -642,8 +650,9 @@ def execute_test(self, test_run_id):
             task_record.save()
         run_in_thread(complete_run)
 
-        # Trigger quality analysis asynchronously (which will trigger bug detection when done)
-        run_quality_analysis.delay(test_run.id, api_logs)
+        # OPTIMIZED: pass only test_run_id — api_logs already stored in
+        # TestRun.metadata, avoiding a potentially large broker payload.
+        run_quality_analysis.delay(test_run.id)
 
     except Exception as e:
         logger.error(f"execute_test outer failure: {e}")
@@ -724,30 +733,43 @@ def _run_browser_use_test(test_run, test_case, app, task_record):
     return {"status": "SUCCESS", "engine": "BROWSER_USE", "result": status_val}
 
 
-@shared_task(name="tasks.execution.run_quality_analysis")
-def run_quality_analysis(test_run_id, api_logs):
+@shared_task(name="tasks.execution.run_quality_analysis", queue="quality")
+def run_quality_analysis(test_run_id, api_logs=None):
+    """
+    Async quality analysis task.
+
+    OPTIMIZED: api_logs is now optional. When not supplied (new default),
+    the task reads them from TestRun.metadata in the DB, avoiding a
+    potentially multi-MB broker payload.
+    """
     logger.info(f"Starting async quality analysis task for TestRun ID: {test_run_id}")
-    
+
     def analyze():
         from core.models import TestRun, TestResult, APIEndpoint
         from services.quality_analyzer import ResponseQualityAnalyzer
-        
+
         try:
-            test_run = TestRun.objects.get(id=test_run_id)
+            # OPTIMIZED: prefetch test_case and app in one query
+            test_run = TestRun.objects.select_related('test_case__app').get(id=test_run_id)
         except TestRun.DoesNotExist:
             logger.error(f"TestRun {test_run_id} does not exist in run_quality_analysis.")
             return
 
         test_case = test_run.test_case
         app = test_case.app
-        
+
+        # OPTIMIZED: read api_logs from DB metadata if not passed directly
+        nonlocal api_logs
+        if api_logs is None:
+            api_logs = (test_run.metadata or {}).get('api_calls', [])
+
         try:
             # Query prev_calls inside the async task
             prev = TestRun.objects.filter(
                 test_case=test_case, status='COMPLETED'
             ).exclude(id=test_run_id).order_by('-created_at').first()
             prev_calls = prev.metadata.get('api_calls', []) if prev and isinstance(prev.metadata, dict) else []
-            
+
             endpoints = {
                 (ep.method, ep.url_pattern): ep
                 for ep in APIEndpoint.objects.filter(application=app)
@@ -767,10 +789,21 @@ def run_quality_analysis(test_run_id, api_logs):
             )]
             
             if fatal:
-                details = "\n".join(
-                    f"- {q['method']} {q['url']}\n  [{q['type'].upper()}]: {q['issue']}"
-                    for q in fatal
-                )
+                details_list = []
+                for q in fatal:
+                    body_preview = ""
+                    q_body = q.get('body')
+                    if q_body:
+                        body_preview = q_body[:600] + "\n  ... [TRUNCATED] ..." if len(q_body) > 600 else q_body
+                        body_preview = body_preview.strip()
+                    
+                    details_list.append(
+                        f"- {q['method']} {q['url']}\n"
+                        f"  [{q['type'].upper()}]: {q['issue']}\n"
+                        f"  Response Status: {q.get('status')} | Latency: {q.get('latency')}ms\n"
+                        f"  Response Content:\n  {body_preview}" if body_preview else f"- {q['method']} {q['url']}\n  [{q['type'].upper()}]: {q['issue']}\n  Response Status: {q.get('status')} | Latency: {q.get('latency')}ms"
+                    )
+                details = "\n".join(details_list)
                 
                 total_steps = TestResult.objects.filter(test_run=test_run).count()
                 

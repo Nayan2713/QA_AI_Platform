@@ -758,7 +758,7 @@ class BrowserDiscoveryService:
                 await worker_page.close()
                 logger.info(f"Worker {worker_id} finished and closed.")
 
-            workers = [crawl_worker(i) for i in range(3)]
+            workers = [crawl_worker(i) for i in range(5)]
             await asyncio.gather(*workers)
 
             # Discover OpenAPI/Swagger endpoints

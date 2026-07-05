@@ -38,7 +38,34 @@ class LLMService:
         Falls back to deterministic template generation if LLM is unreachable.
         Returns (test_cases, industry, was_ai_generated, resolved_model).
         """
-        pages_context = json.dumps(pages_data, indent=2)
+        # OPTIMIZED: strip the heavy 'elements' field before serialising —
+        # it can contain hundreds of DOM nodes and isn't needed for test generation.
+        trimmed = {
+            "pages": [
+                {
+                    k: v for k, v in page.items()
+                    if k != 'elements'
+                }
+                for page in pages_data.get("pages", [])
+            ],
+            "api_endpoints": pages_data.get("api_endpoints", []),
+        }
+        pages_context = json.dumps(trimmed, indent=2)
+
+        # Guard: if context is still huge, drop page details and keep only APIs
+        from config.llm_config import estimate_tokens
+        token_estimate = estimate_tokens(pages_context)
+        if token_estimate > 6000:
+            logger.warning(
+                f"Context too large ({token_estimate} est. tokens). "
+                "Keeping only API endpoints for prompt."
+            )
+            slim = {
+                "pages": [{"url": p.get("url"), "title": p.get("title")} for p in trimmed["pages"]],
+                "api_endpoints": trimmed["api_endpoints"],
+            }
+            pages_context = json.dumps(slim, indent=2)
+
         prompt = self.get_prompt(pages_context)
 
         logger.info(f"Attempting to generate test cases using configured LLM (choice: {self.model_choice})...")

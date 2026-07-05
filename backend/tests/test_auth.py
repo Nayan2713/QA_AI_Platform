@@ -239,6 +239,35 @@ class AuthenticationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('access', response.json())
 
+    def test_token_refresh_user_not_exist(self):
+        """12b. Refreshing a token for a deleted user returns 401 Unauthorized instead of 500"""
+        # First log in
+        login_payload = {
+            "email": 'duplicate@qaengine.com',
+            "password": 'testpassword123'
+        }
+        login_response = self.client.post(
+            self.login_url,
+            data=json.dumps(login_payload),
+            content_type='application/json'
+        )
+        refresh_token = login_response.json()['refresh']
+
+        # Delete the user
+        User.objects.filter(email='duplicate@qaengine.com').delete()
+
+        # Call refresh endpoint
+        refresh_payload = {
+            "refresh": refresh_token
+        }
+        response = self.client.post(
+            self.refresh_url,
+            data=json.dumps(refresh_payload),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.json()['detail'], 'No active account found for the given token.')
+
     def test_protected_endpoint_without_token(self):
         """13. Accessing protected endpoint without token returns 401"""
         response = self.client.get(self.protected_url)

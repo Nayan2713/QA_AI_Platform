@@ -30,6 +30,36 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
 
   useEffect(() => {
     fetchApplications();
+
+    const token = localStorage.getItem('access_token');
+    if (!token) return;
+
+    const apiBase = (import.meta as any).env.VITE_API_URL || 'http://127.0.0.1:8000/api/';
+    const sseBase = apiBase.replace('/api/', '/api/events/');
+    const sseUrl = `${sseBase}?token=${encodeURIComponent(token)}`;
+
+    const eventSource = new EventSource(sseUrl);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        const { type } = payload;
+        
+        if (
+          type.startsWith('application_') ||
+          type.startsWith('bug_') ||
+          type.startsWith('celerytask_')
+        ) {
+          fetchApplications();
+        }
+      } catch (err) {
+        console.error('Failed to parse SSE event on dashboard:', err);
+      }
+    };
+
+    return () => {
+      eventSource.close();
+    };
   }, []);
 
   const handleAppCreated = (newApp: Application) => {

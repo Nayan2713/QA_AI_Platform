@@ -183,11 +183,10 @@ class TestRunSerializer(serializers.ModelSerializer):
 class TestRunListSerializer(serializers.ModelSerializer):
     test_case_title = serializers.CharField(source='test_case.title', read_only=True)
     app_url = serializers.CharField(source='test_case.app.url', read_only=True)
-    results = TestResultListSerializer(source='step_results', many=True, read_only=True)
 
     class Meta:
         model = TestRun
-        fields = ('id', 'test_case', 'test_case_title', 'app_url', 'status', 'metadata', 'results', 'bugs_found', 'created_at')
+        fields = ('id', 'test_case', 'test_case_title', 'app_url', 'status', 'bugs_found', 'created_at')
 
 
 class APIEndpointSerializer(serializers.ModelSerializer):

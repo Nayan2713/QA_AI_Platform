@@ -93,67 +93,73 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     fetchAppDetails();
   }, [appId]);
 
-  // Poll for background task status (progress, description logs)
+  // Refs to allow SSE handler to access the latest state without reconnecting
+  const activeTaskIdRef = React.useRef(activeTaskId);
   useEffect(() => {
-    if (!activeTaskId) {
-      setCurrentTask(null);
-      return;
-    }
-    
-    let errorCount = 0;
-    let isMounted = true;
-    let pollCount = 0;
-    const MAX_POLLS = 1200; // Increased to 30 minutes to support long crawls
-    
-    const fetchTaskStatus = async () => {
-      if (!isMounted) return;
-      
-      if (pollCount >= MAX_POLLS) {
-        if (isMounted) {
-          setActiveTaskId(null);
-          setCurrentTask(null);
-          alert("Task monitoring timed out. The task might still be running in the background. Please refresh the page to check status.");
-        }
-        return;
-      }
-      
-      pollCount++;
-      
+    activeTaskIdRef.current = activeTaskId;
+  }, [activeTaskId]);
+
+  // Real-time updates via Server-Sent Events (SSE)
+  useEffect(() => {
+    const token = localStorage.getItem('access_token');
+    if (!token) return;
+
+    const apiBase = (import.meta as any).env.VITE_API_URL || 'http://127.0.0.1:8000/api/';
+    const sseBase = apiBase.replace('/api/', '/api/events/');
+    const sseUrl = `${sseBase}?token=${encodeURIComponent(token)}`;
+
+    const eventSource = new EventSource(sseUrl);
+
+    eventSource.onmessage = (event) => {
       try {
-        const res = await api.get<CeleryTask>(`tasks/${activeTaskId}/`);
-        if (!isMounted) return;
-        
-        setCurrentTask(res.data);
-        errorCount = 0; // reset on success
-        
-        if (res.data.status === 'success') {
-          await fetchAppDetails();
-          setTimeout(() => {
-            if (isMounted) setActiveTaskId(null);
-          }, 3000);
-        } else if (res.data.status === 'failed') {
-          await fetchAppDetails();
-          setTimeout(() => {
-            if (isMounted) setActiveTaskId(null);
-          }, 5000);
+        const payload = JSON.parse(event.data);
+        const { type, data } = payload;
+
+        switch (type) {
+          case 'celerytask_created':
+          case 'celerytask_updated':
+            if (data.task_id === activeTaskIdRef.current) {
+              setCurrentTask(data);
+              if (data.status === 'success' || data.status === 'failed') {
+                fetchAppDetails();
+                setTimeout(() => {
+                  setActiveTaskId(null);
+                }, 3000);
+              }
+            }
+            break;
+
+          case 'application_updated':
+            if (data.id === appId) {
+              setApp(prev => prev ? { ...prev, ...data } : null);
+              if (data.status === 'DISCOVERED' || data.status === 'FAILED') {
+                setDiscovering(false);
+                fetchAppDetails();
+              }
+            }
+            break;
+
+          case 'page_created':
+          case 'apiendpoint_created':
+          case 'bug_created':
+          case 'bug_updated':
+          case 'testrun_updated':
+          case 'testresult_created':
+            fetchAppDetails();
+            break;
+
+          default:
+            break;
         }
       } catch (err) {
-        errorCount += 1;
-        console.error(`Failed to poll task status (attempt ${errorCount}):`, err);
-        if (errorCount >= 5) {
-          if (isMounted) setActiveTaskId(null);
-        }
+        console.error('Failed to parse SSE event message:', err);
       }
     };
-    
-    fetchTaskStatus();
-    const intervalId = setInterval(fetchTaskStatus, 1500);
-    
+
     return () => {
-      isMounted = false;
-      clearInterval(intervalId);
+      eventSource.close();
     };
-  }, [activeTaskId]);
+  }, [appId]);
 
   const handleStopTask = async () => {
     if (!activeTaskId) return;

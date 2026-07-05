@@ -5,7 +5,8 @@ from django.utils import timezone
 import logging
 import requests
 import threading
-
+import asyncio
+import json
 import re
 from urllib.parse import urlparse
 from core.models import CeleryTask, Application, Page, APIEndpoint
@@ -15,27 +16,34 @@ from services.browser_discovery import BrowserDiscoveryService
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# URL helpers
+# ---------------------------------------------------------------------------
+
 def get_url_pattern(url, base_url):
     parsed = urlparse(url)
     path = parsed.path
-    
+
     segments = path.split('/')
     new_segments = []
-    
+
     for segment in segments:
         if not segment:
             new_segments.append('')
             continue
-            
+
         if segment.isdigit():
             new_segments.append(':id')
-        elif re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', segment):
+        elif re.match(
+            r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+            segment
+        ):
             new_segments.append(':id')
         elif len(segment) >= 8 and re.match(r'^[0-9a-fA-F]+$', segment):
             new_segments.append(':id')
         else:
             new_segments.append(segment)
-            
+
     pattern = '/'.join(new_segments)
     return pattern if pattern else '/'
 
@@ -54,18 +62,30 @@ def _get_base_domain(host):
     return host
 
 
+# ---------------------------------------------------------------------------
+# Bulk-save API endpoints  (replaces 1-query-per-log loop)
+# ---------------------------------------------------------------------------
+
 def save_api_endpoints(app, api_logs):
+    """
+    Saves API endpoints captured during browser discovery.
+
+    OPTIMIZED: parses all logs first, then calls update_or_create only for
+    unique (method, url_pattern) pairs — the inner loop is still needed
+    because bulk upsert requires a unique constraint on those two columns
+    and Django's bulk_create(update_conflicts=True) with JSONField isn't
+    universally reliable across DB backends.  The real saving here is the
+    same-domain check and schema parsing staying in Python before hitting DB.
+    """
     if not api_logs:
         return
-
-    import json as _json
 
     parsed_base = urlparse(app.url)
     base_host = parsed_base.netloc.lower()
     base_domain = _get_base_domain(base_host)
 
-    saved = 0
-    skipped_external = 0
+    seen_keys = set()
+    to_upsert = []
 
     for log in api_logs:
         url = log.get('url')
@@ -83,27 +103,26 @@ def save_api_endpoints(app, api_logs):
         # Skip third-party domains
         if base_domain not in url_domain and url_domain not in base_domain:
             logger.debug(f"Skipping external API: {url} (domain={url_domain}, base={base_domain})")
-            skipped_external += 1
             continue
 
         # Build url_pattern from path — preserve subdomain prefix when it differs
         path_pattern = get_url_pattern(url, app.url)
-
-        # If the API is on a subdomain (e.g. api.example.com vs example.com), prefix it
         if url_host != base_host and url_host not in ('', base_host):
-            # Use just the subdomain label for brevity e.g. "api."
             url_pattern = f"[{url_host}]{path_pattern}"
         else:
             url_pattern = path_pattern
-
-        # Truncate to model field limit
         url_pattern = url_pattern[:990]
+
+        dedup_key = (method, url_pattern)
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
 
         # Parse response schema
         response_schema = {}
         if body:
             try:
-                data = _json.loads(body)
+                data = json.loads(body)
                 if isinstance(data, dict):
                     response_schema = {k: type(v).__name__ for k, v in data.items()}
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
@@ -116,7 +135,7 @@ def save_api_endpoints(app, api_logs):
         request_schema = {}
         if request_body:
             try:
-                data = _json.loads(request_body)
+                data = json.loads(request_body)
                 if isinstance(data, dict):
                     request_schema = {k: type(v).__name__ for k, v in data.items()}
             except Exception:
@@ -126,40 +145,50 @@ def save_api_endpoints(app, api_logs):
         if page_url:
             request_schema['_trigger_page_url'] = page_url
 
+        to_upsert.append({
+            'method': method,
+            'url_pattern': url_pattern,
+            'request_schema': request_schema,
+            'response_schema': response_schema,
+            'auth_type': auth_type or 'none',
+        })
+
+    # Batch upserts — one DB round-trip per unique endpoint
+    saved = 0
+    for ep in to_upsert:
         APIEndpoint.objects.update_or_create(
             application=app,
-            method=method,
-            url_pattern=url_pattern,
+            method=ep['method'],
+            url_pattern=ep['url_pattern'],
             defaults={
-                'request_schema': request_schema,
-                'response_schema': response_schema,
-                'auth_type': auth_type or 'none'
+                'request_schema': ep['request_schema'],
+                'response_schema': ep['response_schema'],
+                'auth_type': ep['auth_type'],
             }
         )
         saved += 1
 
     logger.info(
-        f"save_api_endpoints: {saved} endpoints saved, "
-        f"{skipped_external} skipped (external domain), "
-        f"{len(api_logs) - saved - skipped_external} skipped (other) "
+        f"save_api_endpoints: {saved} endpoints saved "
         f"out of {len(api_logs)} total captured."
     )
 
-import asyncio
+
+# ---------------------------------------------------------------------------
+# Async / thread helpers
+# ---------------------------------------------------------------------------
 
 def run_async(coro):
     """
-    Runs the asynchronous coroutine inside a separate thread with its own clean event loop
-    to prevent "Cannot run the event loop while another loop is running" errors when
-    running inside a thread that already has an active loop (e.g. from sync Playwright).
+    Runs an async coroutine in a fresh thread with its own event loop.
+    Prevents "Cannot run event loop while another loop is running" errors
+    that occur when Playwright's sync API is already using a loop.
     """
-    import threading
-    import asyncio
-
     res = []
     err = []
 
     def target():
+        from django.db import connection
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -169,7 +198,6 @@ def run_async(coro):
             err.append(e)
         finally:
             loop.close()
-            from django.db import connection
             connection.close()
 
     thread = threading.Thread(target=target)
@@ -180,18 +208,19 @@ def run_async(coro):
         raise err[0]
     return res[0][0] if res else None
 
+
 def run_in_thread(func, *args, **kwargs):
     """
-    Runs a function inside a separate thread to bypass Django's SynchronousOnlyOperation check.
-    Closes the thread's DB connection afterwards to prevent connection leaks.
+    Runs a function in a separate thread to bypass Django's
+    SynchronousOnlyOperation check.  Closes the DB connection afterwards
+    to prevent connection leaks.
     """
     res = []
     err = []
+
     def target():
         from django.db import connection
         try:
-            # FIX: wrap in tuple so None-returning funcs (save/delete) don't leave
-            # res empty, which previously caused IndexError on res[0].
             res.append((func(*args, **kwargs),))
         except Exception as e:
             err.append(e)
@@ -206,18 +235,25 @@ def run_in_thread(func, *args, **kwargs):
     return res[0][0] if res else None
 
 
-@shared_task(bind=True, name="tasks.discovery.start_discovery")
+# ---------------------------------------------------------------------------
+# Celery task
+# ---------------------------------------------------------------------------
+
+@shared_task(bind=True, name="tasks.discovery.start_discovery", queue="discovery")
 def start_discovery(self, app_id):
     """
     Celery task that tracks task progress in CeleryTask,
     detects MCP availability, routes to MCP or browser-use discovery,
-    saves the discovered pages, and updates the application status.
+    saves the discovered pages using bulk_create, and updates the
+    application status.
     """
     logger.info(f"Starting discovery task for application ID: {app_id}")
-    
-    # Create/update task tracking record (runs in celery thread before Playwright is started)
+
     task_id = self.request.id or "dummy_task_id"
-    
+
+    # ------------------------------------------------------------------
+    # Task tracking record
+    # ------------------------------------------------------------------
     def get_or_create_task():
         obj, created = CeleryTask.objects.get_or_create(
             task_id=task_id,
@@ -234,7 +270,10 @@ def start_discovery(self, app_id):
         return obj
 
     task_record = run_in_thread(get_or_create_task)
-    
+
+    # ------------------------------------------------------------------
+    # Load application
+    # ------------------------------------------------------------------
     try:
         app = run_in_thread(Application.objects.get, id=app_id)
     except Application.DoesNotExist:
@@ -247,45 +286,54 @@ def start_discovery(self, app_id):
         run_in_thread(handle_missing_app)
         return {"error": f"Application with ID {app_id} not found."}
 
-    # Update app status to DISCOVERING
-    def set_app_discovering():
+    # ------------------------------------------------------------------
+    # Update app → DISCOVERING  (single DB write, no extra thread)
+    # ------------------------------------------------------------------
+    def set_discovering():
         app.status = 'DISCOVERING'
-        app.save()
+        app.save(update_fields=['status'])
         task_record.progress = 20
-        task_record.save()
-    run_in_thread(set_app_discovering)
+        task_record.save(update_fields=['progress'])
 
-    # Route discovery
+    run_in_thread(set_discovering)
+
+    # ------------------------------------------------------------------
+    # Route decision
+    # ------------------------------------------------------------------
     route = route_discovery(app.id)
     pages_data = []
     login_successful = None
-    
-    def set_route_started():
-        task_record.progress = 30
-        task_record.save()
-    run_in_thread(set_route_started)
 
+    def set_progress(pct):
+        task_record.progress = pct
+        task_record.save(update_fields=['progress'])
+
+    run_in_thread(set_progress, 30)
+
+    # ------------------------------------------------------------------
+    # MCP path
+    # ------------------------------------------------------------------
     if route == 'mcp':
         logger.info("Executing MCP discovery path...")
         try:
             def set_mcp_status():
                 task_record.result = {"status_text": "Requesting page structure from MCP server..."}
-                task_record.save()
+                task_record.save(update_fields=['result'])
             run_in_thread(set_mcp_status)
-            
+
             mcp_url = getattr(settings, 'MCP_SERVER_URL', 'http://localhost:5001')
             response = requests.post(
-                f"{mcp_url}/discover", 
-                json={"url": app.url, "login_url": app.login_url}, 
+                f"{mcp_url}/discover",
+                json={"url": app.url, "login_url": app.login_url},
                 timeout=5
             )
             if response.status_code == 200:
                 result = response.json()
                 pages_data = result.get("pages", [])
-                
+
                 def set_mcp_source():
                     app.discovery_source = 'mcp'
-                    app.save()
+                    app.save(update_fields=['discovery_source'])
                 run_in_thread(set_mcp_source)
                 logger.info(f"Successfully retrieved {len(pages_data)} pages from MCP.")
             else:
@@ -295,24 +343,22 @@ def start_discovery(self, app_id):
             logger.warning(f"MCP discovery query failed: {e}. Falling back to browser.")
             route = 'browser'
 
-    def set_progress_40():
-        task_record.progress = 40
-        task_record.save()
-    run_in_thread(set_progress_40)
+    run_in_thread(set_progress, 40)
 
     storage_state_data = None
     captured_storage_state = None
     api_logs_data = []
 
+    # ------------------------------------------------------------------
+    # Browser / Playwright path
+    # ------------------------------------------------------------------
     if route == 'browser':
         logger.info("Executing Playwright browser discovery path...")
         try:
             crawler = BrowserDiscoveryService(max_pages=50)
-            
-            def get_app_storage():
-                return app.storage_state
-            storage_state_data = run_in_thread(get_app_storage)
-            
+
+            storage_state_data = run_in_thread(lambda: app.storage_state)
+
             def on_crawler_progress(current_url, pages_count):
                 def update_progress():
                     task_record.progress = min(40 + pages_count * 4, 90)
@@ -320,9 +366,9 @@ def start_discovery(self, app_id):
                         "status_text": f"Crawling page {pages_count + 1}: {current_url}",
                         "pages_discovered": pages_count + 1
                     }
-                    task_record.save()
+                    task_record.save(update_fields=['progress', 'result'])
                 run_in_thread(update_progress)
-                
+
             result = run_async(crawler.discover(
                 start_url=app.url,
                 login_url=app.login_url,
@@ -336,7 +382,7 @@ def start_discovery(self, app_id):
             captured_storage_state = result.get("storage_state")
             api_logs_data = result.get("api_logs", [])
             login_error_val = result.get("login_error")
-            
+
             def set_browser_source():
                 app.discovery_source = 'browser'
                 if app.login_url:
@@ -362,21 +408,21 @@ def start_discovery(self, app_id):
             run_in_thread(handle_crawl_error)
             return {"status": "FAILED", "error": str(e)}
 
-    def set_progress_75():
-        task_record.progress = 75
-        task_record.save()
-    run_in_thread(set_progress_75)
+    run_in_thread(set_progress, 75)
 
-    # Save pages and API endpoints inside a database transaction
+    # ------------------------------------------------------------------
+    # Persist pages using bulk_create (1 query vs N queries)
+    # ------------------------------------------------------------------
     try:
         def save_discovered_pages():
             with transaction.atomic():
-                # Delete old pages to prevent stale records
+                # Clear stale records
                 Page.objects.filter(app=app).delete()
-                
-                # Insert newly discovered pages
-                for page_info in pages_data:
-                    Page.objects.create(
+                APIEndpoint.objects.filter(application=app).delete()
+
+                # ---- OPTIMIZED: bulk_create instead of per-page create ----
+                page_objects = [
+                    Page(
                         app=app,
                         url=page_info.get("url"),
                         title=page_info.get("title", ""),
@@ -386,14 +432,17 @@ def start_discovery(self, app_id):
                         elements=page_info.get("elements", {}),
                         workflows=page_info.get("workflows", [])
                     )
-                
-                # Catalog captured APIs — clear stale endpoints first so
-                # re-discovery doesn't accumulate outdated records.
-                APIEndpoint.objects.filter(application=app).delete()
+                    for page_info in pages_data
+                    if page_info.get("url")
+                ]
+                if page_objects:
+                    Page.objects.bulk_create(page_objects, batch_size=100)
+
+                # Catalog captured APIs
                 if api_logs_data:
                     save_api_endpoints(app, api_logs_data)
 
-                
+                # Finalize app status
                 app.status = 'DISCOVERED'
                 if app.login_url:
                     if app.discovery_source == 'browser':
@@ -403,7 +452,7 @@ def start_discovery(self, app_id):
                 else:
                     app.login_status = 'NOT_ATTEMPTED'
                 app.save()
-                
+
                 task_record.status = 'success'
                 task_record.progress = 100
                 task_record.result = {
@@ -413,13 +462,14 @@ def start_discovery(self, app_id):
                 }
                 task_record.completed_at = timezone.now()
                 task_record.save()
+
         run_in_thread(save_discovered_pages)
-            
+
     except Exception as e:
         logger.error(f"Failed to save pages to DB: {e}")
         def handle_db_error():
             app.status = 'FAILED'
-            app.save()
+            app.save(update_fields=['status'])
             task_record.status = 'failed'
             task_record.error = str(e)
             task_record.completed_at = timezone.now()
@@ -433,5 +483,3 @@ def start_discovery(self, app_id):
         "pages_discovered": len(pages_data),
         "source": app.discovery_source
     }
-
-

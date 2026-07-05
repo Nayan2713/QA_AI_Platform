@@ -430,6 +430,8 @@ class QualityDashboardView(viewsets.ViewSet):
                 progress=5,
                 result={"status_text": "Queuing full quality check..."}
             )
+            from core.signals import register_task_user
+            register_task_user(task_id, request.user.id)
             
             task = run_full_quality_check.apply_async(args=[app_id], task_id=task_id)
             

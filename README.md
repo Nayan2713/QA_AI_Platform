@@ -92,11 +92,21 @@ You can run the application either **locally on your machine** (optimal for debu
    
 celery -A qa_engine worker -l info
 celery -A qa_engine worker -l info -P solo
-celery -A qa_engine worker -l info -P threads --concurrency=6
+celery -A qa_engine worker -l info -P threads --concurrency=8
+
+#stop the celery 
+
 celery -A qa_engine purge -f
 
-
 python manage.py shell -c "import django; django.setup(); from django.conf import settings; import redis; r = redis.Redis.from_url(settings.CELERY_BROKER_URL); print('Flushed Redis:', r.flushdb())"
+
+
+#run the celery
+celery -A qa_engine worker -l info -P threads --concurrency=3 -Q discovery,execution,quality,celery
+
+celery -A qa_engine worker -l info -P threads --concurrency=8 -Q discovery,execution,quality,celery
+
+
 
    ```
 

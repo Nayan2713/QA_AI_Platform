@@ -400,7 +400,8 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
             if content_err:
                 issues.append({
                     "url": url, "method": method,
-                    "type": "content_error", "issue": content_err
+                    "type": "content_error", "issue": content_err,
+                    "status": status, "latency": latency, "body": body
                 })
 
             # 2. Latency warnings (> 2000ms)
@@ -408,7 +409,8 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
                 issues.append({
                     "url": url, "method": method,
                     "type": "latency_warning",
-                    "issue": f"High response latency detected ({latency}ms)."
+                    "issue": f"High response latency detected ({latency}ms).",
+                    "status": status, "latency": latency, "body": body
                 })
 
             # 3. Schema regression (vs previous successful run)
@@ -417,7 +419,8 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
                 if regression:
                     issues.append({
                         "url": url, "method": method,
-                        "type": "schema_regression", "issue": regression
+                        "type": "schema_regression", "issue": regression,
+                        "status": status, "latency": latency, "body": body
                     })
 
             # 4. Schema conformance (vs discovered API schema)
@@ -426,7 +429,8 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
                 if conformance_issue:
                     issues.append({
                         "url": url, "method": method,
-                        "type": "schema_conformance", "issue": conformance_issue
+                        "type": "schema_conformance", "issue": conformance_issue,
+                        "status": status, "latency": latency, "body": body
                     })
 
         # 5. Semantic relevance — only runs when LLM is actually configured
@@ -451,7 +455,10 @@ Respond with exactly "RELEVANT" or "IRRELEVANT" on the first line, followed by a
                         "url": target_call.get('url'),
                         "method": target_call.get('method'),
                         "type": "semantic_error",
-                        "issue": semantic_err
+                        "issue": semantic_err,
+                        "status": target_call.get('status'),
+                        "latency": target_call.get('latency'),
+                        "body": target_call.get('body')
                     })
 
         return issues
