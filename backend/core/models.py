@@ -2,15 +2,38 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.conf import settings
 import base64
+import hashlib
 from cryptography.fernet import Fernet
+
+from .enums import (
+    ApplicationStatus, LoginStatus, TestCaseValidationStatus,
+    TestRunStatus, TestResultStatus, BugSeverity, CeleryTaskStatus,
+    TestValidationStatus, FlakinessStatus, VerificationStatus, QualityGrade,
+)
 
 
 def _get_fernet():
-    """Return a Fernet cipher keyed from the first 32 URL-safe base64 bytes of SECRET_KEY."""
-    key_bytes = settings.SECRET_KEY.encode()[:32]
-    # Fernet needs exactly 32 bytes encoded as URL-safe base64
-    fernet_key = base64.urlsafe_b64encode(key_bytes.ljust(32, b'=')[:32])
-    return Fernet(fernet_key)
+    """Return a Fernet cipher.
+
+    Prefers a dedicated ``FERNET_KEY`` env var (a 32-byte URL-safe base64
+    string).  If that is not set, derives a stable key from SECRET_KEY
+    using PBKDF2 so that normal SECRET_KEY rotation does **not** silently
+    corrupt previously-encrypted values—as long as the derived key is
+    migrated first.
+    """
+    explicit = getattr(settings, 'FERNET_KEY', None)
+    if explicit:
+        return Fernet(explicit.encode() if isinstance(explicit, str) else explicit)
+
+    # Derive a stable 32-byte key from SECRET_KEY via PBKDF2
+    dk = hashlib.pbkdf2_hmac(
+        'sha256',
+        settings.SECRET_KEY.encode(),
+        b'EncryptedCharField-salt',
+        iterations=100_000,
+        dklen=32,
+    )
+    return Fernet(base64.urlsafe_b64encode(dk))
 
 
 class EncryptedCharField(models.TextField):
@@ -36,19 +59,6 @@ class EncryptedCharField(models.TextField):
 
 
 class Application(models.Model):
-    STATUS_CHOICES = [
-        ('IDLE', 'Idle'),
-        ('DISCOVERING', 'Discovering'),
-        ('DISCOVERED', 'Discovered'),
-        ('FAILED', 'Failed'),
-    ]
-    
-    LOGIN_STATUS_CHOICES = [
-        ('NOT_ATTEMPTED', 'Not Attempted'),
-        ('SUCCESS', 'Success'),
-        ('FAILED', 'Failed'),
-    ]
-    
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='applications')
     url = models.URLField(max_length=500)
     base_url = models.URLField(max_length=500)
@@ -56,9 +66,15 @@ class Application(models.Model):
     username = models.CharField(max_length=255, blank=True, null=True)
     # FIX: store the target-site password encrypted at rest
     password = EncryptedCharField(blank=True, null=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='IDLE')
+    status = models.CharField(
+        max_length=20, choices=ApplicationStatus.choices,
+        default=ApplicationStatus.IDLE, db_index=True,
+    )
     discovery_source = models.CharField(max_length=20, blank=True, null=True) # 'mcp' or 'browser'
-    login_status = models.CharField(max_length=20, choices=LOGIN_STATUS_CHOICES, default='NOT_ATTEMPTED')
+    login_status = models.CharField(
+        max_length=20, choices=LoginStatus.choices,
+        default=LoginStatus.NOT_ATTEMPTED,
+    )
     storage_state = models.TextField(blank=True, null=True)
     login_error = models.TextField(blank=True, null=True)
     industry = models.CharField(max_length=100, blank=True, null=True)
@@ -91,12 +107,8 @@ class TestCase(models.Model):
     ai_generated = models.BooleanField(default=True)
     validation_status = models.CharField(
         max_length=20,
-        choices=[
-            ('DRAFT', 'Draft'),
-            ('VERIFIED', 'Verified'),
-            ('BROKEN', 'Broken')
-        ],
-        default='DRAFT'
+        choices=TestCaseValidationStatus.choices,
+        default=TestCaseValidationStatus.DRAFT,
     )
     generation_context = models.JSONField(default=dict, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -106,14 +118,12 @@ class TestCase(models.Model):
 
 
 class TestRun(models.Model):
-    STATUS_CHOICES = [
-        ('PENDING', 'Pending'),
-        ('RUNNING', 'Running'),
-        ('COMPLETED', 'Completed'),
-        ('FAILED', 'Failed'),
-    ]
+    STATUS_CHOICES = TestRunStatus.choices
     test_case = models.ForeignKey(TestCase, on_delete=models.CASCADE, related_name='test_runs')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    status = models.CharField(
+        max_length=20, choices=TestRunStatus.choices,
+        default=TestRunStatus.PENDING, db_index=True,
+    )
     metadata = models.JSONField(default=dict, blank=True)
     bugs_found = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -123,13 +133,10 @@ class TestRun(models.Model):
 
 
 class TestResult(models.Model):
-    STATUS_CHOICES = [
-        ('PASSED', 'Passed'),
-        ('FAILED', 'Failed'),
-    ]
+    STATUS_CHOICES = TestResultStatus.choices
     test_run = models.ForeignKey(TestRun, on_delete=models.CASCADE, related_name='step_results')
     step_number = models.IntegerField()
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    status = models.CharField(max_length=20, choices=TestResultStatus.choices)
     error = models.TextField(blank=True, null=True)
     screenshot = models.TextField(blank=True, null=True)  # base64 encoded image
     created_at = models.DateTimeField(auto_now_add=True)
@@ -157,16 +164,14 @@ class APIEndpoint(models.Model):
 
 
 class Bug(models.Model):
-    SEVERITY_CHOICES = [
-        ('critical', 'Critical'),
-        ('high', 'High'),
-        ('medium', 'Medium'),
-        ('low', 'Low'),
-    ]
+    SEVERITY_CHOICES = BugSeverity.choices
     application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='bugs', null=True, blank=True)
     test_run = models.ForeignKey(TestRun, on_delete=models.CASCADE, related_name='bugs', null=True, blank=True)
     bug_type = models.CharField(max_length=64, blank=True, null=True)
-    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='medium')
+    severity = models.CharField(
+        max_length=20, choices=BugSeverity.choices,
+        default=BugSeverity.MEDIUM, db_index=True,
+    )
     title = models.CharField(max_length=255)
     description = models.TextField()
     steps_to_reproduce = models.JSONField(default=list, blank=True, null=True)
@@ -195,16 +200,13 @@ class AgentSession(models.Model):
 
 class CeleryTask(models.Model):
     """Track all celery tasks"""
-    TASK_STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('progress', 'In Progress'),
-        ('success', 'Success'),
-        ('failed', 'Failed'),
-    ]
+    TASK_STATUS_CHOICES = CeleryTaskStatus.choices
     
     task_id = models.CharField(max_length=255, unique=True)
     task_type = models.CharField(max_length=100)  # 'discovery', 'test_gen', etc
-    status = models.CharField(max_length=20, choices=TASK_STATUS_CHOICES)
+    status = models.CharField(
+        max_length=20, choices=CeleryTaskStatus.choices, db_index=True,
+    )
     progress = models.IntegerField(default=0)  # 0-100
     result = models.JSONField(default=dict, blank=True)
     error = models.TextField(blank=True)
@@ -231,13 +233,9 @@ class TestValidation(models.Model):
     elements_total = models.IntegerField(default=0)
     status = models.CharField(
         max_length=20,
-        choices=[
-            ('HIGHLY_RELEVANT', 'Highly Relevant (90-100%)'),
-            ('RELEVANT', 'Relevant (70-89%)'),
-            ('SOMEWHAT_RELEVANT', 'Somewhat Relevant (50-69%)'),
-            ('IRRELEVANT', 'Irrelevant (<50%)')
-        ],
-        default='IRRELEVANT'
+        choices=TestValidationStatus.choices,
+        default=TestValidationStatus.IRRELEVANT,
+        db_index=True,
     )
     validation_details = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -293,13 +291,9 @@ class FlakinessReport(models.Model):
     flakiness_percentage = models.FloatField(default=0)
     status = models.CharField(
         max_length=20,
-        choices=[
-            ('STABLE', 'Stable (0-10% failure)'),
-            ('MOSTLY_STABLE', 'Mostly Stable (10-20% failure)'),
-            ('FLAKY', 'Flaky (20-50% failure)'),
-            ('VERY_FLAKY', 'Very Flaky (>50% failure)')
-        ],
-        default='VERY_FLAKY'
+        choices=FlakinessStatus.choices,
+        default=FlakinessStatus.VERY_FLAKY,
+        db_index=True,
     )
     failure_patterns = models.JSONField(default=dict)
     failure_reason = models.TextField(blank=True)
@@ -329,12 +323,8 @@ class BugValidation(models.Model):
     is_verified = models.BooleanField(default=False)
     verification_status = models.CharField(
         max_length=20,
-        choices=[
-            ('VERIFIED', 'Real Bug'),
-            ('FALSE_POSITIVE', 'False Positive'),
-            ('NEEDS_REVIEW', 'Needs Manual Review')
-        ],
-        default='NEEDS_REVIEW'
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.NEEDS_REVIEW,
     )
     reproducibility_count = models.IntegerField(default=1)
     reproducibility_score = models.FloatField(default=0)
@@ -364,14 +354,8 @@ class QualityMetrics(models.Model):
     overall_score = models.FloatField(default=0)
     grade = models.CharField(
         max_length=1,
-        choices=[
-            ('A', 'Excellent (90-100)'),
-            ('B', 'Good (80-89)'),
-            ('C', 'Fair (70-79)'),
-            ('D', 'Poor (60-69)'),
-            ('F', 'Failing (<60)')
-        ],
-        default='F'
+        choices=QualityGrade.choices,
+        default=QualityGrade.F,
     )
     recommendations = models.JSONField(default=list)
     last_updated = models.DateTimeField(auto_now=True)

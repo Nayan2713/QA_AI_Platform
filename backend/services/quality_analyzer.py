@@ -7,17 +7,26 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
+import time
+
+_llm_cache = {
+    'val': None,
+    'checked_at': 0
+}
+
 def _no_llm_configured():
     """
     Fast check: returns True when no LLM gateway is reachable/configured,
     so we can skip the expensive port-probe + network calls entirely.
 
-    FIX: The original code attempted Ollama (1s socket timeout) + LM Studio
-    (1s socket timeout) + OpenAI key validation on EVERY test execution even
-    when nothing was configured. With 140 tests that wastes ~4-5 minutes
-    purely on failed connection attempts.  This helper short-circuits that
-    by checking settings first — no network I/O at all.
+    OPTIMIZED: The check is cached for 5 minutes in memory to avoid repeated
+    0.3s - 0.6s blocking socket timeout delays on every test run.
     """
+    global _llm_cache
+    now = time.time()
+    if _llm_cache['val'] is not None and (now - _llm_cache['checked_at']) < 300:
+        return _llm_cache['val']
+
     try:
         from django.conf import settings
         openai_key = getattr(settings, 'OPENAI_API_KEY', None)
@@ -28,6 +37,8 @@ def _no_llm_configured():
             and len(str(openai_key).strip()) >= 40
         )
         if has_openai:
+            _llm_cache['val'] = False
+            _llm_cache['checked_at'] = now
             return False  # Cloud OpenAI is configured — LLM is available
 
         # Check if Ollama port is likely open (cached result per process)
@@ -44,12 +55,18 @@ def _no_llm_configured():
                 host = parsed.hostname or 'localhost'
                 port = parsed.port or (80 if parsed.scheme == 'http' else 443)
                 with socket.create_connection((host, port), timeout=0.3) as _:
+                    _llm_cache['val'] = False
+                    _llm_cache['checked_at'] = now
                     return False  # something is listening — LLM may be available
             except Exception:
                 continue
 
+        _llm_cache['val'] = True
+        _llm_cache['checked_at'] = now
         return True  # nothing configured or reachable
     except Exception:
+        _llm_cache['val'] = True
+        _llm_cache['checked_at'] = now
         return True  # fail safe: skip LLM check
 
 

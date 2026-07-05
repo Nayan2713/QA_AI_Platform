@@ -88,6 +88,29 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }
   };
 
+  const fetchTimeoutRef = React.useRef<any>(null);
+  const fetchAppDetailsRef = React.useRef(fetchAppDetails);
+  useEffect(() => {
+    fetchAppDetailsRef.current = fetchAppDetails;
+  });
+
+  const fetchAppDetailsDebounced = React.useCallback(() => {
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
+    }
+    fetchTimeoutRef.current = setTimeout(() => {
+      fetchAppDetailsRef.current();
+    }, 1000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     setShowLoginError(false);
     fetchAppDetails();
@@ -121,7 +144,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             if (data.task_id === activeTaskIdRef.current) {
               setCurrentTask(data);
               if (data.status === 'success' || data.status === 'failed') {
-                fetchAppDetails();
+                fetchAppDetailsDebounced();
                 setTimeout(() => {
                   setActiveTaskId(null);
                 }, 3000);
@@ -134,7 +157,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               setApp(prev => prev ? { ...prev, ...data } : null);
               if (data.status === 'DISCOVERED' || data.status === 'FAILED') {
                 setDiscovering(false);
-                fetchAppDetails();
+                fetchAppDetailsDebounced();
               }
             }
             break;
@@ -145,7 +168,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           case 'bug_updated':
           case 'testrun_updated':
           case 'testresult_created':
-            fetchAppDetails();
+            fetchAppDetailsDebounced();
             break;
 
           default:

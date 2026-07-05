@@ -83,14 +83,14 @@ os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 
 def run_in_thread(func, *args, **kwargs):
     """
-    Directly executes the function on the main thread (thread-spawning bypassed)
-    while ensuring the database connection is closed afterwards to prevent leaks.
+    Directly executes the function on the main thread.
+
+    O5 FIX: Removed the ``connection.close()`` that was here previously.
+    It was defeating ``CONN_MAX_AGE=60`` by tearing down the persistent
+    connection after every single DB operation, causing ~2-5ms overhead
+    per call to re-establish the TCP socket.
     """
-    from django.db import connection
-    try:
-        return func(*args, **kwargs)
-    finally:
-        connection.close()
+    return func(*args, **kwargs)
 
 
 def perform_login(page, context, app) -> bool:
@@ -561,17 +561,17 @@ def execute_test(self, test_run_id):
                             error=em,
                             screenshot=sc
                         )
-                        # OPTIMIZED: use update_fields to avoid fetching/saving
-                        # the entire TestRun object on every step.
-                        TestRun.objects.filter(id=test_run.id).update(
-                            metadata={
-                                **(TestRun.objects.values_list('metadata', flat=True).get(id=test_run.id) or {}),
-                                "passed_steps": ps,
-                                "total_steps": ts,
-                                "api_calls": al,
-                                "console_logs": cl,
-                            }
-                        )
+                        # I6 FIX: Update metadata in-memory then save,
+                        # instead of the previous SELECT + UPDATE that
+                        # was non-atomic and could lose concurrent writes.
+                        test_run.metadata = {
+                            **(test_run.metadata or {}),
+                            "passed_steps": ps,
+                            "total_steps": ts,
+                            "api_calls": al,
+                            "console_logs": cl,
+                        }
+                        test_run.save(update_fields=['metadata'])
 
                 run_in_thread(save_step)
                 pending_init_result = False

@@ -121,11 +121,11 @@ WSGI_APPLICATION = 'qa_engine.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'qa_ai_platform',
-        'USER': 'postgres',
-        'PASSWORD': 'root',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'NAME': os.getenv('DB_NAME', 'qa_ai_platform'),
+        'USER': os.getenv('DB_USER', 'postgres'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'root'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5432'),
         # OPTIMIZED: reuse DB connections across requests instead of
         # opening a new connection every time (saves ~2-5ms per query).
         'CONN_MAX_AGE': 60,
@@ -137,19 +137,9 @@ DATABASES = {
     }
 }
 
-# Optimize SQLite performance & prevent "database is locked" errors
-from django.db.backends.signals import connection_created
-from django.dispatch import receiver
-
-@receiver(connection_created)
-def configure_sqlite(sender, connection, **kwargs):
-    if connection.vendor == 'sqlite':
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute('PRAGMA journal_mode=WAL;')
-                cursor.execute('PRAGMA busy_timeout=60000;')
-        except Exception:
-            pass
+# NOTE: SQLite PRAGMA signal removed — active DB is Postgres.
+# If you switch back to SQLite, re-add the connection_created signal
+# with PRAGMA journal_mode=WAL and busy_timeout=60000.
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -182,7 +172,7 @@ _cors_origins = os.getenv(
     'CORS_ALLOWED_ORIGINS',
     'http://localhost:3000,http://127.0.0.1:3000'
 )
-CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]   # + [o.strip() for o in _cors_origins.split(',') if o.strip()]
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
@@ -221,10 +211,45 @@ SIMPLE_JWT = {
     'JTI_CLAIM': 'jti',
 }
 
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0').split('?')[0]
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0').split('?')[0]
-CELERY_BROKER_TRANSPORT_OPTIONS = {'protocol': 2}
-CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {'protocol': 2}
+def _ensure_redis_protocol(url: str) -> str:
+    """Guarantee ``protocol=2`` is present in a Redis URL only if redis-py is v5+.
+
+    redis-py 5.x defaults to RESP3 and sends the ``HELLO 3`` command which
+    older Redis servers reject.  This helper appends the query param so that
+    every connection (Celery broker, result backend, raw clients) stays on
+    the safe RESP2 protocol.
+    """
+    import redis
+    try:
+        version_parts = [int(p) for p in redis.__version__.split('.') if p.isdigit()]
+    except Exception:
+        version_parts = []
+    
+    if version_parts and version_parts[0] >= 5:
+        if 'protocol=' in url:
+            return url
+        return f"{url}?protocol=2" if '?' not in url else f"{url}&protocol=2"
+    return url
+
+CELERY_BROKER_URL = _ensure_redis_protocol(
+    os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+)
+CELERY_RESULT_BACKEND = _ensure_redis_protocol(
+    os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+)
+
+import redis
+try:
+    _redis_version = [int(p) for p in redis.__version__.split('.') if p.isdigit()]
+except Exception:
+    _redis_version = []
+
+if _redis_version and _redis_version[0] >= 5:
+    CELERY_BROKER_TRANSPORT_OPTIONS = {'protocol': 2}
+    CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {'protocol': 2}
+else:
+    CELERY_BROKER_TRANSPORT_OPTIONS = {}
+    CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {}
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'

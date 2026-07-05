@@ -51,19 +51,12 @@ class ApplicationSerializer(serializers.ModelSerializer):
         read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'storage_state', 'login_error')
 
     def get_bug_count(self, obj):
-        # Count unique bugs associated with all test runs of this application's test cases
-        import re
-        queryset = Bug.objects.filter(test_run__test_case__app=obj)
-        seen = set()
-        unique_count = 0
-        for bug in queryset:
-            endpoint_id = bug.api_endpoint_id if bug.api_endpoint_id else 0
-            norm_title = re.sub(r'Step \d+ Failed', 'Step Failed', bug.title)
-            key = (norm_title, endpoint_id, bug.severity)
-            if key not in seen:
-                seen.add(key)
-                unique_count += 1
-        return unique_count
+        # B6 FIX: Use a simple DB count instead of iterating every bug in Python.
+        # The full dedup logic is still available in BugViewSet.list() for the
+        # detailed view; here we just need a fast count for the app list.
+        return Bug.objects.filter(
+            test_run__test_case__app=obj
+        ).values('title', 'severity').distinct().count()
 
     def validate(self, attrs):
         url = attrs.get('url')

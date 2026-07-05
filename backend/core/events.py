@@ -33,7 +33,8 @@ class RealTimeEventView(View):
             )
 
         def event_generator():
-            r = redis.Redis.from_url(settings.CELERY_BROKER_URL, socket_timeout=None)
+            from qa_engine.redis_client import get_redis_client
+            r = get_redis_client()
             pubsub = r.pubsub()
             pubsub.subscribe('qa_platform_events')
             

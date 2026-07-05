@@ -11,11 +11,11 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-# OPTIMIZED: Reuse a single Redis client connection pool instead of opening a connection on every signal
-REDIS_CLIENT = redis.Redis.from_url(settings.CELERY_BROKER_URL)
+# OPTIMIZED: Use the central Redis client factory that enforces RESP2 protocol.
+from qa_engine.redis_client import get_redis_client as _get_redis_client
 
 def get_redis_client():
-    return REDIS_CLIENT
+    return _get_redis_client()
 
 def get_user_id_for_instance(instance):
     """

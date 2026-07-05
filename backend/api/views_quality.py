@@ -319,15 +319,22 @@ class QualityDashboardView(viewsets.ViewSet):
             
             # Get all quality data
             quality_metrics = QualityMetrics.objects.filter(application=app).first()
-            latest_coverage = CoverageReport.objects.filter(application=app).latest('created_at') if CoverageReport.objects.filter(application=app).exists() else None
+            # I8 FIX: Single query instead of .exists() + .latest() (was 2 queries)
+            latest_coverage = CoverageReport.objects.filter(
+                application=app
+            ).order_by('-created_at').first()
             flakiness_reports = FlakinessReport.objects.filter(application=app)
             bug_validations = BugValidation.objects.filter(application=app)
             test_validations = TestValidation.objects.filter(application=app)
             
             # API catalog & health calculations
             from core.models import APIEndpoint, TestRun
+            from django.db.models import Count
             from tasks.discovery import get_url_pattern
-            api_endpoints = APIEndpoint.objects.filter(application=app)
+            # I8 FIX: Annotate bug_count in DB instead of N+1 loop
+            api_endpoints = APIEndpoint.objects.filter(
+                application=app
+            ).annotate(bug_count=Count('bugs'))
             
             # Extract latency from latest successful run metadata
             latest_run = TestRun.objects.filter(
@@ -347,13 +354,12 @@ class QualityDashboardView(viewsets.ViewSet):
             
             api_list = []
             for api in api_endpoints:
-                bug_count = api.bugs.count()
                 pat = api.url_pattern
                 api_list.append({
                     'id': api.id,
                     'method': api.method,
                     'url_pattern': pat,
-                    'bug_count': bug_count,
+                    'bug_count': api.bug_count,  # from annotation
                     'avg_latency': int(avg_latencies.get(pat, 0)),
                     'auth_type': api.auth_type
                 })

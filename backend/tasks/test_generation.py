@@ -10,36 +10,10 @@ from services.llm_service import LLMService
 logger = logging.getLogger(__name__)
 
 
-# FIX: use the same run_in_thread helper used by execution.py and discovery.py
-# to avoid SynchronousOnlyOperation errors and DB connection leaks inside Celery.
+# OPTIMIZED: run directly on the worker thread. Spawning threads and closing
+# connections on every call was defeating CONN_MAX_AGE=60 connection pooling.
 def run_in_thread(func, *args, **kwargs):
-    """
-    Runs a function in a separate thread to bypass Django's
-    SynchronousOnlyOperation check.  Closes the DB connection afterwards
-    to prevent connection leaks.
-    """
-    res = []
-    err = []
-
-    def target():
-        from django.db import connection
-        try:
-            result = func(*args, **kwargs)
-            # FIX: use a sentinel so None-returning functions don't leave res empty
-            res.append(result)
-        except Exception as e:
-            err.append(e)
-        finally:
-            connection.close()
-
-    thread = threading.Thread(target=target)
-    thread.start()
-    thread.join()
-
-    if err:
-        raise err[0]
-    # res[0] may legitimately be None for save()/delete() calls — that's fine
-    return res[0] if res else None
+    return func(*args, **kwargs)
 
 
 @shared_task(bind=True, name="tasks.test_generation.generate_tests")

@@ -201,16 +201,21 @@ def analyze_coverage(self, application_id):
         # Get test cases
         test_cases = TestCase.objects.filter(app=app)
         
+        # Pre-parse test cases steps to avoid N^2 JSON deserialization inside loop
+        parsed_test_steps = []
+        for test in test_cases:
+            steps = test.steps or []
+            if isinstance(steps, str):
+                try:
+                    steps = json.loads(steps)
+                except Exception:
+                    steps = []
+            parsed_test_steps.append(steps)
+        
         # Determine tested pages by analyzing test cases
         tested_page_ids = set()
         for page in all_pages:
-            for test in test_cases:
-                steps = test.steps or []
-                if isinstance(steps, str):
-                    try:
-                        steps = json.loads(steps)
-                    except:
-                        steps = []
+            for steps in parsed_test_steps:
                 for step in steps:
                     val = step.get('value', '') or step.get('target', '') or step.get('url', '')
                     if val and (page.url in val or val in page.url):

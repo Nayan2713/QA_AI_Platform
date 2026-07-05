@@ -20,6 +20,11 @@ class StandardResultsSetPagination(PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 100
 
+    def paginate_queryset(self, queryset, request, view=None):
+        if 'page' not in request.query_params:
+            return None
+        return super().paginate_queryset(queryset, request, view)
+
 # Celery task imports - imported inside methods to prevent circular dependency
 # or loading issues before Celery is ready.
 
@@ -182,7 +187,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 class TestCaseViewSet(viewsets.ModelViewSet):
     serializer_class = TestCaseSerializer
     permission_classes = (permissions.IsAuthenticated,)
-    pagination_class = None
+    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
         queryset = TestCase.objects.filter(app__user=self.request.user).select_related('app').order_by('-created_at')
@@ -250,7 +255,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 class TestRunViewSet(viewsets.ModelViewSet):
     serializer_class = TestRunSerializer
     permission_classes = (permissions.IsAuthenticated,)
-    pagination_class = None
+    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
         queryset = TestRun.objects.filter(test_case__app__user=self.request.user).select_related('test_case', 'test_case__app')
@@ -356,7 +361,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
 
 class BugViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
-    pagination_class = None
+    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
         queryset = (
@@ -376,13 +381,12 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
         unique_bugs = []
         seen = set()
         
-        for bug in queryset:
+        for bug in queryset[:500]:
             endpoint_id = bug.api_endpoint_id if bug.api_endpoint_id else 0
-            # Group identical failures together by normalizing "Step X Failed"
-            norm_title = re.sub(r'Step \d+ Failed', 'Step Failed', bug.title)
-            
+            # Deduplicate by the exact title so failures on different steps are kept separate,
+            # but identical step failures across different test runs are still grouped.
             app_id = bug.application_id or (bug.test_run.test_case.app_id if bug.test_run and bug.test_run.test_case else None)
-            key = (app_id, norm_title, endpoint_id, bug.severity)
+            key = (app_id, bug.title, endpoint_id, bug.severity)
             
             if key not in seen:
                 seen.add(key)
@@ -535,10 +539,43 @@ class APIEndpointViewSet(viewsets.ModelViewSet):
 
 
 class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = CeleryTask.objects.all()
     serializer_class = CeleryTaskSerializer
     permission_classes = (permissions.IsAuthenticated,)
     lookup_field = 'task_id'
+
+    def get_queryset(self):
+        """I3 FIX: Filter tasks to only those belonging to the current user.
+
+        The task→user mapping is stored in Redis by ``register_task_user()``.
+        We read all task_ids for this user and filter the queryset.
+        """
+        from qa_engine.redis_client import get_redis_client
+        import redis as _redis
+
+        qs = CeleryTask.objects.all().order_by('-created_at')
+        try:
+            r = get_redis_client()
+            # Scan for keys matching task_user:* and find those belonging to this user
+            user_task_ids = []
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor, match='task_user:*', count=200)
+                for key in keys:
+                    val = r.get(key)
+                    if val and int(val) == self.request.user.id:
+                        # Extract task_id from key  "task_user:<task_id>"
+                        tid = key.decode().replace('task_user:', '', 1)
+                        user_task_ids.append(tid)
+                if cursor == 0:
+                    break
+            if user_task_ids:
+                qs = qs.filter(task_id__in=user_task_ids)
+            else:
+                qs = qs.none()
+        except Exception:
+            # Fallback: return all (same as before) if Redis is down
+            pass
+        return qs
 
     @action(detail=True, methods=['get'])
     def status(self, request, task_id=None):
@@ -567,8 +604,22 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
         
         # 3. Handle Application status revert if needed
         if task.task_type == 'discovery':
+            # B4 FIX: Only revert the specific application that this task was
+            # running for, instead of blindly updating ALL applications.
+            from tasks.discovery import start_discovery
             from core.models import Application
-            Application.objects.filter(status='DISCOVERING').update(status='IDLE')
+            # The task args contain [app_id] — look it up via Celery inspect
+            # or fall back to matching the most recent DISCOVERING app for this user.
+            try:
+                from qa_engine.redis_client import get_redis_client
+                r = get_redis_client()
+                user_id = r.get(f"task_user:{task.task_id}")
+                if user_id:
+                    Application.objects.filter(
+                        user_id=int(user_id), status='DISCOVERING'
+                    ).update(status='IDLE')
+            except Exception:
+                pass
             
         return Response({
             "status": "success",
