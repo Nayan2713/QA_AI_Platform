@@ -144,6 +144,7 @@ def generate_tests(self, app_id, model_choice=None):
                         steps=tc["steps"],
                         expected_result=tc["expected_result"],
                         ai_generated=was_ai,
+                        category=tc.get("category", "Generic"),
                         generation_context={
                             **pages_data,
                             "model_used": resolved_model

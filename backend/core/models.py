@@ -105,6 +105,7 @@ class TestCase(models.Model):
     steps = models.JSONField(default=list)  # [{"action": "...", "selector": "...", "value": "..."}]
     expected_result = models.TextField()
     ai_generated = models.BooleanField(default=True)
+    category = models.CharField(max_length=32, default="Generic")
     validation_status = models.CharField(
         max_length=20,
         choices=TestCaseValidationStatus.choices,

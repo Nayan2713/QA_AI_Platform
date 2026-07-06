@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { TestCase } from '../lib/types';
 
-const getTestCategory = (title: string): 'Access Control' | 'Industry Flow' | 'Generic' => {
+const getTestCategory = (tc: TestCase): 'Access Control' | 'Industry Flow' | 'Generic' => {
+  if (tc.category) {
+    return tc.category;
+  }
+  const title = tc.title;
   if (title.startsWith('[Access Control]')) {
     return 'Access Control';
   }
@@ -584,7 +588,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
             {(() => {
               const filtered = testCases.filter(tc => {
                 if (categoryFilter === 'All') return true;
-                return getTestCategory(tc.title) === categoryFilter;
+                return getTestCategory(tc) === categoryFilter;
               });
 
               if (filtered.length === 0) {
@@ -597,7 +601,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
 
               return filtered.map((tc) => {
                 const tcValResults = validationResults[tc.id];
-                const category = getTestCategory(tc.title);
+                const category = getTestCategory(tc);
                 return (
                   <div key={tc.id} className="test-case-item">
                     <div className="test-case-main-info">

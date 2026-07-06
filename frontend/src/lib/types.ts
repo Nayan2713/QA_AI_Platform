@@ -70,6 +70,7 @@ export interface TestCase {
   id: number;
   app: number;
   title: string;
+  category?: 'Generic' | 'Industry Flow' | 'Access Control';
   steps: TestStep[];
   expected_result: string;
   ai_generated: boolean;

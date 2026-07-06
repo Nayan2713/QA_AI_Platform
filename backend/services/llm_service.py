@@ -184,6 +184,7 @@ Start with {{ and end with }}.
   "test_cases": [
     {{
       "title": "Descriptive title including HTTP method and endpoint name, or the critical industry journey name",
+      "category": "Generic|Industry Flow|Access Control (defaults to Generic)",
       "steps": [
         {{
           "action": "navigate|fill|click|wait|assert|hover|scroll|select|screenshot",
@@ -240,6 +241,17 @@ Start with {{ and end with }}.
                 title = tc.get("title", f"AI Generated Test {idx + 1}")
                 steps = tc.get("steps", [])
                 expected = tc.get("expected_result", "Test completes successfully")
+                category = tc.get("category", "Generic")
+                if category not in ["Generic", "Industry Flow", "Access Control"]:
+                    category = "Generic"
+
+                # Light guard: reject fabricated API tests
+                title_lower = title.lower()
+                starts_verify_http = any(title_lower.startswith(f"verify {m}") for m in ["get", "post", "put", "delete"])
+                contains_api_indicator = any(ind in title_lower for ind in ["/api/", "/_/", "/backend/", "cdn-cgi"])
+                if starts_verify_http and contains_api_indicator:
+                    logger.info(f"LLM Parser: Discarding fabricated API test: {title}")
+                    continue
 
                 clean_steps = []
                 for step in steps:
@@ -248,6 +260,13 @@ Start with {{ and end with }}.
                         "navigate", "fill", "click", "wait", "assert",
                         "hover", "scroll", "select", "screenshot"
                     ]:
+                        if action == "assert":
+                            val = step.get("value", "")
+                            val_cleaned = str(val).strip().lower()
+                            if not val_cleaned or val_cleaned in ["data", "content", "result", "success", "h", "page"]:
+                                # Drop meaningless assertion step
+                                continue
+
                         clean_steps.append({
                             "action": action,
                             "selector": step.get("selector", ""),
@@ -255,12 +274,17 @@ Start with {{ and end with }}.
                             "value": step.get("value", "")
                         })
 
-                if clean_steps:
-                    validated.append({
-                        "title": title,
-                        "steps": clean_steps,
-                        "expected_result": expected
-                    })
+                # A test that asserts nothing has no value; discard if no remaining asserts
+                if not any(s["action"] == "assert" for s in clean_steps):
+                    logger.info(f"LLM Parser: Discarding test case with no valid assertions: {title}")
+                    continue
+
+                validated.append({
+                    "title": title,
+                    "steps": clean_steps,
+                    "expected_result": expected,
+                    "category": category
+                })
 
             logger.info(f"Parsed {len(validated)} test cases from LLM response.")
             return validated, industry
@@ -421,10 +445,19 @@ Start with {{ and end with }}.
         if not pages_data:
             return None
         keywords_lower = [k.lower() for k in keywords]
+        exclusions = ["policy", "policies", "terms", "privacy", "legal", "grievance", "faq", "help", "about", "blog", "-agreement"]
+        
         for page in pages_data.get("pages", []):
             url = page.get("url", "")
             title = page.get("title", "")
-            if any(k in url.lower() or k in title.lower() for k in keywords_lower):
+            url_lower = url.lower()
+            title_lower = title.lower()
+            
+            # Exclude informational/policy pages
+            if any(ex in url_lower or ex in title_lower for ex in exclusions):
+                continue
+                
+            if any(k in url_lower or k in title_lower for k in keywords_lower):
                 return page
         return None
 
@@ -614,6 +647,7 @@ Start with {{ and end with }}.
                 count += 1
 
         # ---- SECTION 4: Industry Flows ----
+        pre_section_4_count = len(test_cases)
         if industry == "E-commerce":
             # Flow 1: Add to cart -> checkout -> payment -> confirmation
             if self._site_has(pages_data, ["cart", "checkout", "buy", "add to cart"]):
@@ -1234,6 +1268,17 @@ Start with {{ and end with }}.
                     ],
                     "expected_result": f"{method} {url_pattern} is reachable and returns expected response."
                 })
+
+        # Tag fallback test categories
+        for idx, tc in enumerate(test_cases):
+            if idx >= pre_section_4_count:
+                title = tc.get("title", "")
+                if title.startswith("[Access Control]"):
+                    tc["category"] = "Access Control"
+                else:
+                    tc["category"] = "Industry Flow"
+            else:
+                tc["category"] = "Generic"
 
         logger.info(
             f"Fallback generator: {len(test_cases)} test cases, "

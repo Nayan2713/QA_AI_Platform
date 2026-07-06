@@ -383,6 +383,7 @@ class BrowserDiscoveryService:
 
             context = await browser.new_context(**context_kwargs)
             page = await context.new_page()
+            page.on("dialog", lambda dialog: asyncio.create_task(dialog.dismiss()))
 
             # Shared API log state
             api_logs = []
@@ -398,6 +399,32 @@ class BrowserDiscoveryService:
 
             async def capture_network_api(response):
                 try:
+                    url = response.url
+                    # 1. Third-party domain check
+                    if not self.is_same_domain(url, start_url, login_url):
+                        return
+
+                    # 2. Static asset suffix check
+                    parsed_url = urlparse(url)
+                    path_lower = parsed_url.path.lower()
+                    static_extensions = (
+                        ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", 
+                        ".ico", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".mp3", ".mp4", 
+                        ".wav", ".json", ".map", ".wasm"
+                    )
+                    if path_lower.endswith(static_extensions):
+                        return
+
+                    # 3. Static/asset host/path keyword check
+                    url_lower = url.lower()
+                    noise_keywords = [
+                        "web-assets", "/_next/", "/static/", "/assets/", "cdn-cgi", "/cdn/", 
+                        "fonts.", "analytics", "/rum", "/beacon", "gtag", "googletagmanager", 
+                        "doubleclick", "segment.", "sentry", "hotjar"
+                    ]
+                    if any(kw in url_lower for kw in noise_keywords):
+                        return
+
                     resource_type = response.request.resource_type
                     if resource_type in ['xhr', 'fetch']:
                         start_time = request_timestamps.get(response.url)
@@ -405,7 +432,7 @@ class BrowserDiscoveryService:
 
                         body_text = ""
                         try:
-                            raw_bytes = await response.body()
+                            raw_bytes = await asyncio.wait_for(response.body(), timeout=2.0)
                             if raw_bytes:
                                 # FIX: Always decompress gzip BEFORE checking content-type.
                                 # Original code only decompressed when content-type contained
@@ -604,6 +631,7 @@ class BrowserDiscoveryService:
                 nonlocal active_workers
                 logger.info(f"Starting crawl worker {worker_id}")
                 worker_page = await context.new_page()
+                worker_page.on("dialog", lambda dialog: asyncio.create_task(dialog.dismiss()))
                 worker_page.on("request", capture_network_request)
                 worker_page.on("response", capture_network_api)
 
