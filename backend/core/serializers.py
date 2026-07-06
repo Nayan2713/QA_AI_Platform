@@ -58,6 +58,19 @@ class ApplicationSerializer(serializers.ModelSerializer):
             test_run__test_case__app=obj
         ).values('title', 'severity').distinct().count()
 
+
+class ApplicationListSerializer(ApplicationSerializer):
+    class Meta:
+        model = Application
+        fields = (
+            'id', 'user', 'url', 'base_url', 'login_url', 
+            'username', 'status', 'discovery_source', 
+            'login_status', 'login_error', 'industry', 'page_count', 
+            'api_count', 'test_case_count', 'bug_count', 'created_at'
+        )
+        read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'login_error')
+
+
     def validate(self, attrs):
         url = attrs.get('url')
         if url:

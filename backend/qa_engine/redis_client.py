@@ -58,7 +58,4 @@ def get_redis_client(url: str | None = None) -> redis.Redis:
         else:
             _pool = redis.ConnectionPool.from_url(target_url)
 
-    if is_redis_v5:
-        return redis.Redis(connection_pool=_pool, protocol=2)
-    else:
-        return redis.Redis(connection_pool=_pool)
+    return redis.Redis(connection_pool=_pool)

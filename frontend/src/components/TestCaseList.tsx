@@ -2,6 +2,41 @@ import React, { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { TestCase } from '../lib/types';
 
+const getTestCategory = (title: string): 'Access Control' | 'Industry Flow' | 'Generic' => {
+  if (title.startsWith('[Access Control]')) {
+    return 'Access Control';
+  }
+  const titleLower = title.toLowerCase();
+  const isIndustryJourney = 
+    title.includes('→') ||
+    titleLower.includes('add to cart') ||
+    titleLower.includes('cart total') ||
+    titleLower.includes('empty-cart') ||
+    titleLower.includes('out-of-stock') ||
+    titleLower.includes('discount code') ||
+    titleLower.includes('2fa') ||
+    titleLower.includes('balance display') ||
+    titleLower.includes('insufficient funds') ||
+    titleLower.includes('transaction history') ||
+    titleLower.includes('timeout') ||
+    titleLower.includes('appointment booking') ||
+    titleLower.includes('medical form') ||
+    titleLower.includes('job application') ||
+    titleLower.includes('resume upload') ||
+    titleLower.includes('candidate status') ||
+    titleLower.includes('duplicate-application') ||
+    titleLower.includes('leave request') ||
+    titleLower.includes('payroll') ||
+    titleLower.includes('user invite') ||
+    titleLower.includes('settings persistence') ||
+    titleLower.includes('subscription');
+    
+  if (isIndustryJourney) {
+    return 'Industry Flow';
+  }
+  return 'Generic';
+};
+
 interface TestCaseListProps {
   appId: number;
   testCases: TestCase[];
@@ -28,6 +63,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [selectedModel, setSelectedModel] = useState('auto');
+  const [categoryFilter, setCategoryFilter] = useState<'All' | 'Generic' | 'Industry Flow' | 'Access Control'>('All');
 
   // Suite Progress Tracking State
   const [suiteRuns, setSuiteRuns] = useState<Array<{ id: number, testCaseId: number, title: string, status: string }>>([]);
@@ -362,6 +398,40 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       {error && <div className="error-alert">{error}</div>}
       {successMsg && <div className="success-alert">{successMsg}</div>}
 
+      {/* Filter Row */}
+      {testCases.length > 0 && (
+        <div className="test-cases-filter-row" style={{
+          display: 'flex',
+          gap: '8px',
+          padding: '0 20px 16px 20px',
+          alignItems: 'center',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+          marginBottom: '16px'
+        }}>
+          <span style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.6)', marginRight: '8px', fontWeight: 600 }}>Filter Category:</span>
+          {(['All', 'Generic', 'Industry Flow', 'Access Control'] as const).map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setCategoryFilter(cat)}
+              style={{
+                backgroundColor: categoryFilter === cat ? '#3b82f6' : 'rgba(255,255,255,0.05)',
+                color: '#ffffff',
+                border: '1px solid rgba(255,255,255,0.1)',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                fontWeight: '600',
+                transition: 'all 0.2s',
+                outline: 'none'
+              }}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
+
       {(() => {
         const completedCount = suiteRuns.filter(r => r.status === 'COMPLETED' || r.status === 'FAILED').length;
         const remainingCount = suiteRuns.length - completedCount;
@@ -511,18 +581,59 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       ) : (
         <div className="test-cases-table-container">
           <div className="test-cases-list">
-            {testCases.map((tc) => {
-              const tcValResults = validationResults[tc.id];
-              return (
-                <div key={tc.id} className="test-case-item">
-                  <div className="test-case-main-info">
-                    <div className="test-case-title-row" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <h5 style={{ margin: 0 }}>{tc.title}</h5>
-                      <span className={`badge-ai ${tc.ai_generated ? 'badge-ai-model' : 'badge-ai-fallback'}`}>
-                        {tc.ai_generated ? `🤖 AI Generated (${tc.model_used || 'Local LLM'})` : '📋 Fallback Template'}
-                      </span>
-                      {getValidationBadge(tc.validation_status)}
-                    </div>
+            {(() => {
+              const filtered = testCases.filter(tc => {
+                if (categoryFilter === 'All') return true;
+                return getTestCategory(tc.title) === categoryFilter;
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="empty-state" style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', gridColumn: 'span 2', width: '100%' }}>
+                    No test cases match the selected filter "{categoryFilter}".
+                  </div>
+                );
+              }
+
+              return filtered.map((tc) => {
+                const tcValResults = validationResults[tc.id];
+                const category = getTestCategory(tc.title);
+                return (
+                  <div key={tc.id} className="test-case-item">
+                    <div className="test-case-main-info">
+                      <div className="test-case-title-row" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <h5 style={{ margin: 0 }}>{tc.title}</h5>
+                        {category === 'Access Control' && (
+                          <span className="badge-validation access-control" style={{
+                            backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                            color: '#ef4444',
+                            border: '1px solid rgba(239, 68, 68, 0.3)',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: '600'
+                          }}>
+                            Access Control
+                          </span>
+                        )}
+                        {category === 'Industry Flow' && (
+                          <span className="badge-validation industry-flow" style={{
+                            backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                            color: '#60a5fa',
+                            border: '1px solid rgba(59, 130, 246, 0.3)',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: '600'
+                          }}>
+                            Industry Flow
+                          </span>
+                        )}
+                        <span className={`badge-ai ${tc.ai_generated ? 'badge-ai-model' : 'badge-ai-fallback'}`}>
+                          {tc.ai_generated ? `🤖 AI Generated (${tc.model_used || 'Local LLM'})` : '📋 Fallback Template'}
+                        </span>
+                        {getValidationBadge(tc.validation_status)}
+                      </div>
                     
                     <div className="test-steps-block" style={{ marginTop: '16px' }}>
                       <h6>Steps:</h6>
@@ -634,7 +745,8 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
                   </div>
                 </div>
               );
-            })}
+            })
+          })()}
           </div>
         </div>
       )}

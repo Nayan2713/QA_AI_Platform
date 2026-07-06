@@ -13,6 +13,7 @@ cryptography>=41.0.0,<43.0
 # Note: browser-use is installed locally in the venv. Installing it from PyPI causes version conflicts
 # with langchain-openai because PyPI's browser-use 0.13.1 strictly pins openai==2.16.0.
 # If re-installing from scratch, install browser-use separately using: pip install browser-use==0.13.1 --no-deps
-# browser-use>=0.13.1
+browser-use>=0.13.1
 langchain-ollama>=1.1.0
 langchain-openai>=1.3.3
+psycopg2-binary>=2.9.0

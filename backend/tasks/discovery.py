@@ -358,6 +358,8 @@ def start_discovery(self, app_id):
             storage_state_data = run_in_thread(lambda: app.storage_state)
 
             def on_crawler_progress(current_url, pages_count):
+                if not Application.objects.filter(id=app_id).exists():
+                    raise Exception("Application was deleted. Terminating crawl.")
                 def update_progress():
                     task_record.progress = min(40 + pages_count * 4, 90)
                     task_record.result = {
@@ -382,6 +384,9 @@ def start_discovery(self, app_id):
             login_error_val = result.get("login_error")
 
             def set_browser_source():
+                if not Application.objects.filter(id=app_id).exists():
+                    logger.info("Application was deleted during crawl. Skipping state save.")
+                    return
                 app.discovery_source = 'browser'
                 if app.login_url:
                     app.login_status = 'SUCCESS' if login_successful else 'FAILED'
@@ -394,11 +399,12 @@ def start_discovery(self, app_id):
         except Exception as e:
             logger.error(f"Playwright browser discovery failed: {e}")
             def handle_crawl_error():
-                app.status = 'FAILED'
-                if app.login_url:
-                    app.login_status = 'FAILED'
-                    app.login_error = f"Discovery run exception: {str(e)}"
-                app.save()
+                if Application.objects.filter(id=app_id).exists():
+                    app.status = 'FAILED'
+                    if app.login_url:
+                        app.login_status = 'FAILED'
+                        app.login_error = f"Discovery run exception: {str(e)}"
+                    app.save()
                 task_record.status = 'failed'
                 task_record.error = str(e)
                 task_record.completed_at = timezone.now()
@@ -413,6 +419,9 @@ def start_discovery(self, app_id):
     # ------------------------------------------------------------------
     try:
         def save_discovered_pages():
+            if not Application.objects.filter(id=app_id).exists():
+                logger.info("Application was deleted before saving pages.")
+                return
             with transaction.atomic():
                 # Clear stale records
                 Page.objects.filter(app=app).delete()
@@ -466,8 +475,9 @@ def start_discovery(self, app_id):
     except Exception as e:
         logger.error(f"Failed to save pages to DB: {e}")
         def handle_db_error():
-            app.status = 'FAILED'
-            app.save(update_fields=['status'])
+            if Application.objects.filter(id=app_id).exists():
+                app.status = 'FAILED'
+                app.save(update_fields=['status'])
             task_record.status = 'failed'
             task_record.error = str(e)
             task_record.completed_at = timezone.now()

@@ -369,6 +369,14 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             <span className="metric-tag">🔗 {app.api_count} APIs Discovered</span>
             <span className="metric-tag">📋 {app.test_case_count} Test Cases</span>
             <span className="metric-tag bug-metric">🐞 {app.bug_count} Bugs Detected</span>
+            <span className="metric-tag industry-tag" style={{
+              borderColor: (!app.industry || app.industry === 'General') ? 'rgba(156, 163, 175, 0.4)' : 'rgba(99, 102, 241, 0.4)',
+              color: (!app.industry || app.industry === 'General') ? '#d1d5db' : '#a5b4fc',
+              backgroundColor: (!app.industry || app.industry === 'General') ? 'rgba(156, 163, 175, 0.1)' : 'rgba(99, 102, 241, 0.1)',
+              fontWeight: 600
+            }}>
+              🏭 Industry: {app.industry || 'General'}
+            </span>
             {app.login_url && (
               <span className={`metric-tag login-status-tag ${
                 app.login_status === 'SUCCESS' ? 'login-success' : 

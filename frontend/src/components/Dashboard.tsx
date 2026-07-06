@@ -28,6 +28,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
     }
   };
 
+  const fetchTimeoutRef = React.useRef<any>(null);
+  const fetchApplicationsRef = React.useRef(fetchApplications);
+  useEffect(() => {
+    fetchApplicationsRef.current = fetchApplications;
+  });
+
+  const fetchApplicationsDebounced = React.useCallback(() => {
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
+    }
+    fetchTimeoutRef.current = setTimeout(() => {
+      fetchApplicationsRef.current();
+    }, 1500);
+  }, []);
+
   useEffect(() => {
     fetchApplications();
 
@@ -47,10 +62,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
         
         if (
           type.startsWith('application_') ||
-          type.startsWith('bug_') ||
-          type.startsWith('celerytask_')
+          type.startsWith('bug_')
         ) {
-          fetchApplications();
+          fetchApplicationsDebounced();
         }
       } catch (err) {
         console.error('Failed to parse SSE event on dashboard:', err);
@@ -59,6 +73,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
 
     return () => {
       eventSource.close();
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -183,7 +200,42 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
               </div>
               
               <div className="app-card-footer">
-                <span className="app-card-status">Status: <strong>{app.status}</strong></span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span className="app-card-status">Status: <strong>{app.status}</strong></span>
+                  {(() => {
+                    const ind = app.industry ? app.industry.trim() : "";
+                    if (!ind || ind === "General") {
+                      return (
+                        <span className="industry-badge industry-general" style={{
+                          padding: '2px 6px',
+                          borderRadius: '12px',
+                          fontSize: '0.7rem',
+                          fontWeight: 600,
+                          backgroundColor: 'rgba(148, 163, 184, 0.15)',
+                          color: '#94a3b8',
+                          border: '1px solid rgba(148, 163, 184, 0.3)',
+                          display: 'inline-block'
+                        }}>
+                          General
+                        </span>
+                      );
+                    }
+                    return (
+                      <span className="industry-badge" style={{
+                        padding: '2px 6px',
+                        borderRadius: '12px',
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                        backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                        color: '#a5b4fc',
+                        border: '1px solid rgba(99, 102, 241, 0.3)',
+                        display: 'inline-block'
+                      }}>
+                        {ind}
+                      </span>
+                    );
+                  })()}
+                </div>
                 <span className="btn-view-details">Configure →</span>
               </div>
             </div>

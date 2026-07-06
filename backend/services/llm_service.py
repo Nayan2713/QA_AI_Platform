@@ -114,11 +114,19 @@ class LLMService:
         Instructs the LLM to generate ONE test case per API endpoint so that
         74 APIs → 74+ test cases instead of the old 3-5 generic ones.
         """
+        try:
+            pages_data = json.loads(pages_context)
+            detected_industry = self._classify_industry(pages_data)
+        except Exception:
+            detected_industry = "General"
+
         return f"""You are an expert QA Automation Engineer specialising in API-driven web application testing.
 Your task is to analyse discovered pages and API endpoints and generate a COMPREHENSIVE test suite that covers EVERY API endpoint found.
 
 Here is the full application context (pages, forms, buttons, API endpoints):
 {pages_context}
+
+Detected Industry: {detected_industry}
 
 === SUPPORTED STEP ACTIONS ===
 1. "navigate"   - go to URL.            Keys: "target" (url). selector="" value="".
@@ -157,15 +165,25 @@ RULE 5 — USE REAL SELECTORS ONLY from the "forms" and "buttons" data. Never in
 
 RULE 6 — INDUSTRY: Classify as "E-commerce", "SaaS", "FinTech", "Healthcare", "HR", "Recruitment", or "General".
 
+RULE 7 — INDUSTRY SPECIFIC JOURNEYS:
+Prioritize generating the critical journeys for the detected industry ({detected_industry}), on top of the generic test cases:
+- E-commerce: Add to cart, checkout, payment, empty-cart checkout, out-of-stock handling, discount coupon.
+- FinTech/Banking: 2FA challenge, balance display, transfers with insufficient funds, transaction history, session timeout.
+- Healthcare: Appointment booking/cancellation, patient record access control (High Importance, prefix title with [Access Control]), medical form validation.
+- Recruitment: Job application submission, resume upload limits, candidate status transition, duplicate application prevention.
+- HR: Leave request and approval, payroll display, attendance edit permissions (prefix title with [Access Control]).
+- SaaS: User invite, role-permission boundaries (prefix title with [Access Control]), settings persistence, subscription billing state.
+Only generate these flows if their required elements are actually present/referenced in the context. Use the same JSON step format.
+
 === OUTPUT FORMAT ===
 Return ONLY valid JSON. No markdown, no explanation, no ```json fences.
 Start with {{ and end with }}.
 
 {{
-  "industry": "...",
+  "industry": "{detected_industry}",
   "test_cases": [
     {{
-      "title": "Descriptive title including HTTP method and endpoint name",
+      "title": "Descriptive title including HTTP method and endpoint name, or the critical industry journey name",
       "steps": [
         {{
           "action": "navigate|fill|click|wait|assert|hover|scroll|select|screenshot",
@@ -375,6 +393,83 @@ Start with {{ and end with }}.
 
         return first_page
 
+    def _site_has(self, pages_data, keywords):
+        if not keywords or not pages_data:
+            return False
+        keywords_lower = [k.lower() for k in keywords]
+        
+        for page in pages_data.get("pages", []):
+            url = page.get("url", "")
+            title = page.get("title", "")
+            if any(k in url.lower() for k in keywords_lower):
+                return True
+            if any(k in title.lower() for k in keywords_lower):
+                return True
+            for btn in page.get("buttons", []):
+                btn_text = btn.get("text", "")
+                if any(k in btn_text.lower() for k in keywords_lower):
+                    return True
+                    
+        for api in pages_data.get("api_endpoints", []):
+            url_pattern = api.get("url_pattern", "")
+            if any(k in url_pattern.lower() for k in keywords_lower):
+                return True
+                
+        return False
+
+    def _find_page(self, pages_data, keywords):
+        if not pages_data:
+            return None
+        keywords_lower = [k.lower() for k in keywords]
+        for page in pages_data.get("pages", []):
+            url = page.get("url", "")
+            title = page.get("title", "")
+            if any(k in url.lower() or k in title.lower() for k in keywords_lower):
+                return page
+        return None
+
+    def _find_button_on_page(self, page, keywords):
+        if not page:
+            return None
+        keywords_lower = [k.lower() for k in keywords]
+        for btn in page.get("buttons", []):
+            btn_text = btn.get("text", "")
+            if any(k in btn_text.lower() for k in keywords_lower):
+                return btn.get("selector")
+        return None
+
+    def _find_button_anywhere(self, pages_data, keywords):
+        if not pages_data:
+            return None, None
+        keywords_lower = [k.lower() for k in keywords]
+        for page in pages_data.get("pages", []):
+            sel = self._find_button_on_page(page, keywords)
+            if sel:
+                return sel, page.get("url", "")
+        return None, None
+
+    def _find_form_field_on_page(self, page, keywords):
+        if not page:
+            return None
+        keywords_lower = [k.lower() for k in keywords]
+        for form in page.get("forms", []):
+            for field in form.get("fields", []):
+                name = field.get("name", "")
+                fid = field.get("id", "")
+                if any(k in name.lower() or k in fid.lower() for k in keywords_lower):
+                    return f"#{fid}" if fid else f"input[name='{name}']"
+        return None
+
+    def _find_form_field_anywhere(self, pages_data, keywords):
+        if not pages_data:
+            return None, None
+        keywords_lower = [k.lower() for k in keywords]
+        for page in pages_data.get("pages", []):
+            sel = self._find_form_field_on_page(page, keywords)
+            if sel:
+                return sel, page.get("url", "")
+        return None, None
+
     # ------------------------------------------------------------------ #
     # Deterministic fallback generator                                     #
     # ------------------------------------------------------------------ #
@@ -518,7 +613,439 @@ Start with {{ and end with }}.
                 })
                 count += 1
 
-        # ---- SECTION 4: One test per API endpoint ----
+        # ---- SECTION 4: Industry Flows ----
+        if industry == "E-commerce":
+            # Flow 1: Add to cart -> checkout -> payment -> confirmation
+            if self._site_has(pages_data, ["cart", "checkout", "buy", "add to cart"]):
+                add_to_cart_sel, add_page = self._find_button_anywhere(pages_data, ["add to cart", "add to bag", "buy now", "purchase"])
+                checkout_sel, _ = self._find_button_anywhere(pages_data, ["checkout", "cart", "bag", "basket", "go to checkout"])
+                pay_sel, _ = self._find_button_anywhere(pages_data, ["pay", "purchase", "order", "place order", "submit"])
+                if add_to_cart_sel and checkout_sel and pay_sel and add_page:
+                    test_cases.append({
+                        "title": "Verify Add to Cart and Checkout Journey",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": add_page, "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": add_to_cart_sel, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "500"},
+                            {"action": "click", "selector": checkout_sel, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": pay_sel, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "confirm"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "order_confirmation"},
+                        ],
+                        "expected_result": "Item is successfully added to the cart, payment details submitted, and order confirmation is displayed."
+                    })
+            
+            # Flow 2: Cart total correctness
+            if self._site_has(pages_data, ["cart", "total", "price"]):
+                cart_page = self._find_page(pages_data, ["cart", "checkout", "basket", "bag"])
+                if cart_page:
+                    test_cases.append({
+                        "title": "Verify Cart Total Correctness",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": cart_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "total"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "cart_total_display"},
+                        ],
+                        "expected_result": "The cart totals area is present and displays a value correctly."
+                    })
+                    
+            # Flow 3: Empty-cart checkout
+            if self._site_has(pages_data, ["checkout", "cart"]):
+                cart_page = self._find_page(pages_data, ["cart", "checkout", "basket", "bag"])
+                checkout_sel, _ = self._find_button_anywhere(pages_data, ["checkout", "pay", "buy"])
+                if cart_page and checkout_sel:
+                    test_cases.append({
+                        "title": "Verify Empty-Cart Checkout Handling",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": cart_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": checkout_sel, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "500"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "empty"},
+                        ],
+                        "expected_result": "Attempting checkout with an empty cart is blocked and displays empty message."
+                    })
+                    
+            # Flow 4: Out-of-stock handling
+            if self._site_has(pages_data, ["stock", "sold out", "unavailable", "product"]):
+                prod_page = self._find_page(pages_data, ["sold-out", "soldout", "unavailable", "out-of-stock"])
+                btn_sel, btn_page = self._find_button_anywhere(pages_data, ["sold out", "unavailable", "out of stock"])
+                target_url = btn_page or (prod_page["url"] if prod_page else None)
+                if target_url:
+                    test_cases.append({
+                        "title": "Verify Out-of-Stock Product Handling",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": target_url, "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "unavailable"},
+                        ],
+                        "expected_result": "Out of stock or unavailable product status is correctly shown and cannot be added to cart."
+                    })
+                    
+            # Flow 5: Discount code
+            if self._site_has(pages_data, ["coupon", "promo", "discount", "code"]):
+                coupon_field, field_page = self._find_form_field_anywhere(pages_data, ["coupon", "promo", "discount", "code"])
+                apply_btn_sel, _ = self._find_button_anywhere(pages_data, ["apply", "submit", "promo", "coupon", "code"])
+                if coupon_field and apply_btn_sel and field_page:
+                    test_cases.append({
+                        "title": "Verify Discount Code Application",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": field_page, "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "fill", "selector": coupon_field, "target": "", "value": "TESTDISCOUNT"},
+                            {"action": "click", "selector": apply_btn_sel, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "discount"},
+                        ],
+                        "expected_result": "Applying discount code updates the totals or shows a validation message."
+                    })
+
+        elif industry == "FinTech":
+            # Flow 1: Login with 2FA present
+            if self._site_has(pages_data, ["login", "sign in", "otp", "2fa", "verify"]):
+                login_page = self._find_page(pages_data, ["login", "sign-in", "signin"])
+                username_field = self._find_form_field_on_page(login_page, ["email", "username", "login"])
+                password_field = self._find_form_field_on_page(login_page, ["password"])
+                login_btn = self._find_button_on_page(login_page, ["login", "sign in", "submit"])
+                if login_page and username_field and password_field and login_btn:
+                    test_cases.append({
+                        "title": "Verify Login with 2FA Challenge",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": login_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "fill", "selector": username_field, "target": "", "value": "testuser@example.com"},
+                            {"action": "fill", "selector": password_field, "target": "", "value": "Secr3tP@ss123"},
+                            {"action": "click", "selector": login_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "verify"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "2fa_challenge_screen"},
+                        ],
+                        "expected_result": "Entering correct primary login credentials prompts for the second-factor authentication step."
+                    })
+                    
+            # Flow 2: Balance display
+            if self._site_has(pages_data, ["balance", "account"]):
+                dash_page = self._find_page(pages_data, ["dashboard", "account", "balance", "portfolio"])
+                if dash_page:
+                    test_cases.append({
+                        "title": "Verify Dashboard Account Balance Display",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": dash_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "balance"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "account_balance_display"},
+                        ],
+                        "expected_result": "Account balance figure is visible and formatted correctly on the main dashboard page."
+                    })
+                    
+            # Flow 3: Transfer with insufficient funds
+            if self._site_has(pages_data, ["transfer", "send", "pay", "amount"]):
+                transfer_page = self._find_page(pages_data, ["transfer", "send", "pay", "payment"])
+                amount_field = self._find_form_field_on_page(transfer_page, ["amount", "value", "quantity"])
+                send_btn = self._find_button_on_page(transfer_page, ["transfer", "send", "pay", "submit"])
+                if transfer_page and amount_field and send_btn:
+                    test_cases.append({
+                        "title": "Verify Transfer and Payment with Insufficient Funds",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": transfer_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "fill", "selector": amount_field, "target": "", "value": "9999999"},
+                            {"action": "click", "selector": send_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "exceeds"},
+                        ],
+                        "expected_result": "Attempting to transfer or pay an amount exceeding the balance is blocked and displays insufficient funds error."
+                    })
+                    
+            # Flow 4: Transaction history integrity
+            if self._site_has(pages_data, ["transaction", "history", "statement"]):
+                history_page = self._find_page(pages_data, ["transaction", "history", "statement", "ledger"])
+                if history_page:
+                    test_cases.append({
+                        "title": "Verify Transaction History Integrity",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": history_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "transaction"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "transaction_history_display"},
+                        ],
+                        "expected_result": "Transaction history list or statement items are populated on the page."
+                    })
+                    
+            # Flow 5: Idle session timeout
+            if self._site_has(pages_data, ["login", "dashboard", "account"]):
+                dash_page = self._find_page(pages_data, ["dashboard", "account"])
+                if dash_page:
+                    test_cases.append({
+                        "title": "Verify Dashboard Session Timeout Protection",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": dash_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "dashboard"},
+                            {"action": "wait", "selector": "", "target": "", "value": "500"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "dashboard_session_state"},
+                        ],
+                        "expected_result": "Protected dashboard session behaves safely and ensures standard re-auth rules are active."
+                    })
+
+        elif industry == "Healthcare":
+            # Flow 1: Appointment booking + cancellation
+            if self._site_has(pages_data, ["appointment", "book", "schedule"]):
+                book_page = self._find_page(pages_data, ["appointment", "book", "schedule"])
+                book_btn = self._find_button_on_page(book_page, ["book", "schedule", "reserve"])
+                cancel_btn = self._find_button_on_page(book_page, ["cancel", "reschedule", "delete"])
+                if book_page and book_btn and cancel_btn:
+                    test_cases.append({
+                        "title": "Verify Appointment Booking and Cancellation Flow",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": book_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": book_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "confirmed"},
+                            {"action": "click", "selector": cancel_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "cancel"},
+                        ],
+                        "expected_result": "Appointment booking registers successfully, and cancellation correctly releases the slot."
+                    })
+                    
+            # Flow 2: Patient record access control (highest value)
+            if self._site_has(pages_data, ["patient", "record", "profile", "medical"]):
+                record_page = self._find_page(pages_data, ["patient", "record", "profile", "medical"])
+                if record_page:
+                    base_url = record_page["url"]
+                    mod_url = base_url + "99999" if base_url.endswith("/") else base_url + "/99999"
+                    test_cases.append({
+                        "title": "[Access Control] [HIGH IMPORTANCE] Verify Patient Record Access Control Boundary",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": mod_url, "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "denied"},
+                        ],
+                        "expected_result": "Accessing a patient record ID that does not belong to the logged-in user is denied/blocked."
+                    })
+                    
+            # Flow 3: Medical form validation
+            if self._site_has(pages_data, ["patient", "form", "medical", "date"]):
+                form_page = self._find_page(pages_data, ["patient", "form", "medical", "intake"])
+                date_field = self._find_form_field_on_page(form_page, ["date", "birth", "dob"])
+                submit_btn = self._find_button_on_page(form_page, ["submit", "save", "next"])
+                if form_page and date_field and submit_btn:
+                    test_cases.append({
+                        "title": "Verify Medical Form Validation on Invalid Inputs",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": form_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "fill", "selector": date_field, "target": "", "value": "9999-99-99"},
+                            {"action": "click", "selector": submit_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "invalid"},
+                        ],
+                        "expected_result": "Entering invalid data formats (like an out-of-range date) into the medical form is rejected."
+                    })
+
+        elif industry == "Recruitment":
+            # Flow 1: Job application submission
+            if self._site_has(pages_data, ["apply", "application", "job", "candidate"]):
+                job_page = self._find_page(pages_data, ["job", "apply", "career", "vacancy"])
+                apply_btn = self._find_button_on_page(job_page, ["apply", "submit", "apply now"])
+                if job_page and apply_btn:
+                    test_cases.append({
+                        "title": "Verify Job Application Submission",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": job_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": apply_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "submit"},
+                        ],
+                        "expected_result": "Submitting a job application completes successfully and displays confirmation."
+                    })
+                    
+            # Flow 2: Resume upload limits
+            if self._site_has(pages_data, ["resume", "upload", "cv", "attach"]):
+                upload_page = self._find_page(pages_data, ["upload", "resume", "cv", "apply"])
+                upload_field = self._find_form_field_on_page(upload_page, ["resume", "cv", "upload", "file"])
+                if upload_page and upload_field:
+                    test_cases.append({
+                        "title": "Verify Resume Upload Restrictions and File Limits",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": upload_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "fill", "selector": upload_field, "target": "", "value": "invalid_file_type.exe"},
+                            {"action": "wait", "selector": "", "target": "", "value": "500"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "invalid"},
+                        ],
+                        "expected_result": "Valid files are accepted while invalid file types or oversized files are rejected."
+                    })
+                    
+            # Flow 3: Candidate status transition
+            if self._site_has(pages_data, ["candidate", "status", "stage", "pipeline"]):
+                candidate_page = self._find_page(pages_data, ["candidate", "profile", "stage", "pipeline"])
+                status_btn = self._find_button_on_page(candidate_page, ["status", "stage", "move", "advance", "hire", "reject"])
+                if candidate_page and status_btn:
+                    test_cases.append({
+                        "title": "Verify Candidate Status Pipeline Transition",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": candidate_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": status_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "stage"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "candidate_stage_updated"},
+                        ],
+                        "expected_result": "Modifying a candidate's pipeline status stage persists the change correctly."
+                    })
+                    
+            # Flow 4: Duplicate-application prevention
+            if self._site_has(pages_data, ["apply", "application", "job"]):
+                job_page = self._find_page(pages_data, ["job", "apply", "career"])
+                apply_btn = self._find_button_on_page(job_page, ["apply", "submit"])
+                if job_page and apply_btn:
+                    test_cases.append({
+                        "title": "Verify Prevention of Duplicate Job Applications",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": job_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": apply_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "500"},
+                            {"action": "click", "selector": apply_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "applied"},
+                        ],
+                        "expected_result": "Submitting a second application to the same job displays a duplicate application warning."
+                    })
+
+        elif industry == "HR":
+            # Flow 1: Leave request -> approval
+            if self._site_has(pages_data, ["leave", "request", "approve", "time off"]):
+                leave_page = self._find_page(pages_data, ["leave", "request", "timeoff", "time-off"])
+                request_btn = self._find_button_on_page(leave_page, ["request", "submit", "apply"])
+                approve_btn = self._find_button_on_page(leave_page, ["approve", "accept", "confirm"])
+                if leave_page and request_btn and approve_btn:
+                    test_cases.append({
+                        "title": "Verify Leave Request Submission and Approval Journey",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": leave_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": request_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": approve_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "approved"},
+                        ],
+                        "expected_result": "Submitting a leave request is confirmed, and approval updates status to approved."
+                    })
+                    
+            # Flow 2: Payroll figure display
+            if self._site_has(pages_data, ["payroll", "salary", "pay"]):
+                payroll_page = self._find_page(pages_data, ["payroll", "salary", "payslip", "pay"])
+                if payroll_page:
+                    test_cases.append({
+                        "title": "Verify Payroll and Salary Figures Display",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": payroll_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "payroll"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "payroll_figures"},
+                        ],
+                        "expected_result": "Payroll values, payslip details, or salary figures are visible on the payroll dashboard."
+                    })
+                    
+            # Flow 3: Attendance edit permissions (Access Control)
+            if self._site_has(pages_data, ["attendance", "timesheet", "clock"]):
+                timesheet_page = self._find_page(pages_data, ["attendance", "timesheet", "clock"])
+                edit_btn = self._find_button_on_page(timesheet_page, ["edit", "modify", "update timesheet"])
+                if timesheet_page and edit_btn:
+                    test_cases.append({
+                        "title": "[Access Control] Verify Attendance/Timesheet Edit Permissions",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": timesheet_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": edit_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "unauthorized"},
+                        ],
+                        "expected_result": "Unauthorized edits to timesheets or clock-in records are blocked."
+                    })
+
+        elif industry == "SaaS":
+            # Flow 1: User invite / onboarding
+            if self._site_has(pages_data, ["invite", "member", "team", "user"]):
+                team_page = self._find_page(pages_data, ["team", "member", "user", "invite"])
+                invite_btn = self._find_button_on_page(team_page, ["invite", "add member", "add user", "send invite"])
+                if team_page and invite_btn:
+                    test_cases.append({
+                        "title": "Verify User Invite and Onboarding Flow",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": team_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": invite_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "success"},
+                        ],
+                        "expected_result": "The team member invitation flow completes and displays confirmation."
+                    })
+                    
+            # Flow 2: Role-permission boundary (Access Control)
+            if self._site_has(pages_data, ["role", "permission", "admin", "settings"]):
+                settings_page = self._find_page(pages_data, ["admin", "settings", "security", "roles"])
+                restricted_btn = self._find_button_on_page(settings_page, ["save", "update settings", "edit roles"])
+                if settings_page and restricted_btn:
+                    test_cases.append({
+                        "title": "[Access Control] Verify Role-Permission Boundaries and Restricted Actions",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": settings_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "click", "selector": restricted_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "denied"},
+                        ],
+                        "expected_result": "Restricted settings actions are blocked for low-permission contexts."
+                    })
+                    
+            # Flow 3: Settings persistence
+            if self._site_has(pages_data, ["settings", "preferences", "config"]):
+                settings_page = self._find_page(pages_data, ["settings", "preferences", "config"])
+                setting_field = self._find_form_field_on_page(settings_page, ["settings", "preferences", "name", "theme"])
+                save_btn = self._find_button_on_page(settings_page, ["save", "update", "confirm", "save settings"])
+                if settings_page and setting_field and save_btn:
+                    test_cases.append({
+                        "title": "Verify Settings Persistence After Reload",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": settings_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "fill", "selector": setting_field, "target": "", "value": "Test Setting Value"},
+                            {"action": "click", "selector": save_btn, "target": "", "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "navigate", "selector": "", "target": settings_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "Test Setting Value"},
+                        ],
+                        "expected_result": "A changed user setting persists and is correctly shown after navigating away and back."
+                    })
+                    
+            # Flow 4: Subscription / billing state
+            if self._site_has(pages_data, ["subscription", "billing", "plan", "upgrade"]):
+                billing_page = self._find_page(pages_data, ["billing", "subscription", "plan", "upgrade"])
+                if billing_page:
+                    test_cases.append({
+                        "title": "Verify Subscription and Billing State Display",
+                        "steps": [
+                            {"action": "navigate", "selector": "", "target": billing_page["url"], "value": ""},
+                            {"action": "wait", "selector": "", "target": "", "value": "800"},
+                            {"action": "assert", "selector": "body", "target": "", "value": "billing"},
+                            {"action": "screenshot", "selector": "", "target": "", "value": "billing_plan_state"},
+                        ],
+                        "expected_result": "The active plan and subscription/billing state is correctly displayed."
+                    })
+
+        # ---- SECTION 5: One test per API endpoint ----
         seen_patterns = set()
 
         for api in api_endpoints:
