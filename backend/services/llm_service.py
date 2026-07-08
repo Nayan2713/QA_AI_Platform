@@ -49,6 +49,7 @@ class LLMService:
                 for page in pages_data.get("pages", [])
             ],
             "api_endpoints": pages_data.get("api_endpoints", []),
+            "industry": pages_data.get("industry")
         }
         pages_context = json.dumps(trimmed, indent=2)
 
@@ -63,6 +64,7 @@ class LLMService:
             slim = {
                 "pages": [{"url": p.get("url"), "title": p.get("title")} for p in trimmed["pages"]],
                 "api_endpoints": trimmed["api_endpoints"],
+                "industry": trimmed.get("industry")
             }
             pages_context = json.dumps(slim, indent=2)
 
@@ -116,7 +118,7 @@ class LLMService:
         """
         try:
             pages_data = json.loads(pages_context)
-            detected_industry = self._classify_industry(pages_data)
+            detected_industry = pages_data.get("industry") or self._classify_industry(pages_data)
         except Exception:
             detected_industry = "General"
 

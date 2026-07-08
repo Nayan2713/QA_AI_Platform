@@ -15,8 +15,8 @@ class RealTimeEventView(View):
         token_str = request.GET.get('token')
         if not token_str:
             return StreamingHttpResponse(
-                iter([f"data: {json.dumps({'type': 'error', 'message': 'Authentication token is required'})}\n\n"]),
-                status=401,
+                iter([f"data: {json.dumps({'type': 'auth_error', 'message': 'Authentication token is required'})}\n\n"]),
+                status=200,
                 content_type='text/event-stream'
             )
             
@@ -27,8 +27,8 @@ class RealTimeEventView(View):
         except Exception as e:
             logger.warning(f"SSE authentication failed: {e}")
             return StreamingHttpResponse(
-                iter([f"data: {json.dumps({'type': 'error', 'message': 'Invalid token'})}\n\n"]),
-                status=401,
+                iter([f"data: {json.dumps({'type': 'auth_error', 'message': 'Invalid token'})}\n\n"]),
+                status=200,
                 content_type='text/event-stream'
             )
 

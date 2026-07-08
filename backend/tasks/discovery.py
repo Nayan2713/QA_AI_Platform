@@ -437,7 +437,10 @@ def start_discovery(self, app_id):
                         buttons=page_info.get("buttons", []),
                         page_type=page_info.get("page_type"),
                         elements=page_info.get("elements", {}),
-                        workflows=page_info.get("workflows", [])
+                        workflows=page_info.get("workflows", []),
+                        accessibility_roles=page_info.get("accessibility_roles", []),
+                        connections=page_info.get("connections", []),
+                        semantic_metadata=page_info.get("semantic_metadata", {})
                     )
                     for page_info in pages_data
                     if page_info.get("url")

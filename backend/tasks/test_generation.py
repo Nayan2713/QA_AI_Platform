@@ -100,7 +100,11 @@ def generate_tests(self, app_id, model_choice=None):
             for api in api_endpoints
         ]
 
-        pages_data = {"pages": pages_list, "api_endpoints": api_list}
+        pages_data = {
+            "pages": pages_list,
+            "api_endpoints": api_list,
+            "industry": app.industry
+        }
 
         def update_progress_50():
             task_record.progress = 50

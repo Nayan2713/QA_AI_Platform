@@ -12,6 +12,7 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
   const [loginUrl, setLoginUrl] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [industry, setIndustry] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -31,12 +32,14 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
         login_url: loginUrl || null,
         username: username || null,
         password: password || null,
+        industry: industry || null,
       });
       onAppCreated(response.data);
       setUrl('');
       setLoginUrl('');
       setUsername('');
       setPassword('');
+      setIndustry('');
     } catch (err: any) {
       console.error(err);
       const backendError = err.response?.data;
@@ -85,6 +88,26 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
             className="form-input"
           />
           <span className="input-tip">The landing page or base URL of the site you want to test.</span>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="industry">Industry / Domain (Optional)</label>
+          <select
+            id="industry"
+            value={industry}
+            onChange={(e) => setIndustry(e.target.value)}
+            className="form-input"
+            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }}
+          >
+            <option value="">Auto-Detect (AI)</option>
+            <option value="E-commerce">E-Commerce</option>
+            <option value="FinTech">FinTech / Banking</option>
+            <option value="Healthcare">Healthcare</option>
+            <option value="SaaS">SaaS / B2B</option>
+            <option value="Recruitment">HR / Recruitment</option>
+            <option value="Real Estate">Real Estate</option>
+          </select>
+          <span className="input-tip">Guides the AI to prioritize specific workflows (e.g. Shopping Cart for E-Commerce).</span>
         </div>
 
         <fieldset className="form-fieldset">

@@ -93,6 +93,9 @@ class Page(models.Model):
     page_type = models.CharField(max_length=64, blank=True, null=True)
     elements = models.JSONField(default=dict, blank=True, null=True)
     workflows = models.JSONField(default=list, blank=True, null=True)
+    accessibility_roles = models.JSONField(default=list, blank=True, null=True)
+    connections = models.JSONField(default=list, blank=True, null=True)
+    semantic_metadata = models.JSONField(default=dict, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

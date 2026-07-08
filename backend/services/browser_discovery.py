@@ -45,6 +45,12 @@ class BrowserDiscoveryService:
             except Exception as goto_err:
                 logger.warning(f"Navigation to login page had an issue/timeout: {goto_err}. Trying to proceed anyway...")
 
+            # Wait for common login elements to render before querying them
+            try:
+                await page.wait_for_selector("input[type='password'], input[name='password']", state="visible", timeout=6000)
+            except Exception:
+                pass
+
             username_selectors = [
                 "input[name='username']", "input[name='email']", "input[name='user']",
                 "input[name='login']", "input[name='identifier']",
@@ -613,10 +619,10 @@ class BrowserDiscoveryService:
             initial_url = post_login_url if (logged_in and post_login_url) else start_url
             
             # Workers start directly on initial_url so they run click events and extract all forms/menus
-            await to_visit_queue.put(initial_url)
+            await to_visit_queue.put((initial_url, "start_url"))
             for url in to_visit:
                 if url != initial_url:
-                    await to_visit_queue.put(url)
+                    await to_visit_queue.put((url, post_login_url if logged_in else start_url))
 
             visited_urls = self.visited_urls
             visited_lock = asyncio.Lock()       # NEW: lock for safe concurrent access
@@ -637,7 +643,8 @@ class BrowserDiscoveryService:
 
                 while len(pages_list) < self.max_pages:
                     try:
-                        current_url = await asyncio.wait_for(to_visit_queue.get(), timeout=1.0)
+                        queue_item = await asyncio.wait_for(to_visit_queue.get(), timeout=1.0)
+                        current_url, parent_url = queue_item
                     except asyncio.TimeoutError:
                         async with active_workers_lock:
                             if active_workers == 0:
@@ -654,7 +661,7 @@ class BrowserDiscoveryService:
                     async with active_workers_lock:
                         active_workers += 1
 
-                    logger.info(f"Worker {worker_id} visiting: {current_url}")
+                    logger.info(f"Worker {worker_id} visiting: {current_url} (discovered from {parent_url})")
 
                     if on_progress:
                         try:
@@ -736,7 +743,7 @@ class BrowserDiscoveryService:
                                         async with visited_lock:
                                             already = norm_url in visited_urls
                                         if not already:
-                                            await to_visit_queue.put(norm_url)
+                                            await to_visit_queue.put((norm_url, current_url))
                             except Exception:
                                 continue
 
@@ -768,7 +775,7 @@ class BrowserDiscoveryService:
                                                 already = norm_new in visited_urls
                                             if not already:
                                                 logger.info(f"Worker {worker_id} found new route via click: {norm_new}")
-                                                await to_visit_queue.put(norm_new)
+                                                await to_visit_queue.put((norm_new, current_url))
 
                                         # Navigate back so we can click other menu items
                                         await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
@@ -777,7 +784,20 @@ class BrowserDiscoveryService:
                                 continue
 
                     except Exception as e:
-                        logger.error(f"Worker {worker_id} failed on {current_url}: {e}")
+                        try:
+                            final_url = worker_page.url
+                        except Exception:
+                            final_url = current_url
+                            
+                        if final_url and not self.is_same_domain(final_url, start_url, login_url):
+                            logger.warning(
+                                f"Worker {worker_id} navigation to {current_url} (discovered from {parent_url}) "
+                                f"was redirected to external domain: {final_url}. Skipping."
+                            )
+                        else:
+                            logger.error(
+                                f"Worker {worker_id} failed on {current_url} (discovered from {parent_url}): {e}"
+                            )
                     finally:
                         async with active_workers_lock:
                             active_workers -= 1
