@@ -118,7 +118,7 @@ class LLMService:
         """
         try:
             pages_data = json.loads(pages_context)
-            detected_industry = pages_data.get("industry") or self._classify_industry(pages_data)
+            detected_industry = pages_data.get("industry") or ", ".join(self._classify_industries(pages_data))
         except Exception:
             detected_industry = "General"
 

@@ -177,7 +177,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     setError('');
     setSuccessMsg('');
     try {
-      const response = await api.post('test-runs/execute/', { test_case_id: testCaseId });
+      const response = await api.post('test-runs/execute/', { test_case_id: testCaseId, model_choice: selectedModel });
       setSuccessMsg(`Test run execution started successfully.`);
       if (response.data.test_run_id) {
         onTestExecuted(response.data.test_run_id, response.data.task_id);
@@ -251,7 +251,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     try {
       setSuccessMsg(`Queueing execution for all ${testCases.length} tests...`);
       const testCaseIds = testCases.map(tc => tc.id);
-      const response = await api.post('test-runs/execute_batch/', { test_case_ids: testCaseIds });
+      const response = await api.post('test-runs/execute_batch/', { test_case_ids: testCaseIds, model_choice: selectedModel });
       
       const runs = response.data.runs.map((r: any) => {
         const tc = testCases.find(t => t.id === r.test_case_id);

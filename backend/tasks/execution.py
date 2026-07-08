@@ -193,9 +193,9 @@ def ensure_authenticated(page, context, app) -> bool:
 
 
 @shared_task(bind=True, name="tasks.execution.execute_test", queue="execution")
-def execute_test(self, test_run_id):
+def execute_test(self, test_run_id, model_choice=None):
 
-    logger.info(f"Starting test execution task for TestRun ID: {test_run_id}")
+    logger.info(f"Starting test execution task for TestRun ID: {test_run_id} with model_choice: {model_choice}")
     task_id = self.request.id or "dummy_task_id"
 
     def get_or_create_task():
@@ -234,7 +234,7 @@ def execute_test(self, test_run_id):
         engine = TestClassifier.classify_test_case(test_case)
 
         if engine == 'BROWSER_USE':
-            return _run_browser_use_test(test_run, test_case, app, task_record)
+            return _run_browser_use_test(test_run, test_case, app, task_record, model_choice)
 
         # ─── Mark run as RUNNING and clear old results ───
         def init_test_run():
@@ -671,13 +671,13 @@ def execute_test(self, test_run_id):
     }
 
 
-def _run_browser_use_test(test_run, test_case, app, task_record):
+def _run_browser_use_test(test_run, test_case, app, task_record, model_choice=None):
     """Extracted BROWSER_USE path — unchanged logic, just moved here."""
     from services.browser_use_agent import BrowserUseAgent
     from tasks.discovery import run_async
 
     def run_agentic():
-        agent = BrowserUseAgent()
+        agent = BrowserUseAgent(model_choice=model_choice)
         credentials = {"username": app.username, "password": app.password} if app.username else None
         task_record.progress = 40
         task_record.result = {"status_text": "AI agent executing test case..."}

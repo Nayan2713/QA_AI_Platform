@@ -13,8 +13,8 @@ from core.models import AgentSession, Page, Bug, Application
 logger = logging.getLogger(__name__)
 
 class BrowserUseAgent:
-    def __init__(self):
-        self.llm = get_llm()
+    def __init__(self, model_choice=None):
+        self.llm = get_llm(model_choice=model_choice)
 
     async def log_session(self, application, task_type, status, steps_taken, result_summary, start_time, tokens=0):
         """Helper to create and save an AgentSession record in the DB"""

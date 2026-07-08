@@ -130,7 +130,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             )
             from .signals import register_task_user
             register_task_user(task_id, request.user.id)
-            execute_test.apply_async(args=[test_run.id], task_id=task_id)
+            model_choice = request.data.get('model_choice')
+            execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id)
             task_ids.append(task_id)
             test_run_ids.append(test_run.id)
             
@@ -276,6 +277,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def execute(self, request):
         test_case_id = request.data.get('test_case_id')
+        model_choice = request.data.get('model_choice')
         if not test_case_id:
             return Response({"error": "test_case_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -305,7 +307,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
 
         # Trigger Celery Task
         from tasks.execution import execute_test
-        task = execute_test.apply_async(args=[test_run.id], task_id=task_id)
+        task = execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id)
         
         return Response({
             "status": "Execution started",
@@ -316,6 +318,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def execute_batch(self, request):
         test_case_ids = request.data.get('test_case_ids', [])
+        model_choice = request.data.get('model_choice')
         if not test_case_ids:
             return Response({"error": "test_case_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -342,7 +345,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
                 register_task_user(task_id, request.user.id)
                 
                 from tasks.execution import execute_test
-                execute_test.apply_async(args=[test_run.id], task_id=task_id)
+                execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id)
                 
                 runs.append({
                     "test_run_id": test_run.id,

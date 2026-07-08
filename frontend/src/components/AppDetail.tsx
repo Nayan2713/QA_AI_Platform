@@ -674,7 +674,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                 currentTask.task_type === 'discovery' ? (
                   `Discovery complete! Found ${currentTask.result?.pages_discovered || 0} pages and cataloged ${currentTask.result?.apis_cataloged || 0} APIs.`
                 ) : currentTask.task_type === 'test_generation' ? (
-                  `Test generation complete! Created ${currentTask.result?.tests_generated || 0} test cases.`
+                  `Test generation complete! Created ${currentTask.result?.tests_generated || 0} test cases using ${currentTask.result?.model_used || 'Fallback Templates'}.`
                 ) : currentTask.task_type === 'execution' ? (
                   `Execution complete! ${currentTask.result?.passed_steps || 0}/${currentTask.result?.total_steps || 0} steps passed.`
                 ) : (
