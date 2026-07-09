@@ -329,6 +329,24 @@ def start_discovery(self, app_id):
                 result = response.json()
                 pages_data = result.get("pages", [])
 
+                # Run parallel AI summarization on pages returned by MCP
+                from services.llm_service import LLMService
+                llm = LLMService()
+
+                def summarize_single_page(p):
+                    if not p.get("forms") and not p.get("buttons"):
+                        p["ai_summary"] = "Empty page with no interactive elements."
+                        return
+                    try:
+                        p["ai_summary"] = llm.summarize_page(p) or ""
+                    except Exception as ex:
+                        logger.error(f"MCP page summarization error: {ex}")
+                        p["ai_summary"] = ""
+
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    executor.map(summarize_single_page, pages_data)
+
                 def set_mcp_source():
                     app.discovery_source = 'mcp'
                     app.save(update_fields=['discovery_source'])
@@ -440,7 +458,8 @@ def start_discovery(self, app_id):
                         workflows=page_info.get("workflows", []),
                         accessibility_roles=page_info.get("accessibility_roles", []),
                         connections=page_info.get("connections", []),
-                        semantic_metadata=page_info.get("semantic_metadata", {})
+                        semantic_metadata=page_info.get("semantic_metadata", {}),
+                        ai_summary=page_info.get("ai_summary", "")
                     )
                     for page_info in pages_data
                     if page_info.get("url")

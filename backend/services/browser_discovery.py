@@ -346,6 +346,27 @@ class BrowserDiscoveryService:
                 continue
         return parsed_apis
 
+    async def _summarize_page_async(self, page_info):
+        try:
+            # Skip if there are no forms and buttons on the page
+            if not page_info.get("forms") and not page_info.get("buttons"):
+                page_info["ai_summary"] = "Empty page with no interactive elements."
+                return
+
+            logger.info(f"Triggering background AI summarization for {page_info['url']}...")
+            from services.llm_service import LLMService
+            llm = LLMService()
+            loop = asyncio.get_running_loop()
+            summary = await loop.run_in_executor(None, llm.summarize_page, page_info)
+            if summary:
+                page_info["ai_summary"] = summary
+                logger.info(f"AI Summary generated for {page_info['url']}")
+            else:
+                page_info["ai_summary"] = ""
+                logger.warning(f"Failed to generate AI summary for {page_info['url']}")
+        except Exception as e:
+            logger.error(f"Error in background AI summarization for {page_info['url']}: {e}")
+
     async def discover(self, start_url, login_url=None, username=None, password=None, storage_state=None, on_progress=None):
         """
         High-performance concurrent async page crawler sharing session contexts.
@@ -626,6 +647,7 @@ class BrowserDiscoveryService:
 
             visited_urls = self.visited_urls
             visited_lock = asyncio.Lock()       # NEW: lock for safe concurrent access
+            ai_tasks = []                       # NEW: track background AI summarization tasks
 
             if login_url:
                 visited_urls.add(login_url)
@@ -721,15 +743,21 @@ class BrowserDiscoveryService:
                         elif any(kw in combined for kw in ["contact", "support", "help", "faq"]):
                             page_type = "contact"
 
-                        pages_list.append({
+                        page_info = {
                             "url": current_url,
                             "title": title,
                             "forms": forms,
                             "buttons": buttons,
                             "page_type": page_type,
                             "elements": {},
-                            "workflows": []
-                        })
+                            "workflows": [],
+                            "ai_summary": ""
+                        }
+                        pages_list.append(page_info)
+
+                        # Start background AI summarization in parallel
+                        ai_task = asyncio.create_task(self._summarize_page_async(page_info))
+                        ai_tasks.append(ai_task)
 
                         # Enqueue new links found on this page
                         links = await worker_page.locator("a").all()
@@ -814,6 +842,11 @@ class BrowserDiscoveryService:
             if openapi_apis:
                 async with api_logs_lock:
                     api_logs.extend(openapi_apis)
+
+            # Wait for all background AI summarization tasks to complete before concluding discovery
+            if ai_tasks:
+                logger.info(f"Waiting for {len(ai_tasks)} background page summarization tasks to complete...")
+                await asyncio.gather(*ai_tasks, return_exceptions=True)
 
             # Save final storage state (only if login was successful)
             captured_storage = None

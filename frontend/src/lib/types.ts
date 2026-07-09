@@ -66,17 +66,30 @@ export interface TestStep {
   value: string;
 }
 
+// export interface TestCase {
+//   id: number;
+//   app: number;
+//   title: string;
+//   category?: 'Generic' | 'Industry Flow' | 'Access Control';
+//   steps: TestStep[];
+//   expected_result: string;
+//   ai_generated: boolean;
+//   validation_status: 'DRAFT' | 'VERIFIED' | 'BROKEN';
+//   model_used?: string;
+//   created_at: string;
+// }
+
 export interface TestCase {
-  id: number;
+  id?: number;
   app: number;
   title: string;
   category?: 'Generic' | 'Industry Flow' | 'Access Control';
   steps: TestStep[];
   expected_result: string;
   ai_generated: boolean;
-  validation_status: 'DRAFT' | 'VERIFIED' | 'BROKEN';
+  validation_status?: 'DRAFT' | 'VERIFIED' | 'BROKEN';
   model_used?: string;
-  created_at: string;
+  created_at?: string;
 }
 
 export interface TestResult {

@@ -228,6 +228,7 @@ def detect_bugs(test_run_id):
                     result.screenshot, prefix=f"bug_run{test_run_id}_step{step_num}"
                 ) if result.screenshot and result.screenshot != 'None' else None
                 Bug.objects.create(
+                    application=test_run.test_case.app,
                     test_run=test_run,
                     title=title,
                     description=description,

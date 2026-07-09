@@ -96,7 +96,8 @@ celery -A qa_engine worker -l info
 celery -A qa_engine worker -l info -P solo
 celery -A qa_engine worker -l info -P threads --concurrency=8
 
-celery -A qa_engine worker -l info -P threads --concurrency=3 -Q discovery,execution,quality,celery
+celery -A qa_engine worker -l info -P threads --concurrency=6 -Q discovery,execution,quality,celery
+
 
 #stop the celery 
 

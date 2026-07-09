@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { TestCase } from '../lib/types';
+import { TestCaseFormModal } from './TestCaseFormModal';
 
 const getTestCategory = (tc: TestCase): 'Access Control' | 'Industry Flow' | 'Generic' => {
   if (tc.category) {
@@ -69,6 +70,10 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   const [selectedModel, setSelectedModel] = useState('auto');
   const [categoryFilter, setCategoryFilter] = useState<'All' | 'Generic' | 'Industry Flow' | 'Access Control'>('All');
 
+  // Manual Test Case Management
+  const [showModal, setShowModal] = useState(false);
+  const [editingTestCase, setEditingTestCase] = useState<TestCase | null>(null);
+
   // Suite Progress Tracking State
   const [suiteRuns, setSuiteRuns] = useState<Array<{ id: number, testCaseId: number, title: string, status: string }>>([]);
   const [suiteRunStartTime, setSuiteRunStartTime] = useState<number | null>(null);
@@ -106,16 +111,32 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     if (!hasUnfinished) return;
 
     let isMounted = true;
-    const intervalId = setInterval(async () => {
-      try {
-        const res = await api.get('test-runs/');
-        if (!isMounted) return;
+    let pollCount = 0;
+    const MAX_POLLS = 300; // Stop polling after 10 minutes (300 * 2 sec)
 
-        const latestRuns = res.data;
-        const updatedRuns = suiteRuns.map(r => {
-          const match = latestRuns.find((lr: any) => lr.id === r.id);
-          return match ? { ...r, status: match.status } : r;
-        });
+    const intervalId = setInterval(async () => {
+      if (!isMounted || pollCount >= MAX_POLLS) {
+        clearInterval(intervalId);
+        return;
+      }
+      pollCount++;
+
+      try {
+        let updatedRuns;
+        if (suiteRuns.length === 1) {
+          const runId = suiteRuns[0].id;
+          const res = await api.get<{ status: string }>(`test-runs/${runId}/status/`);
+          if (!isMounted) return;
+          updatedRuns = [{ ...suiteRuns[0], status: res.data.status }];
+        } else {
+          const res = await api.get('test-runs/');
+          if (!isMounted) return;
+          const latestRuns = res.data;
+          updatedRuns = suiteRuns.map(r => {
+            const match = latestRuns.find((lr: any) => lr.id === r.id);
+            return match ? { ...r, status: match.status } : r;
+          });
+        }
 
         const hasChanges = updatedRuns.some((r, i) => r.status !== suiteRuns[i].status);
         if (hasChanges) {
@@ -127,6 +148,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
         }
       } catch (err) {
         console.error('Error polling suite runs:', err);
+        clearInterval(intervalId);
       }
     }, 2000);
 
@@ -275,6 +297,28 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     }
   };
 
+  const handleAddManual = () => {
+    setEditingTestCase(null);
+    setShowModal(true);
+  };
+
+  const handleEdit = (tc: TestCase) => {
+    setEditingTestCase(tc);
+    setShowModal(true);
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!window.confirm('Are you sure you want to delete this test case?')) return;
+    try {
+      await api.delete(`test-cases/${id}/`);
+      setSuccessMsg('Test case deleted successfully.');
+      onRefreshTests();
+    } catch (err: any) {
+      console.error(err);
+      setError('Failed to delete test case.');
+    }
+  };
+
   const getValidationBadge = (status: string) => {
     switch (status) {
       case 'VERIFIED':
@@ -318,6 +362,24 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
           <p className="card-subtitle">Complete test plans constructed from discovered page structures</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
+          <button 
+            onClick={handleAddManual} 
+            className="btn-secondary"
+            style={{
+              backgroundColor: 'rgba(59, 130, 246, 0.1)',
+              color: '#3b82f6',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              padding: '10px 16px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            ➕ Add Manual Test
+          </button>
           {testCases.length > 0 && (
             <button 
               onClick={handleRunAllTests} 
@@ -444,12 +506,9 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
 
         let estRemainingSeconds = 0;
         if (remainingCount > 0) {
-          if (completedCount > 0) {
-            const avgSecondsPerTest = elapsedSeconds / completedCount;
-            estRemainingSeconds = Math.round(avgSecondsPerTest * remainingCount);
-          } else {
-            estRemainingSeconds = remainingCount * 15;
-          }
+          // Assume a base duration of 45 seconds per test case
+          const baseSecsPerTest = 45;
+          estRemainingSeconds = Math.max(remainingCount * 5, (totalCount * baseSecsPerTest) - elapsedSeconds);
         }
 
         return showSuiteProgress && suiteRuns.length > 0 ? (
@@ -746,6 +805,42 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
                         {fixingIds[tc.id] ? 'Fixing...' : '🔧 Auto-Fix'}
                       </button>
                     )}
+                    
+                    <button 
+                      onClick={() => handleEdit(tc)} 
+                      disabled={!!activeTaskId}
+                      className="btn-secondary"
+                      style={{ 
+                        width: '150px',
+                        padding: '6px 12px',
+                        fontSize: '0.85rem',
+                        backgroundColor: 'transparent',
+                        color: '#60a5fa',
+                        border: '1px solid rgba(96, 165, 250, 0.3)',
+                        borderRadius: '6px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ✏️ Edit
+                    </button>
+
+                    <button 
+                      onClick={() => handleDelete(tc.id)} 
+                      disabled={!!activeTaskId}
+                      className="btn-secondary"
+                      style={{ 
+                        width: '150px',
+                        padding: '6px 12px',
+                        fontSize: '0.85rem',
+                        backgroundColor: 'transparent',
+                        color: '#ef4444',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        borderRadius: '6px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🗑️ Delete
+                    </button>
                   </div>
                 </div>
               );
@@ -753,6 +848,19 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
           })()}
           </div>
         </div>
+      )}
+
+      {showModal && (
+        <TestCaseFormModal
+          appId={appId}
+          testCase={editingTestCase}
+          onClose={() => setShowModal(false)}
+          onSuccess={() => {
+            setShowModal(false);
+            setSuccessMsg(`Test case ${editingTestCase ? 'updated' : 'created'} successfully.`);
+            onRefreshTests();
+          }}
+        />
       )}
     </div>
   );

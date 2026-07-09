@@ -96,6 +96,7 @@ class Page(models.Model):
     accessibility_roles = models.JSONField(default=list, blank=True, null=True)
     connections = models.JSONField(default=list, blank=True, null=True)
     semantic_metadata = models.JSONField(default=dict, blank=True, null=True)
+    ai_summary = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

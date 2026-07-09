@@ -111,45 +111,129 @@ class PageSerializer(serializers.ModelSerializer):
         fields = ('id', 'app', 'url', 'title', 'forms', 'buttons', 'page_type', 'elements', 'workflows', 'created_at')
 
 
+# class TestCaseSerializer(serializers.ModelSerializer):
+#     steps = serializers.JSONField()
+#     model_used = serializers.SerializerMethodField(read_only=True)
+    
+#     class Meta:
+#         model = TestCase
+#         fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'generation_context', 'created_at')
+#         read_only_fields = ('generation_context',)
+        
+#     def get_model_used(self, obj):
+#         if obj.generation_context and isinstance(obj.generation_context, dict):
+#             return obj.generation_context.get("model_used")
+#         return None
+    
+#     def validate_app(self, value):
+#         request = self.context.get('request')
+#         if request and request.user:
+#             if value.user != request.user:
+#                 raise serializers.ValidationError("You do not have permission to create test cases for this application.")
+#         return value
+
+#     def validate_steps(self, value):
+#         """Validate test case steps"""
+#         if not isinstance(value, list):
+#             raise serializers.ValidationError("Steps must be a list")
+        
+#         if len(value) == 0:
+#             raise serializers.ValidationError("At least one step required")
+        
+#         # Validate each step
+#         valid_actions = ['navigate', 'fill', 'click', 'wait', 'assert', 'hover', 'scroll', 'select', 'screenshot']
+#         for i, step in enumerate(value):
+#             if not isinstance(step, dict):
+#                 raise serializers.ValidationError(f"Step {i} must be an object")
+            
+#             action = step.get('action')
+#             if not action:
+#                 raise serializers.ValidationError(f"Step {i} missing 'action'")
+            
+#             if action not in valid_actions:
+#                 raise serializers.ValidationError(f"Step {i} has invalid action: {action}")
+                
+#             # Action specific validations
+#             if action == 'navigate':
+#                 if not step.get('target'):
+#                     raise serializers.ValidationError(f"Step {i} ('navigate') requires 'target' field")
+#             elif action in ['fill', 'select']:
+#                 if not step.get('selector'):
+#                     raise serializers.ValidationError(f"Step {i} ('{action}') requires 'selector' field")
+#                 if 'value' not in step or str(step.get('value')) == '':
+#                     raise serializers.ValidationError(f"Step {i} ('{action}') requires 'value' field")
+#             elif action in ['click', 'hover']:
+#                 if not step.get('selector'):
+#                     raise serializers.ValidationError(f"Step {i} ('{action}') requires 'selector' field")
+#             elif action in ['wait', 'assert']:
+#                 if 'value' not in step or str(step.get('value')) == '':
+#                     raise serializers.ValidationError(f"Step {i} ('{action}') requires 'value' field")
+        
+#         return value
+
 class TestCaseSerializer(serializers.ModelSerializer):
     steps = serializers.JSONField()
     model_used = serializers.SerializerMethodField(read_only=True)
-    
+
     class Meta:
         model = TestCase
         fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'generation_context', 'created_at')
         read_only_fields = ('generation_context',)
-        
+
     def get_model_used(self, obj):
         if obj.generation_context and isinstance(obj.generation_context, dict):
             return obj.generation_context.get("model_used")
         return None
-    
-    def validate_steps(self, value):
-        """Validate test case steps"""
-        if not isinstance(value, list):
-            raise serializers.ValidationError("Steps must be a list")
-        
-        if len(value) == 0:
-            raise serializers.ValidationError("At least one step required")
-        
-        # Validate each step
-        valid_actions = ['navigate', 'fill', 'click', 'wait', 'assert', 'hover', 'scroll', 'select', 'screenshot']
-        for i, step in enumerate(value):
-            if not isinstance(step, dict):
-                raise serializers.ValidationError(f"Step {i} must be an object")
-            
-            if 'action' not in step:
-                raise serializers.ValidationError(f"Step {i} missing 'action'")
-            
-            if step['action'] not in valid_actions:
-                raise serializers.ValidationError(
-                    f"Step {i} has invalid action: {step['action']}"
-                )
-        
+
+    def validate_app(self, value):
+        """Ensure the app belongs to the requesting user."""
+        request = self.context.get('request')
+        if request and value.user_id != request.user.id:
+            raise serializers.ValidationError("You do not own this application.")
         return value
 
+    def validate_steps(self, value):
+        """Validate test case steps, including action-specific required fields."""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Steps must be a list")
 
+        if len(value) == 0:
+            raise serializers.ValidationError("At least one step required")
+
+        valid_actions = ['navigate', 'fill', 'click', 'wait', 'assert', 'hover', 'scroll', 'select', 'screenshot']
+        # Which field each action requires
+        requires = {
+            'navigate': 'target',
+            'fill': 'selector',
+            'click': 'selector',
+            'hover': 'selector',
+            'select': 'selector',
+            'assert': 'value',
+        }
+
+        for i, step in enumerate(value):
+            if not isinstance(step, dict):
+                raise serializers.ValidationError(f"Step {i + 1} must be an object")
+
+            action = step.get('action')
+            if not action:
+                raise serializers.ValidationError(f"Step {i + 1} is missing 'action'")
+
+            if action not in valid_actions:
+                raise serializers.ValidationError(
+                    f"Step {i + 1} has invalid action '{action}'. "
+                    f"Allowed: {', '.join(valid_actions)}"
+                )
+
+            required_field = requires.get(action)
+            if required_field and not str(step.get(required_field, '')).strip():
+                raise serializers.ValidationError(
+                    f"Step {i + 1} ('{action}') requires a non-empty '{required_field}'."
+                )
+
+        return value
+
+        
 class TestCaseListSerializer(serializers.ModelSerializer):
     steps = serializers.JSONField()
     model_used = serializers.SerializerMethodField(read_only=True)

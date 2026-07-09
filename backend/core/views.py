@@ -207,6 +207,18 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             return TestCaseListSerializer
         return TestCaseSerializer
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['request'] = self.request
+        return ctx
+
+    def perform_create(self, serializer):
+        # Set ai_generated to False by default for manual creation
+        ai_generated = self.request.data.get('ai_generated', False)
+        # Ensure it is a boolean
+        ai_generated = str(ai_generated).lower() in ['true', '1', 't', 'y', 'yes']
+        serializer.save(ai_generated=ai_generated)
+
     @action(detail=False, methods=['post'])
     def generate(self, request):
         app_id = request.data.get('app_id')
@@ -240,6 +252,56 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             "status": "Test case generation started",
             "task_id": task_id
         }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='generate_single')
+    def generate_single(self, request):
+        app_id = request.data.get('app_id')
+        title = request.data.get('title')
+        model_choice = request.data.get('model_choice', 'auto')
+        
+        if not app_id or not title:
+            return Response({"error": "app_id and title are required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            app = Application.objects.get(id=app_id, user=request.user)
+        except Application.DoesNotExist:
+            return Response({"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+        from core.models import Page, APIEndpoint
+        
+        pages = Page.objects.filter(app=app)
+        pages_list = [
+            {"url": p.url, "title": p.title, "forms": p.forms, "buttons": p.buttons}
+            for p in pages
+        ]
+        
+        api_endpoints = APIEndpoint.objects.filter(application=app)
+        api_list = [
+            {
+                "method": api.method,
+                "url_pattern": api.url_pattern,
+                "request_schema": api.request_schema,
+                "response_schema": api.response_schema,
+                "auth_type": api.auth_type,
+            }
+            for api in api_endpoints
+        ]
+        
+        pages_data = {
+            "pages": pages_list,
+            "api_endpoints": api_list,
+            "industry": app.industry
+        }
+        
+        from services.llm_service import LLMService
+        llm_service = LLMService(model_choice=model_choice)
+        
+        test_case_data = llm_service.generate_single_test_case(pages_data, title)
+        
+        if not test_case_data:
+            return Response({"error": "Failed to generate test case"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        return Response(test_case_data)
 
     @action(detail=True, methods=['post'])
     def validate_test(self, request, pk=None):
@@ -372,14 +434,21 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
+        from django.db.models import Q
         queryset = (
-            Bug.objects.filter(test_run__test_case__app__user=self.request.user)
+            Bug.objects.filter(
+                Q(test_run__test_case__app__user=self.request.user) |
+                Q(application__user=self.request.user)
+            )
             .select_related('application', 'test_run', 'test_run__test_case', 'test_run__test_case__app')
             .order_by('-created_at')
         )
         app_id = self.request.query_params.get('app')
         if app_id:
-            queryset = queryset.filter(test_run__test_case__app_id=app_id)
+            queryset = queryset.filter(
+                Q(test_run__test_case__app_id=app_id) |
+                Q(application_id=app_id)
+            )
         return queryset
 
     def list(self, request, *args, **kwargs):

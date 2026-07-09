@@ -80,7 +80,13 @@ def generate_tests(self, app_id, model_choice=None):
         run_in_thread(update_progress_30)
 
         pages_list = [
-            {"url": p.url, "title": p.title, "forms": p.forms, "buttons": p.buttons}
+            {
+                "url": p.url,
+                "title": p.title,
+                "forms": p.forms,
+                "buttons": p.buttons,
+                "ai_summary": p.ai_summary
+            }
             for p in pages
         ]
 

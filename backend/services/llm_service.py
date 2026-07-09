@@ -38,16 +38,26 @@ class LLMService:
         Falls back to deterministic template generation if LLM is unreachable.
         Returns (test_cases, industry, was_ai_generated, resolved_model).
         """
-        # OPTIMIZED: strip the heavy 'elements' field before serialising —
-        # it can contain hundreds of DOM nodes and isn't needed for test generation.
+        # OPTIMIZED: use 'ai_summary' if present to reduce prompt size by 80-90%.
+        # Falls back to forms and buttons only if 'ai_summary' is missing.
+        trimmed_pages = []
+        for page in pages_data.get("pages", []):
+            if page.get("ai_summary"):
+                trimmed_pages.append({
+                    "url": page.get("url"),
+                    "title": page.get("title"),
+                    "ai_summary": page.get("ai_summary")
+                })
+            else:
+                trimmed_pages.append({
+                    "url": page.get("url"),
+                    "title": page.get("title"),
+                    "forms": page.get("forms", []),
+                    "buttons": page.get("buttons", [])
+                })
+
         trimmed = {
-            "pages": [
-                {
-                    k: v for k, v in page.items()
-                    if k != 'elements'
-                }
-                for page in pages_data.get("pages", [])
-            ],
+            "pages": trimmed_pages,
             "api_endpoints": pages_data.get("api_endpoints", []),
             "industry": pages_data.get("industry")
         }
@@ -107,6 +117,135 @@ class LLMService:
         logger.info(f"Deterministic fallback generated {len(fallback_cases)} test cases.")
         return fallback_cases, industry, False, "Fallback Template"
 
+    def generate_single_test_case(self, pages_data, title):
+        """
+        Attempts to generate a single test case for the given title using the configured LLM.
+        Returns a dict representing the test case or None on failure.
+        """
+        trimmed_pages = []
+        for page in pages_data.get("pages", []):
+            if page.get("ai_summary"):
+                trimmed_pages.append({
+                    "url": page.get("url"),
+                    "title": page.get("title"),
+                    "ai_summary": page.get("ai_summary")
+                })
+            else:
+                trimmed_pages.append({
+                    "url": page.get("url"),
+                    "title": page.get("title"),
+                    "forms": page.get("forms", []),
+                    "buttons": page.get("buttons", [])
+                })
+
+        trimmed = {
+            "pages": trimmed_pages,
+            "api_endpoints": pages_data.get("api_endpoints", []),
+            "industry": pages_data.get("industry")
+        }
+        pages_context = json.dumps(trimmed, indent=2)
+
+        # Guard: if context is still huge, drop page details and keep only APIs
+        from config.llm_config import estimate_tokens
+        token_estimate = estimate_tokens(pages_context)
+        if token_estimate > 6000:
+            logger.warning(
+                f"Context too large ({token_estimate} est. tokens). "
+                "Keeping only API endpoints and basic page info for prompt."
+            )
+            slim = {
+                "pages": [{"url": p.get("url"), "title": p.get("title")} for p in trimmed["pages"]],
+                "api_endpoints": trimmed["api_endpoints"],
+                "industry": trimmed.get("industry")
+            }
+            pages_context = json.dumps(slim, indent=2)
+
+        prompt = f"""You are an expert QA Automation Engineer.
+Your task is to analyze the discovered pages and API endpoints and generate ONE single test case that matches the requested title.
+
+Application Context:
+{pages_context}
+
+Requested Test Case Title: "{title}"
+
+=== SUPPORTED STEP ACTIONS ===
+1. "navigate"   - go to URL.            Keys: "target" (url). selector="" value="".
+2. "fill"       - type into input.      Keys: "selector" (CSS), "value" (text). target="".
+3. "click"      - click element.        Keys: "selector" (CSS). target="" value="".
+4. "wait"       - pause.                Keys: "value" (ms string e.g. "800"). selector="" target="".
+5. "assert"     - verify text present.  Keys: "selector" (optional CSS), "value" (expected text). target="".
+6. "hover"      - hover over element.   Keys: "selector". target="" value="".
+7. "scroll"     - scroll page/element.  Keys: "selector" (optional) or "value" (px). target="".
+8. "select"     - choose dropdown.      Keys: "selector", "value" (option label). target="".
+9. "screenshot" - capture checkpoint.   Keys: "value" (label). selector="" target="".
+
+=== RULES ===
+1. Generate exactly ONE test case.
+2. Ensure you use REAL selectors from the page data or summaries provided in the context.
+3. Wait times: use "800" for navigation/heavy loads, "500" for quick interactions.
+
+=== OUTPUT FORMAT ===
+Return ONLY valid JSON. No markdown, no explanation.
+
+{{
+  "title": "{title}",
+  "category": "Generic|Industry Flow|Access Control",
+  "steps": [
+    {{
+      "action": "navigate|fill|click|wait|assert|hover|scroll|select|screenshot",
+      "selector": "exact CSS selector or empty string",
+      "target": "full URL for navigate, else empty string",
+      "value": "text for fill/assert/wait/select/scroll, else empty string"
+    }}
+  ],
+  "expected_result": "Specific success description"
+}}
+"""
+
+        try:
+            from config.llm_config import get_llm, llm_predict
+            llm = get_llm(model_choice=self.model_choice)
+            raw_text = llm_predict(llm, prompt, model_choice=self.model_choice).strip()
+            parsed = self.parse_json_response(raw_text, require_assert=False)
+            if parsed:
+                result, _ = parsed
+                if result and len(result) > 0:
+                    return result[0]
+        except Exception as e:
+            logger.warning(f"Failed to generate single test case: {e}")
+        return None
+
+    def summarize_page(self, page_data):
+        """
+        Creates a compact semantic summary of a page's elements to reduce context size.
+        """
+        prompt = f"""You are an expert QA Automation Engineer.
+Your task is to analyze the raw DOM elements (forms and buttons) of a single page and output a highly condensed, semantic summary of its purpose and actionable elements.
+This summary will be used later to generate test cases, so you MUST retain all exact CSS selectors for inputs and buttons.
+
+Page URL: {page_data.get('url')}
+Page Title: {page_data.get('title')}
+
+Forms:
+{json.dumps(page_data.get('forms', []), indent=2)}
+
+Buttons:
+{json.dumps(page_data.get('buttons', []), indent=2)}
+
+Output a brief 1-4 sentence description of the page, followed by a bulleted list of actionable elements (inputs, dropdowns, buttons) and their EXACT CSS selectors.
+Do not output any JSON, just plain text markdown. Example:
+- Email Input: [name="email"]
+- Submit Button: button.login-btn
+"""
+        try:
+            from config.llm_config import get_llm, llm_predict
+            llm = get_llm(model_choice=self.model_choice)
+            raw_text = llm_predict(llm, prompt, model_choice=self.model_choice).strip()
+            return raw_text
+        except Exception as e:
+            logger.warning(f"Failed to summarize page: {e}")
+            return None
+
     # ------------------------------------------------------------------ #
     # LLM prompt                                                           #
     # ------------------------------------------------------------------ #
@@ -163,7 +302,7 @@ If all schema keys are error-envelope keys, derive the assert value from the URL
 
 RULE 4 — WAIT TIMES: Use "800" for page loads, "500" for interactions. Do NOT use "1500" or "2000".
 
-RULE 5 — USE REAL SELECTORS ONLY from the "forms" and "buttons" data. Never invent selectors.
+RULE 5 — USE REAL SELECTORS ONLY from the page data or summaries. Never invent selectors.
 
 RULE 6 — INDUSTRY: Classify as "E-commerce", "SaaS", "FinTech", "Healthcare", "HR", "Recruitment", or "General".
 
@@ -205,7 +344,7 @@ Start with {{ and end with }}.
     # LLM response parser                                                  #
     # ------------------------------------------------------------------ #
 
-    def parse_json_response(self, text):
+    def parse_json_response(self, text, require_assert=True):
         """
         Strips markdown fences and parses the LLM response as JSON.
         Returns (test_cases, industry) or None on failure.
@@ -234,7 +373,11 @@ Start with {{ and end with }}.
 
             if isinstance(data, dict):
                 industry = data.get("industry", "General")
-                test_cases_list = data.get("test_cases", [])
+                # If the dict is just a single test case (from generate_single)
+                if "title" in data and "steps" in data and "test_cases" not in data:
+                    test_cases_list = [data]
+                else:
+                    test_cases_list = data.get("test_cases", [])
             elif isinstance(data, list):
                 test_cases_list = data
 
@@ -277,7 +420,7 @@ Start with {{ and end with }}.
                         })
 
                 # A test that asserts nothing has no value; discard if no remaining asserts
-                if not any(s["action"] == "assert" for s in clean_steps):
+                if require_assert and not any(s["action"] == "assert" for s in clean_steps):
                     logger.info(f"LLM Parser: Discarding test case with no valid assertions: {title}")
                     continue
 
