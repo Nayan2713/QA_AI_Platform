@@ -18,8 +18,10 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 # FIX: restrict to real hostnames in production via env var
-_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
-ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
+#_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+#ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
+ALLOWED_HOSTS=['romantic-freedom-production-6579.up.railway.app']
+
 
 import logging.config
 from qa_engine.logging_config import configure_logging
@@ -155,8 +157,8 @@ AUTH_PASSWORD_VALIDATORS = [
 # FIX: enable HTTPS security headers when not in debug mode
 if not DEBUG:
     SECURE_SSL_REDIRECT = False
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
