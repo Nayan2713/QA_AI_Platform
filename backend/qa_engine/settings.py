@@ -10,6 +10,10 @@ load_dotenv(dotenv_path=BASE_DIR.parent / '.env')
 # FIX: No insecure fallback — crash loudly if SECRET_KEY is missing
 SECRET_KEY = os.environ['SECRET_KEY']
 
+
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+
 # FIX: controlled by env var; defaults to False (safe for production)
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
@@ -150,7 +154,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # FIX: enable HTTPS security headers when not in debug mode
 if not DEBUG:
-    SECURE_SSL_REDIRECT = True
+    SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 31536000
@@ -177,6 +181,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
+    "https://romantic-freedom-production-6579.up.railway.app",
 ]
 
 # Allow all origins in debug/development mode to prevent CORS issues
