@@ -1,0 +1,104 @@
+version: '29.6.1'
+
+services:
+  # --- PostgreSQL Database (Production limits) ---
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # --- Redis Cache / Broker (Production limits) ---
+  redis:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # --- Django Backend (Gunicorn Production Web Server) ---
+  backend:
+    build:
+      context: ./backend
+      target: base
+    # Gunicorn worker tuning: 2 * num_cores + 1 (usually 3 to 5 workers is optimal for low-medium traffic)
+    command: gunicorn qa_engine.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --worker-class gthread --max-requests 1000 --max-requests-jitter 50 --timeout 60
+    environment:
+      - DEBUG=False
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # --- Celery Worker (Production Limits) ---
+  celery_worker:
+    build:
+      context: ./backend
+      target: base
+    command: celery -A qa_engine worker -l info --concurrency=4
+    environment:
+      - DEBUG=False
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # --- Celery Beat (Production Limits) ---
+  celery_beat:
+    build:
+      context: ./backend
+      target: base
+    environment:
+      - DEBUG=False
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # --- React Frontend (Production Build target) ---
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # --- Nginx Ingress Reverse Proxy ---
+  nginx:
+    ports:
+      - "80:80"
+      # Uncomment if running HTTPS/SSL
+      # - "443:443"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M

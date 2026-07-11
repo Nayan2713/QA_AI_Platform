@@ -713,3 +713,51 @@ class AgentSessionViewSet(viewsets.ReadOnlyModelViewSet):
         if app_id:
             queryset = queryset.filter(application_id=app_id)
         return queryset
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def health_check(request):
+    health = {
+        'status': 'healthy',
+        'database': 'unknown',
+        'redis': 'unknown',
+        'celery': 'unknown'
+    }
+    
+    # Check Database
+    try:
+        from django.db import connection
+        connection.ensure_connection()
+        health['database'] = 'healthy'
+    except Exception as e:
+        health['database'] = f'unhealthy: {str(e)}'
+        health['status'] = 'unhealthy'
+        
+    # Check Redis
+    try:
+        from django.conf import settings
+        import redis
+        redis_url = settings.CELERY_BROKER_URL
+        client = redis.from_url(redis_url)
+        client.ping()
+        health['redis'] = 'healthy'
+    except Exception as e:
+        health['redis'] = f'unhealthy: {str(e)}'
+        health['status'] = 'unhealthy'
+        
+    # Check Celery
+    try:
+        from qa_engine.celery import app as celery_app
+        inspector = celery_app.control.inspect(timeout=0.15)
+        ping_res = inspector.ping() if inspector else None
+        if ping_res:
+            health['celery'] = 'healthy'
+        else:
+            health['celery'] = 'unhealthy: no workers found'
+    except Exception as e:
+        health['celery'] = f'unhealthy: {str(e)}'
+        
+    http_status = status.HTTP_200_OK if health['status'] == 'healthy' else status.HTTP_503_SERVICE_UNAVAILABLE
+    return Response(health, status=http_status)
+

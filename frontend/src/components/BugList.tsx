@@ -294,7 +294,7 @@ export const BugList: React.FC<BugListProps> = ({
                                       <img 
                                         src={(() => {
                                           const ss = stepResult.screenshot;
-                                          const origin = api.defaults.baseURL?.replace('/api/', '') || 'http://127.0.0.1:8000';
+                                          const origin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
                                           // Long strings are base64; short strings are file paths
                                           if (ss.length > 500) return `data:image/png;base64,${ss}`;
                                           if (ss.startsWith('http')) return ss;
@@ -376,7 +376,7 @@ export const BugList: React.FC<BugListProps> = ({
                           <img 
                             src={(() => {
                               const ss = bug.screenshot;
-                              const origin = api.defaults.baseURL?.replace('/api/', '') || 'http://127.0.0.1:8000';
+                              const origin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
                               // Already a full absolute URL (DRF returns full URL when request context is set)
                               if (ss.startsWith('http')) return ss;
                               // Starts with /media/ or / — prepend origin only

@@ -105,6 +105,8 @@ export const TestResults: React.FC<TestResultsProps> = ({
   }
 
   const isExecuting = testRun.status === 'PENDING' || testRun.status === 'RUNNING';
+  
+  const mediaOrigin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
 
   return (
     <div className="glass-card test-results-card">
@@ -154,7 +156,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
         <div className="video-playback-box" style={{ margin: '16px 0', background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px' }}>
           <h4 style={{ margin: '0 0 8px 0' }}>🎥 Execution Video Recording</h4>
           <video 
-            src={`${api.defaults.baseURL?.replace('/api/', '')}/media/${(testRun.metadata as any).video_path}`} 
+            src={`${mediaOrigin}/media/${(testRun.metadata as any).video_path}`} 
             controls 
             style={{ width: '100%', borderRadius: '6px', maxHeight: '240px', background: '#000' }}
           />
@@ -165,7 +167,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
       {(testRun.metadata as any)?.har_path && (
         <div className="har-download-box" style={{ margin: '12px 0', fontSize: '0.9rem' }}>
           📥 <a 
-            href={`${api.defaults.baseURL?.replace('/api/', '')}/media/${(testRun.metadata as any).har_path}`} 
+            href={`${mediaOrigin}/media/${(testRun.metadata as any).har_path}`} 
             download 
             style={{ color: '#60a5fa', textDecoration: 'underline', fontWeight: '500' }}
           >
@@ -277,7 +279,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
                       <button 
                         onClick={() => {
                           const ss = res.screenshot;
-                          const origin = api.defaults.baseURL?.replace('/api/', '') || 'http://127.0.0.1:8000';
+                          const origin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
                           let src: string;
                           if (ss.length > 500) {
                             src = `data:image/png;base64,${ss}`;

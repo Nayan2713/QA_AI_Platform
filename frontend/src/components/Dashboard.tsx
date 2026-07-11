@@ -49,7 +49,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
     const token = localStorage.getItem('access_token');
     if (!token) return;
 
-    const apiBase = (import.meta as any).env.VITE_API_URL || 'http://127.0.0.1:8000/api/';
+    const apiBase = (import.meta as any).env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin + '/api/' : 'http://127.0.0.1:8000/api/');
     const sseBase = apiBase.replace('/api/', '/api/events/');
     const sseUrl = `${sseBase}?token=${encodeURIComponent(token)}`;
 

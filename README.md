@@ -119,14 +119,129 @@ python manage.py shell -c "import django; django.setup(); from django.conf impor
 
 ---
 
-### Option B: Running with Docker Compose
+### Option B: Running with Docker (Recommended for Production & Unified Dev)
 
-Ensure Docker Desktop is active on your machine, then run:
-```bash
-docker-compose up --build
-```
-This launches Redis, the Django server, the Celery worker, and Vite on port 3000.
-*Note: If you run via Docker, Ollama must be exposed on your host network so the container can connect to `http://host.docker.internal:11434`.*
+This project provides a complete, production-ready multi-container Docker environment. We support two separate configurations depending on your requirements: **Development Mode** (with hot-reloading and debug ports) and **Production Mode** (with Gunicorn, Nginx reverse proxy, and resource constraints).
+
+#### 1. Prerequisites
+- **Docker** and **Docker Compose** installed (Docker Desktop for Windows/macOS).
+- Local **Ollama** running on your host (if using AI test generation) and configured to accept external connections:
+  - **macOS/Linux**: `OLLAMA_HOST=0.0.0.0 ollama serve`
+  - **Windows**: Add an Environment Variable `OLLAMA_HOST` set to `0.0.0.0`, restart Ollama, and restart your terminal.
+
+---
+
+#### 2. Configuration Setup
+1. Copy `.env.example` from the root directory to `.env` in the root:
+   ```bash
+   cp .env.example .env
+   ```
+2. Open `.env` and fill in the required variables (e.g. `SECRET_KEY`, `OPENAI_API_KEY` if using OpenAI, etc.). The defaults are pre-configured to work with the Docker Compose service names out-of-the-box.
+
+---
+
+#### 3. Development Mode (with Hot Reloading)
+This setup mounts the source directories (`./backend` and `./frontend`) into the containers, enabling live backend reload and frontend Vite hot module replacement (HMR).
+
+- **Build and Start**:
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+  ```
+- **Accessing the Application**:
+  - Main Gateway (Nginx Proxy): [http://localhost](http://localhost) (Proxies `/` to Vite dev server and `/api` to Django)
+  - Direct Frontend (Vite): [http://localhost:3000](http://localhost:3000)
+  - Direct Backend API (Django): [http://localhost:8000/admin/](http://localhost:8000/admin/)
+  - Database (Postgres): `localhost:5432`
+  - Cache/Broker (Redis): `localhost:6379`
+
+---
+
+#### 4. Production Mode (Optimized & Secure)
+This setup compiles the React frontend to highly optimized static assets served directly by Nginx. The Django API runs under Gunicorn (4 workers, 2 threads) with strict resource limits and no developer ports exposed to the host OS.
+
+- **Build and Start**:
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+  ```
+- **Accessing the Application**:
+  - The application is exposed exclusively on Port 80: [http://localhost](http://localhost)
+  - Admin Panel: [http://localhost/admin/](http://localhost/admin/)
+  - API Health Check: [http://localhost/api/health/](http://localhost/api/health/)
+
+---
+
+#### 5. Database Migrations & Administration
+- **Run migrations manually** (although they run automatically on backend web startup):
+  ```bash
+  docker compose exec backend python manage.py migrate
+  ```
+- **Create a Django Superuser**:
+  ```bash
+  docker compose exec -it backend python manage.py createsuperuser
+  ```
+
+---
+
+#### 6. Monitoring & Logging
+- **View logs for all services**:
+  ```bash
+  docker compose logs -f
+  ```
+- **View logs for a specific service (e.g. celery worker or backend)**:
+  ```bash
+  docker compose logs -f celery_worker
+  docker compose logs -f backend
+  ```
+
+---
+
+#### 7. Service Management
+- **Stop all services**:
+  ```bash
+  docker compose down
+  ```
+- **Stop and remove all volumes (WARNING: deletes DB and Redis data)**:
+  ```bash
+  docker compose down -v
+  ```
+- **Restart a single service (e.g. restart the celery worker after a task edit)**:
+  ```bash
+  docker compose restart celery_worker
+  ```
+
+---
+
+#### 8. Running Playwright & Celery Tasks
+- Playwright is fully installed with all required Linux libraries and headless Chromium in the backend container.
+- When you click "Execute" or "Discover" on the React dashboard, Celery sends the task to the Redis broker, and the `celery_worker` container launches a headless chromium browser instance to run the QA flows.
+- **Run tests manually inside the container**:
+  ```bash
+  docker compose exec backend pytest
+  ```
+
+---
+
+#### 9. Database Backup & Restore
+- **Backup database**:
+  ```bash
+  docker compose exec -t postgres pg_dumpall -c -U postgres > backup.sql
+  ```
+- **Restore database**:
+  ```bash
+  cat backup.sql | docker compose exec -T postgres psql -U postgres
+  ```
+
+---
+
+#### 10. Common Docker Troubleshooting
+- **Playwright Chromium installation check**:
+  ```bash
+  docker compose exec backend python -m playwright install --with-deps chromium
+  ```
+- **Pruning dangling images/caches** (if builds fail due to disk space):
+  ```bash
+  docker system prune -a --volumes
+  ```
 
 ---
 

@@ -148,6 +148,9 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
+# FIX: Support reverse proxy SSL detection
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 # FIX: enable HTTPS security headers when not in debug mode
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
@@ -162,7 +165,8 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # <--- production only
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -175,9 +179,11 @@ _cors_origins = os.getenv(
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-]
+_csrf_origins = os.getenv(
+    'CSRF_TRUSTED_ORIGINS',
+    'http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1'
+)
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_origins.split(',') if o.strip()]
 
 # Allow all origins in debug/development mode to prevent CORS issues
 if DEBUG:
@@ -287,7 +293,7 @@ CELERY_TASK_TIME_LIMIT      = 900   # 15 min hard limit
 OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generate')
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen2.5:7b')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', None)
-GROQ_API_KEY = os.getenv('GROQ_API_KEY', None)
+
 
 MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')
 
