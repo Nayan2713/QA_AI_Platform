@@ -1,7 +1,7 @@
 Django>=4.2,<4.3
 djangorestframework>=3.14.0
 djangorestframework-simplejwt>=5.2.2
-celery==5.4.0
+
 redis>=4.6.0
 playwright>=1.35.0
 requests>=2.31.0
@@ -17,6 +17,9 @@ browser-use>=0.13.1
 langchain-ollama>=1.1.0
 langchain-openai>=1.1.9,<1.2.0
 psycopg2-binary>=2.9.0
-
+celery==5.4.0
+kombu==5.4.2
+billiard==4.2.1
+vine==5.1.0
 gunicorn==23.0.0
 whitenoise==6.9.0
