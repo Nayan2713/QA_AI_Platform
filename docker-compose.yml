@@ -129,7 +129,7 @@ services:
       context: ./backend
     container_name: qa_platform_celery_beat
     restart: always
-    command: celery -A qa_engine beat -l info --pidfile=/tmp/celerybeat.pid
+    command: celery -A qa_engine beat -l info --pidfile=/tmp/celerybeat.pid --schedule=/tmp/celerybeat-schedule
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - DEBUG=${DEBUG:-False}
