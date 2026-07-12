@@ -21,11 +21,24 @@ def _get_ollama_base_url() -> str:
     return ollama_api_url.split('/api')[0]
 
 
+_port_open_cache = {}
+_port_open_lock = threading.Lock()
+
+
 def is_port_open(url: str, timeout: float = 0.5) -> bool:
     """
     Check if a TCP port is open. Uses 0.5 s timeout to minimise
     the delay when both Ollama and LM Studio are offline.
+    Caches results for 5 seconds to reduce connection overhead.
     """
+    current_time = time.time()
+    with _port_open_lock:
+        if url in _port_open_cache:
+            status, ts = _port_open_cache[url]
+            if current_time - ts < 5.0:
+                return status
+
+    status = False
     try:
         parsed = urlparse(url)
         host = parsed.hostname or 'localhost'
@@ -33,9 +46,13 @@ def is_port_open(url: str, timeout: float = 0.5) -> bool:
         if port is None:
             port = 80 if parsed.scheme == 'http' else 443
         with socket.create_connection((host, port), timeout=timeout):
-            return True
+            status = True
     except Exception:
-        return False
+        status = False
+
+    with _port_open_lock:
+        _port_open_cache[url] = (status, current_time)
+    return status
 
 
 # ---------------------------------------------------------------------------

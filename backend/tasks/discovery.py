@@ -153,20 +153,49 @@ def save_api_endpoints(app, api_logs):
             'auth_type': auth_type or 'none',
         })
 
-    # Batch upserts — one DB round-trip per unique endpoint
-    saved = 0
+    # Fetch existing endpoints to avoid update_or_create database hits
+    existing_eps = {
+        (ep.method, ep.url_pattern): ep
+        for ep in APIEndpoint.objects.filter(application=app)
+    }
+
+    to_create = []
+    to_update = []
+
     for ep in to_upsert:
-        APIEndpoint.objects.update_or_create(
-            application=app,
-            method=ep['method'],
-            url_pattern=ep['url_pattern'],
-            defaults={
-                'request_schema': ep['request_schema'],
-                'response_schema': ep['response_schema'],
-                'auth_type': ep['auth_type'],
-            }
-        )
-        saved += 1
+        key = (ep['method'], ep['url_pattern'])
+        if key in existing_eps:
+            existing_ep = existing_eps[key]
+            # Check if fields actually changed to avoid redundant updates
+            changed = False
+            if existing_ep.request_schema != ep['request_schema']:
+                existing_ep.request_schema = ep['request_schema']
+                changed = True
+            if existing_ep.response_schema != ep['response_schema']:
+                existing_ep.response_schema = ep['response_schema']
+                changed = True
+            if existing_ep.auth_type != ep['auth_type']:
+                existing_ep.auth_type = ep['auth_type']
+                changed = True
+            if changed:
+                to_update.append(existing_ep)
+        else:
+            to_create.append(
+                APIEndpoint(
+                    application=app,
+                    method=ep['method'],
+                    url_pattern=ep['url_pattern'],
+                    request_schema=ep['request_schema'],
+                    response_schema=ep['response_schema'],
+                    auth_type=ep['auth_type']
+                )
+            )
+
+    saved = len(to_create) + len(to_update)
+    if to_create:
+        APIEndpoint.objects.bulk_create(to_create, batch_size=100)
+    if to_update:
+        APIEndpoint.objects.bulk_update(to_update, ['request_schema', 'response_schema', 'auth_type'], batch_size=100)
 
     logger.info(
         f"save_api_endpoints: {saved} endpoints saved "
@@ -376,7 +405,9 @@ def start_discovery(self, app_id):
             storage_state_data = run_in_thread(lambda: app.storage_state)
 
             def on_crawler_progress(current_url, pages_count):
-                if not Application.objects.filter(id=app_id).exists():
+                def check_app_exists():
+                    return Application.objects.filter(id=app_id).exists()
+                if not run_in_thread(check_app_exists):
                     raise Exception("Application was deleted. Terminating crawl.")
                 def update_progress():
                     task_record.progress = min(40 + pages_count * 4, 90)

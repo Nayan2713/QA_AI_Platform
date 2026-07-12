@@ -20,15 +20,18 @@ class BrowserDiscoveryService:
         self.dom_fingerprints = set()
 
     def is_same_domain(self, url, base_url, login_url=None):
-        netloc1 = urlparse(url).netloc.lower()
-        netloc2 = urlparse(base_url).netloc.lower()
-        if netloc1 == netloc2:
+        host1 = urlparse(url).hostname or ""
+        host2 = urlparse(base_url).hostname or ""
+        host1 = host1.lower()
+        host2 = host2.lower()
+        if host1 == host2:
             return True
-        if netloc1.endswith('.' + netloc2) or netloc2.endswith('.' + netloc1):
+        if host1.endswith('.' + host2) or host2.endswith('.' + host1):
             return True
         if login_url:
-            netloc3 = urlparse(login_url).netloc.lower()
-            if netloc1 == netloc3 or netloc1.endswith('.' + netloc3) or netloc3.endswith('.' + netloc1):
+            host3 = urlparse(login_url).hostname or ""
+            host3 = host3.lower()
+            if host1 == host3 or host1.endswith('.' + host3) or host3.endswith('.' + host1):
                 return True
         return False
 
@@ -648,7 +651,8 @@ class BrowserDiscoveryService:
             visited_urls = self.visited_urls
             visited_lock = asyncio.Lock()       # NEW: lock for safe concurrent access
             ai_tasks = []                       # NEW: track background AI summarization tasks
-
+            ai_semaphore = asyncio.Semaphore(2) # Limit local LLM calls to 2 concurrent
+            
             if login_url:
                 visited_urls.add(login_url)
 
@@ -756,7 +760,10 @@ class BrowserDiscoveryService:
                         pages_list.append(page_info)
 
                         # Start background AI summarization in parallel
-                        ai_task = asyncio.create_task(self._summarize_page_async(page_info))
+                        async def summarize_with_sem(p_info):
+                            async with ai_semaphore:
+                                await self._summarize_page_async(p_info)
+                        ai_task = asyncio.create_task(summarize_with_sem(page_info))
                         ai_tasks.append(ai_task)
 
                         # Enqueue new links found on this page
@@ -806,8 +813,15 @@ class BrowserDiscoveryService:
                                                 await to_visit_queue.put((norm_new, current_url))
 
                                         # Navigate back so we can click other menu items
-                                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
-                                        await worker_page.wait_for_timeout(500)
+                                        try:
+                                            await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
+                                            await worker_page.wait_for_timeout(500)
+                                        except Exception as nav_err:
+                                            logger.warning(
+                                                f"Worker {worker_id} failed to navigate back to {current_url} "
+                                                f"after click navigation: {nav_err}. Aborting click interaction for this page."
+                                            )
+                                            break
                             except Exception:
                                 continue
 

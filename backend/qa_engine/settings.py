@@ -20,9 +20,9 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 # FIX: restrict to real hostnames in production via env var
 #_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 #ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
-ALLOWED_HOSTS=['romantic-freedom-production-6579.up.railway.app']
+# ALLOWED_HOSTS=['romantic-freedom-production-6579.up.railway.app']
 
-
+ALLOWED_HOSTS =["*"]
 import logging.config
 from qa_engine.logging_config import configure_logging
 configure_logging()
