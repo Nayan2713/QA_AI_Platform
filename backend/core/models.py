@@ -78,6 +78,7 @@ class Application(models.Model):
     storage_state = models.TextField(blank=True, null=True)
     login_error = models.TextField(blank=True, null=True)
     industry = models.CharField(max_length=100, blank=True, null=True)
+    use_llm_in_crawl = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

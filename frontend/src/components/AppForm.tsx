@@ -13,6 +13,7 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [industry, setIndustry] = useState('');
+  const [useLlmInCrawl, setUseLlmInCrawl] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -33,6 +34,7 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
         username: username || null,
         password: password || null,
         industry: industry || null,
+        use_llm_in_crawl: useLlmInCrawl,
       });
       onAppCreated(response.data);
       setUrl('');
@@ -40,6 +42,7 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
       setUsername('');
       setPassword('');
       setIndustry('');
+      setUseLlmInCrawl(false);
     } catch (err: any) {
       console.error(err);
       const backendError = err.response?.data;
@@ -108,6 +111,24 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
             <option value="Real Estate">Real Estate</option>
           </select>
           <span className="input-tip">Guides the AI to prioritize specific workflows (e.g. Shopping Cart for E-Commerce).</span>
+        </div>
+
+        <div className="form-group checkbox-group" style={{ display: 'flex', alignItems: 'flex-start', margin: '1.5rem 0' }}>
+          <input
+            id="use-llm-in-crawl"
+            type="checkbox"
+            checked={useLlmInCrawl}
+            onChange={(e) => setUseLlmInCrawl(e.target.checked)}
+            style={{ marginRight: '0.75rem', marginTop: '0.25rem', width: '1.25rem', height: '1.25rem', cursor: 'pointer' }}
+          />
+          <div>
+            <label htmlFor="use-llm-in-crawl" style={{ fontWeight: '600', cursor: 'pointer', color: 'var(--text)' }}>
+              Enable AI page summarization during discovery (Slow)
+            </label>
+            <span className="input-tip" style={{ display: 'block', marginTop: '0.25rem' }}>
+              Summarizes page layouts using LLM/API key during the crawl. Disable this to make site discovery run much faster.
+            </span>
+          </div>
         </div>
 
         <fieldset className="form-fieldset">

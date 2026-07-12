@@ -267,7 +267,7 @@ def run_in_thread(func, *args, **kwargs):
 # ---------------------------------------------------------------------------
 
 @shared_task(bind=True, name="tasks.discovery.start_discovery", queue="discovery")
-def start_discovery(self, app_id):
+def start_discovery(self, app_id, model_choice=None):
     """
     Celery task that tracks task progress in CeleryTask,
     detects MCP availability, routes to MCP or browser-use discovery,
@@ -358,23 +358,27 @@ def start_discovery(self, app_id):
                 result = response.json()
                 pages_data = result.get("pages", [])
 
-                # Run parallel AI summarization on pages returned by MCP
-                from services.llm_service import LLMService
-                llm = LLMService()
+                if app.use_llm_in_crawl:
+                    # Run parallel AI summarization on pages returned by MCP
+                    from services.llm_service import LLMService
+                    llm = LLMService(model_choice=model_choice)
 
-                def summarize_single_page(p):
-                    if not p.get("forms") and not p.get("buttons"):
-                        p["ai_summary"] = "Empty page with no interactive elements."
-                        return
-                    try:
-                        p["ai_summary"] = llm.summarize_page(p) or ""
-                    except Exception as ex:
-                        logger.error(f"MCP page summarization error: {ex}")
+                    def summarize_single_page(p):
+                        if not p.get("forms") and not p.get("buttons"):
+                            p["ai_summary"] = "Empty page with no interactive elements."
+                            return
+                        try:
+                            p["ai_summary"] = llm.summarize_page(p) or ""
+                        except Exception as ex:
+                            logger.error(f"MCP page summarization error: {ex}")
+                            p["ai_summary"] = ""
+
+                    from concurrent.futures import ThreadPoolExecutor
+                    with ThreadPoolExecutor(max_workers=5) as executor:
+                        executor.map(summarize_single_page, pages_data)
+                else:
+                    for p in pages_data:
                         p["ai_summary"] = ""
-
-                from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    executor.map(summarize_single_page, pages_data)
 
                 def set_mcp_source():
                     app.discovery_source = 'mcp'
@@ -400,7 +404,7 @@ def start_discovery(self, app_id):
     if route == 'browser':
         logger.info("Executing Playwright browser discovery path...")
         try:
-            crawler = BrowserDiscoveryService(max_pages=50)
+            crawler = BrowserDiscoveryService(max_pages=50, model_choice=model_choice, use_llm=app.use_llm_in_crawl)
 
             storage_state_data = run_in_thread(lambda: app.storage_state)
 

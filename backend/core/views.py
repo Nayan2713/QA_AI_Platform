@@ -81,7 +81,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         
         # Trigger Celery Task
         from tasks.discovery import start_discovery
-        task = start_discovery.apply_async(args=[app.id], task_id=task_id)
+        model_choice = request.data.get('model_choice')
+        task = start_discovery.apply_async(args=[app.id, model_choice], task_id=task_id)
         
         return Response({
             "status": "Discovery started",

@@ -11,8 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 class BrowserDiscoveryService:
-    def __init__(self, max_pages=100):
+    def __init__(self, max_pages=100, model_choice=None, use_llm=False):
         self.max_pages = max_pages
+        self.model_choice = model_choice
+        self.use_llm = use_llm
         self.discovered_pages = {}
         self.visited_urls = set()
         self.login_successful = None
@@ -358,7 +360,7 @@ class BrowserDiscoveryService:
 
             logger.info(f"Triggering background AI summarization for {page_info['url']}...")
             from services.llm_service import LLMService
-            llm = LLMService()
+            llm = LLMService(model_choice=self.model_choice)
             loop = asyncio.get_running_loop()
             summary = await loop.run_in_executor(None, llm.summarize_page, page_info)
             if summary:
@@ -760,11 +762,14 @@ class BrowserDiscoveryService:
                         pages_list.append(page_info)
 
                         # Start background AI summarization in parallel
-                        async def summarize_with_sem(p_info):
-                            async with ai_semaphore:
-                                await self._summarize_page_async(p_info)
-                        ai_task = asyncio.create_task(summarize_with_sem(page_info))
-                        ai_tasks.append(ai_task)
+                        if self.use_llm:
+                            async def summarize_with_sem(p_info):
+                                async with ai_semaphore:
+                                    await self._summarize_page_async(p_info)
+                            ai_task = asyncio.create_task(summarize_with_sem(page_info))
+                            ai_tasks.append(ai_task)
+                        else:
+                            page_info["ai_summary"] = ""
 
                         # Enqueue new links found on this page
                         links = await worker_page.locator("a").all()

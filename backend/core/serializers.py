@@ -46,7 +46,8 @@ class ApplicationSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'user', 'url', 'base_url', 'login_url', 
             'username', 'password', 'status', 'discovery_source', 
-            'login_status', 'storage_state', 'login_error', 'industry', 'page_count', 'api_count', 'test_case_count', 'bug_count', 'created_at'
+            'login_status', 'storage_state', 'login_error', 'industry', 
+            'use_llm_in_crawl', 'page_count', 'api_count', 'test_case_count', 'bug_count', 'created_at'
         )
         read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'storage_state', 'login_error')
 
@@ -65,7 +66,8 @@ class ApplicationListSerializer(ApplicationSerializer):
         fields = (
             'id', 'user', 'url', 'base_url', 'login_url', 
             'username', 'status', 'discovery_source', 
-            'login_status', 'login_error', 'industry', 'page_count', 
+            'login_status', 'login_error', 'industry', 
+            'use_llm_in_crawl', 'page_count', 
             'api_count', 'test_case_count', 'bug_count', 'created_at'
         )
         read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'login_error')

@@ -162,29 +162,57 @@ def _build_ollama(model_override: str | None = None):
 def get_llm(application=None, model_choice: str | None = None):
     """
     Returns an LLM instance in priority order, or forced based on model_choice:
-      - 'ollama' / 'ollama_qwen': Local Ollama (configured model)
-      - 'ollama_groq': Local Ollama with groq model
+      - 'ollama' / 'ollama_qwen': Local Ollama (configured model), falls back to OpenAI if offline.
+      - 'ollama_groq': Local Ollama with groq model, falls back to OpenAI if offline.
       - 'openai': Cloud OpenAI (gpt-4o-mini)
       - 'auto' / None: Priority order (Ollama → Local Gateway → Cloud OpenAI)
     """
+    cloud_api_key = getattr(settings, 'OPENAI_API_KEY', None)
+    has_valid_openai = _is_valid_openai_key(cloud_api_key)
+
     # ---- Forced Choices ----
     if model_choice in ('ollama', 'ollama_qwen'):
         try:
             return _build_ollama()
         except Exception as e:
-            logger.error(f"Forced Ollama (Qwen) instantiation failed: {e}")
-            raise RuntimeError(f"Failed to initialize local Ollama model: {e}")
+            logger.warning(f"Local Ollama instantiation failed: {e}.")
+            if has_valid_openai:
+                logger.info("Falling back to Cloud OpenAI as local Ollama is offline.")
+                try:
+                    from langchain_openai import ChatOpenAI
+                    return ChatOpenAI(
+                        api_key=cloud_api_key,
+                        model="gpt-4o-mini",
+                        temperature=0.2,
+                        timeout=30.0,
+                        max_retries=1,
+                    )
+                except Exception as open_err:
+                    logger.error(f"Fallback to Cloud OpenAI failed: {open_err}")
+            raise RuntimeError(f"Failed to initialize local Ollama model (and no OpenAI fallback): {e}")
 
     if model_choice == 'ollama_groq':
         try:
             return _build_ollama(model_override='groq')
         except Exception as e:
-            logger.error(f"Forced Ollama (Groq) instantiation failed: {e}")
-            raise RuntimeError(f"Failed to initialize local Ollama model 'groq': {e}")
+            logger.warning(f"Local Ollama (Groq) instantiation failed: {e}.")
+            if has_valid_openai:
+                logger.info("Falling back to Cloud OpenAI as local Ollama (Groq) is offline.")
+                try:
+                    from langchain_openai import ChatOpenAI
+                    return ChatOpenAI(
+                        api_key=cloud_api_key,
+                        model="gpt-4o-mini",
+                        temperature=0.2,
+                        timeout=30.0,
+                        max_retries=1,
+                    )
+                except Exception as open_err:
+                    logger.error(f"Fallback to Cloud OpenAI failed: {open_err}")
+            raise RuntimeError(f"Failed to initialize local Ollama model 'groq' (and no OpenAI fallback): {e}")
 
     if model_choice == 'openai':
-        cloud_api_key = getattr(settings, 'OPENAI_API_KEY', None)
-        if not _is_valid_openai_key(cloud_api_key):
+        if not has_valid_openai:
             raise RuntimeError("OPENAI_API_KEY is not set or invalid in settings.")
         try:
             from langchain_openai import ChatOpenAI
