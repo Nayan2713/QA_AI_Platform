@@ -80,6 +80,11 @@ class LLMService:
 
         prompt = self.get_prompt(pages_context)
 
+        # Always generate the Playwright-style deterministic fallback test cases
+        fallback_cases, industry = self.generate_fallback_test_cases(pages_data)
+        for tc in fallback_cases:
+            tc["ai_generated"] = False
+
         logger.info(f"Attempting to generate test cases using configured LLM (choice: {self.model_choice})...")
 
         try:
@@ -105,16 +110,18 @@ class LLMService:
             raw_text = llm_predict(llm, prompt, model_choice=self.model_choice).strip()
             result = self.parse_json_response(raw_text)
             if result:
-                test_cases, industry = result
-                logger.info(f"LLM generated {len(test_cases)} test cases using model {resolved_model}.")
-                return test_cases, industry, True, resolved_model
+                ai_cases, industry = result
+                for tc in ai_cases:
+                    tc["ai_generated"] = True
+                logger.info(f"LLM generated {len(ai_cases)} test cases using model {resolved_model}.")
+                combined_cases = fallback_cases + ai_cases
+                return combined_cases, industry, True, resolved_model
             else:
-                logger.warning("LLM response was not valid JSON. Falling back to deterministic tests.")
+                logger.warning("LLM response was not valid JSON. Using only deterministic tests.")
         except Exception as e:
-            logger.warning(f"LLM unavailable: {e}. Using deterministic fallback.")
+            logger.warning(f"LLM unavailable: {e}. Using only deterministic fallback.")
 
-        fallback_cases, industry = self.generate_fallback_test_cases(pages_data)
-        logger.info(f"Deterministic fallback generated {len(fallback_cases)} test cases.")
+        logger.info(f"Only deterministic fallback used. Generated {len(fallback_cases)} test cases.")
         return fallback_cases, industry, False, "Fallback Template"
 
     def generate_single_test_case(self, pages_data, title):

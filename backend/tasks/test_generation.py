@@ -144,7 +144,11 @@ def generate_tests(self, app_id, model_choice=None):
                     app.industry = industry_val
                     app.save()
 
-                TestCase.objects.filter(app=app, ai_generated=True).exclude(
+                TestCase.objects.filter(app=app).exclude(
+                    generation_context=None
+                ).exclude(
+                    generation_context={}
+                ).exclude(
                     validation_status='VERIFIED'
                 ).delete()
                 for tc in test_cases_data:
