@@ -14,7 +14,7 @@ This document serves as the developer registry for all technologies, frameworks,
 | **Django 4.2** | A robust, highly secure, batteries-included web framework. Provides an out-of-the-box database ORM, user auth systems, and security middleware. | `Active` |
 | **Django REST Framework (DRF)** | Extends Django to expose clean, structured REST API endpoints for our React client. | `Active` |
 | **djangorestframework-simplejwt** | Implements secure, stateless JSON Web Token (JWT) user authentication (Login/Register). Prevents session-state leaks. | `Active` |
-| **SQLite** | A lightweight, serverless relational database. Perfect for MVP storage, avoiding database connection setups during development. | `Active` |
+| **PostgreSQL** | A powerful, open-source object-relational database system. Used as the main database for storing application configurations, discovered pages, test cases, and execution logs securely and efficiently. | `Active` |
 
 ---
 
@@ -81,6 +81,6 @@ This table logs changes, updates, or packages added to the platform over time, e
 | Date | Package / Rationale | Target Module | Author |
 | :--- | :--- | :--- | :--- |
 | **2026-06-20** | **`django-cors-headers`** Added to allow cross-origin requests from our React front-end (port 3000) to our Django API (port 8000). | Module 1 (Backend Setup) | Antigravity |
-| **2026-06-20** | **`django-celery-results`** Added to write Celery task execution results directly into SQLite database. | Module 1 (Backend Setup) | Antigravity |
+| **2026-06-20** | **`django-celery-results`** Added to write Celery task execution results directly into the database. | Module 1 (Backend Setup) | Antigravity |
 | **2026-06-20** | **Redis Protocol Monkeypatch** Added to force the Redis driver to use RESP2. Prevents crashes (`unknown command HELLO`) caused by older Redis servers. | Module 11 (Integration) | Antigravity |
 | **2026-06-20** | **Celery Explicit Imports** Added task paths to `app.conf.imports` inside `celery.py` to solve the silent worker boot task-unregistered error. | Module 11 (Integration) | Antigravity |

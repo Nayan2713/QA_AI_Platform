@@ -11,10 +11,12 @@ accept the ``protocol`` parameter.
 """
 
 import redis
+import redis.asyncio as aioredis
 from django.conf import settings
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 _pool: redis.ConnectionPool | None = None
+_async_pool: aioredis.ConnectionPool | None = None
 
 
 def get_redis_client(url: str | None = None) -> redis.Redis:
@@ -59,3 +61,40 @@ def get_redis_client(url: str | None = None) -> redis.Redis:
             _pool = redis.ConnectionPool.from_url(target_url)
 
     return redis.Redis(connection_pool=_pool)
+
+
+def get_async_redis_client(url: str | None = None) -> aioredis.Redis:
+    """Return an async Redis client using RESP2 protocol if supported.
+
+    A module-level async connection pool is reused across calls.
+    """
+    global _async_pool
+    target_url = url or getattr(settings, "CELERY_BROKER_URL", "redis://localhost:6379/0")
+
+    # Check redis-py version
+    try:
+        version_parts = [int(p) for p in redis.__version__.split('.') if p.isdigit()]
+    except Exception:
+        version_parts = []
+    
+    is_redis_v5 = version_parts and version_parts[0] >= 5
+
+    # If it's not redis v5, we must strip the protocol parameter from the connection URL
+    if not is_redis_v5:
+        parsed = urlparse(target_url)
+        query = dict(parse_qsl(parsed.query))
+        if 'protocol' in query:
+            del query['protocol']
+            new_query = urlencode(query)
+            target_url = urlunparse((
+                parsed.scheme, parsed.netloc, parsed.path,
+                parsed.params, new_query, parsed.fragment
+            ))
+
+    if _async_pool is None:
+        if is_redis_v5:
+            _async_pool = aioredis.ConnectionPool.from_url(target_url, protocol=2)
+        else:
+            _async_pool = aioredis.ConnectionPool.from_url(target_url)
+
+    return aioredis.Redis(connection_pool=_async_pool)

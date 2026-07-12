@@ -43,7 +43,7 @@ services:
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
-             gunicorn qa_engine.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+             uvicorn qa_engine.asgi:application --host 0.0.0.0 --port 8000 --workers 3"
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - DEBUG=${DEBUG:-False}

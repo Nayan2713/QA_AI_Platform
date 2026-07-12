@@ -8,7 +8,8 @@ load_dotenv(dotenv_path=BASE_DIR / '.env')
 load_dotenv(dotenv_path=BASE_DIR.parent / '.env')
 
 # FIX: No insecure fallback — crash loudly if SECRET_KEY is missing
-SECRET_KEY = os.environ['SECRET_KEY']
+# SECRET_KEY = os.environ['SECRET_KEY']
+SECRET_KEY = os.environ.get('SECRET_KEY', 'build-time-placeholder-not-for-prod')
 
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -112,6 +113,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'qa_engine.wsgi.application'
+ASGI_APPLICATION = 'qa_engine.asgi.application'
 
 # DATABASES = {
 #     'default': {

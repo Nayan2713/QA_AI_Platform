@@ -29,7 +29,7 @@ services:
       context: ./backend
       target: base
     # Gunicorn worker tuning: 2 * num_cores + 1 (usually 3 to 5 workers is optimal for low-medium traffic)
-    command: gunicorn qa_engine.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --worker-class gthread --max-requests 1000 --max-requests-jitter 50 --timeout 60
+    command: uvicorn qa_engine.asgi:application --host 0.0.0.0 --port 8000 --workers 4
     environment:
       - DEBUG=False
     deploy:

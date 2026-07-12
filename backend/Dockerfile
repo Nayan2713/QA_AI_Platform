@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Python deps
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Playwright browsers + OS deps
 RUN playwright install --with-deps chromium
@@ -36,14 +36,11 @@ RUN mkdir -p /app/staticfiles /app/media /app/logs /ms-playwright /home/django &
 # Copy project
 COPY --chown=django:django . /app/
 
-RUN python manage.py collectstatic --noinput || true
-
 USER django
 
 EXPOSE 8000
 
-CMD ["gunicorn", "qa_engine.wsgi:application", \
-     "--bind", "0.0.0.0:8000", \
-     "--workers", "3", \
-     "--timeout", "120", \
-     "--worker-tmp-dir", "/dev/shm"]
+CMD ["uvicorn", "qa_engine.asgi:application", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "3"]
