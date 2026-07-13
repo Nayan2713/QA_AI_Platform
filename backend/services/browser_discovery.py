@@ -391,7 +391,10 @@ class BrowserDiscoveryService:
         logger.info(f"Starting browser discovery for URL: {start_url}")
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu"]
+            )
 
             context_kwargs = {
                 "viewport": {"width": 1280, "height": 720},
@@ -835,7 +838,7 @@ class BrowserDiscoveryService:
                             final_url = worker_page.url
                         except Exception:
                             final_url = current_url
-                            
+
                         if final_url and not self.is_same_domain(final_url, start_url, login_url):
                             logger.warning(
                                 f"Worker {worker_id} navigation to {current_url} (discovered from {parent_url}) "
@@ -845,6 +848,29 @@ class BrowserDiscoveryService:
                             logger.error(
                                 f"Worker {worker_id} failed on {current_url} (discovered from {parent_url}): {e}"
                             )
+
+                        # RECOVERY: if the page/browser died, rebuild it — otherwise every
+                        # subsequent goto on this dead handle fails instantly and the worker
+                        # burns through the whole queue doing nothing.
+                        err_text = str(e).lower()
+                        if "crash" in err_text or "closed" in err_text or "target" in err_text:
+                            logger.warning(f"Worker {worker_id} page died — recreating it.")
+                            try:
+                                await worker_page.close()
+                            except Exception:
+                                pass
+                            try:
+                                worker_page = await context.new_page()
+                                worker_page.on("dialog", lambda dialog: asyncio.create_task(dialog.dismiss()))
+                                worker_page.on("request", capture_network_request)
+                                worker_page.on("response", capture_network_api)
+                                await asyncio.sleep(1)
+                            except Exception as recreate_err:
+                                logger.error(f"Worker {worker_id} could not recreate page: {recreate_err}. Exiting.")
+                                async with active_workers_lock:
+                                    active_workers -= 1
+                                to_visit_queue.task_done()
+                                return
                     finally:
                         async with active_workers_lock:
                             active_workers -= 1
