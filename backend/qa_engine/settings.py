@@ -20,10 +20,11 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 # FIX: restrict to real hostnames in production via env var
 #_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
-#ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
-# ALLOWED_HOSTS=['romantic-freedom-production-6579.up.railway.app']
+_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
 
-ALLOWED_HOSTS =["*"]
+
+# ALLOWED_HOSTS =["*"]
 import logging.config
 from qa_engine.logging_config import configure_logging
 configure_logging()
@@ -48,14 +49,14 @@ LOGGING = {
         },
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/debug.log',
+            'filename': os.path.join(BASE_DIR, 'logs', 'debug.log'),
             'maxBytes': 0,  # Disable rotation on Windows to prevent WinError 32 PermissionError
             'backupCount': 5,
             'formatter': 'verbose',
         },
         'error_file': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/error.log',
+            'filename': os.path.join(BASE_DIR, 'logs', 'error.log'),
             'maxBytes': 0,  # Disable rotation on Windows to prevent WinError 32 PermissionError
             'backupCount': 5,
             'formatter': 'verbose',
@@ -86,6 +87,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware', 
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -161,9 +163,9 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # FIX: enable HTTPS security headers when not in debug mode
 if not DEBUG:
-    SECURE_SSL_REDIRECT = False
-    SESSION_COOKIE_SECURE = False
-    CSRF_COOKIE_SECURE = False
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
@@ -178,7 +180,10 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # <--- production only
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
+STORAGES = {
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+}
 # FIX: read allowed origins from env so docker-compose and local both work
 _cors_origins = os.getenv(
     'CORS_ALLOWED_ORIGINS',
