@@ -129,7 +129,8 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
           if (!isMounted) return;
           updatedRuns = [{ ...suiteRuns[0], status: res.data.status }];
         } else {
-          const res = await api.get('test-runs/');
+          const ids = suiteRuns.map(r => r.id).join(',');
+          const res = await api.get('test-runs/', { params: { ids } });
           if (!isMounted) return;
           const latestRuns = res.data;
           updatedRuns = suiteRuns.map(r => {

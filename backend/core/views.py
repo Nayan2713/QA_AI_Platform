@@ -328,6 +328,15 @@ class TestRunViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = TestRun.objects.filter(test_case__app__user=self.request.user).select_related('test_case', 'test_case__app')
+        
+        ids = self.request.query_params.get('ids')
+        if ids:
+            id_list = [int(x) for x in ids.split(',') if x.isdigit()]
+            queryset = queryset.filter(id__in=id_list)
+        elif self.action == 'list' and 'page' not in self.request.query_params:
+            # Safeguard against MemoryError when retrieving all test runs
+            queryset = queryset[:100]
+
         if self.action == 'retrieve':
             queryset = queryset.prefetch_related('step_results')
         return queryset.order_by('-created_at')

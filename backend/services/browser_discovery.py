@@ -37,6 +37,31 @@ class BrowserDiscoveryService:
                 return True
         return False
 
+    def get_path_pattern(self, url):
+        try:
+            parsed = urlparse(url)
+            path = parsed.path
+            segments = path.split('/')
+            new_segments = []
+            for segment in segments:
+                if not segment:
+                    new_segments.append('')
+                    continue
+                if segment.isdigit():
+                    new_segments.append(':id')
+                elif re.match(
+                    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+                    segment
+                ):
+                    new_segments.append(':id')
+                elif len(segment) >= 8 and re.match(r'^[0-9a-fA-F]+$', segment):
+                    new_segments.append(':id')
+                else:
+                    new_segments.append(segment)
+            return '/'.join(new_segments)
+        except Exception:
+            return url
+
     async def perform_login(self, page, login_url, username, password):
         """
         Navigates to the login page, identifies common username/password fields,
@@ -649,17 +674,24 @@ class BrowserDiscoveryService:
             
             # Workers start directly on initial_url so they run click events and extract all forms/menus
             await to_visit_queue.put((initial_url, "start_url"))
+            
+            queued_patterns = {self.get_path_pattern(initial_url)}
             for url in to_visit:
                 if url != initial_url:
-                    await to_visit_queue.put((url, post_login_url if logged_in else start_url))
+                    pattern = self.get_path_pattern(url)
+                    if pattern not in queued_patterns:
+                        queued_patterns.add(pattern)
+                        await to_visit_queue.put((url, post_login_url if logged_in else start_url))
 
             visited_urls = self.visited_urls
+            visited_patterns = set()
             visited_lock = asyncio.Lock()       # NEW: lock for safe concurrent access
             ai_tasks = []                       # NEW: track background AI summarization tasks
             ai_semaphore = asyncio.Semaphore(2) # Limit local LLM calls to 2 concurrent
             
             if login_url:
                 visited_urls.add(login_url)
+                visited_patterns.add(self.get_path_pattern(login_url))
 
             active_workers = 0
             active_workers_lock = asyncio.Lock()
@@ -684,10 +716,12 @@ class BrowserDiscoveryService:
 
                     # FIX 4: atomic check-and-mark inside the lock
                     async with visited_lock:
-                        if current_url in visited_urls:
+                        pattern = self.get_path_pattern(current_url)
+                        if (current_url in visited_urls) or (pattern in visited_patterns):
                             to_visit_queue.task_done()
                             continue
                         visited_urls.add(current_url)
+                        visited_patterns.add(pattern)
 
                     async with active_workers_lock:
                         active_workers += 1
@@ -784,7 +818,8 @@ class BrowserDiscoveryService:
                                     norm_url = abs_url.split('#')[0].split('?')[0]
                                     if self.is_same_domain(norm_url, start_url, login_url):
                                         async with visited_lock:
-                                            already = norm_url in visited_urls
+                                            pattern = self.get_path_pattern(norm_url)
+                                            already = (norm_url in visited_urls) or (pattern in visited_patterns)
                                         if not already:
                                             await to_visit_queue.put((norm_url, current_url))
                             except Exception:
@@ -815,7 +850,8 @@ class BrowserDiscoveryService:
                                     if norm_new != current_url.split('#')[0].split('?')[0]:
                                         if self.is_same_domain(norm_new, start_url, login_url):
                                             async with visited_lock:
-                                                already = norm_new in visited_urls
+                                                pattern = self.get_path_pattern(norm_new)
+                                                already = (norm_new in visited_urls) or (pattern in visited_patterns)
                                             if not already:
                                                 logger.info(f"Worker {worker_id} found new route via click: {norm_new}")
                                                 await to_visit_queue.put((norm_new, current_url))
