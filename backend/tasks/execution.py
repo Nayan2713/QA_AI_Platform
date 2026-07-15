@@ -652,7 +652,7 @@ def execute_test(self, test_run_id, model_choice=None):
 
         # OPTIMIZED: pass only test_run_id — api_logs already stored in
         # TestRun.metadata, avoiding a potentially large broker payload.
-        run_quality_analysis.delay(test_run.id)
+        run_quality_analysis.apply_async(args=[test_run.id], queue='quality')
 
     except Exception as e:
         logger.error(f"execute_test outer failure: {e}")
@@ -833,6 +833,6 @@ def run_quality_analysis(test_run_id, api_logs=None):
         finally:
             # Bug detection runs after the quality checks are finished
             from tasks.bug_detection import detect_bugs
-            detect_bugs.delay(test_run_id)
+            detect_bugs.apply_async(args=[test_run_id], queue='quality')
 
     run_in_thread(analyze)

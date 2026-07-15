@@ -300,8 +300,16 @@ CELERY_TASK_ANNOTATIONS = {
 }
 
 # OPTIMIZED: avoid large message payloads being lost silently
-CELERY_TASK_SOFT_TIME_LIMIT = 600   # 10 min soft limit
-CELERY_TASK_TIME_LIMIT      = 900   # 15 min hard limit
+CELERY_TASK_SOFT_TIME_LIMIT = 600   # 10 min soft limit: allows task to catch SoftTimeLimitExceeded and cleanly exit browser instances
+CELERY_TASK_TIME_LIMIT      = 900   # 15 min hard limit: forcibly kills task process if it runs away / hangs
+
+# OPTIMIZED: track task start states to allow active progress updates on the frontend
+CELERY_TASK_TRACK_STARTED = True
+
+# OPTIMIZED: prevent workers from prefetching multiple tasks from the broker.
+# Setting it to 1 ensures a worker only grabs one scan at a time, preventing task starvation
+# and memory bottlenecks (OOM) caused by a single worker process hoarding multiple browser executions.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
 OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generate')
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen2.5:7b')

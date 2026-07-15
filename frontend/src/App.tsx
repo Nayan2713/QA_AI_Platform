@@ -1,21 +1,38 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import api from './lib/api';
 import { User, Bug } from './lib/types';
 import { Navigation } from './components/Navigation';
 import { Dashboard } from './components/Dashboard';
 import { AppDetail } from './components/AppDetail';
 import { BugList } from './components/BugList';
+import { TestResults } from './components/TestResults';
 import './App.css';
+
+// Standalone wrapper for rendering execution results route-based
+const TestResultsRoute = () => {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  return (
+    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+      <TestResults 
+        testRunId={parseInt(id || '0')}
+        onClose={() => navigate(-1)}
+        onBugDetected={() => {}}
+      />
+    </div>
+  );
+};
 
 function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('access_token'));
   const [username, setUsername] = useState<string>(localStorage.getItem('username') || '');
-  const [currentView, setCurrentView] = useState<'dashboard' | 'bugs'>('dashboard');
   const [bugs, setBugs] = useState<Bug[]>([]);
-  const [selectedAppId, setSelectedAppId] = useState<number | null>(null);
-  const [activeTestRunId, setActiveTestRunId] = useState<number | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   
+  const navigate = useNavigate();
+  const location = useLocation();
+
   // Auth Form State
   const [isLogin, setIsLogin] = useState(true);
   const [authUsername, setAuthUsername] = useState('');
@@ -35,12 +52,12 @@ function App() {
     }
   }, []);
 
-  // Fetch bugs if global bugs view is selected
+  // Fetch bugs if global bugs view is selected (or path is /bugs)
   useEffect(() => {
-    if (token && currentView === 'bugs') {
+    if (token && location.pathname === '/bugs') {
       fetchGlobalBugs();
     }
-  }, [currentView, token]);
+  }, [location.pathname, token]);
 
   const fetchGlobalBugs = async () => {
     try {
@@ -53,19 +70,13 @@ function App() {
 
   const handleRunTestCaseFromGlobal = async (testCaseId: number) => {
     try {
-      const bug = bugs.find(b => b.test_case_id === testCaseId);
-      const appId = bug?.app_id;
-      
       const response = await api.post('test-runs/execute/', { test_case_id: testCaseId });
       if (response.data.test_run_id) {
-        setActiveTestRunId(response.data.test_run_id);
         if (response.data.task_id) {
           setActiveTaskId(response.data.task_id);
         }
-        if (appId) {
-          setSelectedAppId(appId);
-        }
-        setCurrentView('dashboard');
+        // Direct client-side route navigation
+        navigate(`/results/${response.data.test_run_id}`);
       }
     } catch (err) {
       console.error('Failed to execute test run from global bugs list:', err);
@@ -78,7 +89,7 @@ function App() {
     localStorage.removeItem('username');
     setToken(null);
     setUsername('');
-    setCurrentView('dashboard');
+    navigate('/dashboard');
   };
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -115,6 +126,9 @@ function App() {
         // Reset login form fields
         setAuthEmail('');
         setAuthPassword('');
+        
+        // Navigate to dashboard
+        navigate('/dashboard');
       } else {
         // Register
         await api.post<{ access: string; refresh: string; user: User }>('auth/register/', {
@@ -133,13 +147,26 @@ function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setAuthError(
-        err.response?.data?.detail || 
-        err.response?.data?.username?.[0] || 
-        err.response?.data?.password?.[0] || 
-        err.response?.data?.email?.[0] || 
-        'Authentication failed.'
-      );
+      let msg = 'Authentication failed.';
+      if (err.response?.data) {
+        const data = err.response.data;
+        if (data.detail) {
+          if (typeof data.detail === 'string') {
+            msg = data.detail;
+          } else if (typeof data.detail === 'object') {
+            const firstKey = Object.keys(data.detail)[0];
+            const firstVal = data.detail[firstKey];
+            msg = Array.isArray(firstVal) ? firstVal[0] : (typeof firstVal === 'string' ? firstVal : JSON.stringify(data.detail));
+          }
+        } else if (data.username) {
+          msg = Array.isArray(data.username) ? data.username[0] : data.username;
+        } else if (data.email) {
+          msg = Array.isArray(data.email) ? data.email[0] : data.email;
+        } else if (data.password) {
+          msg = Array.isArray(data.password) ? data.password[0] : data.password;
+        }
+      }
+      setAuthError(msg);
     } finally {
       setAuthLoading(false);
     }
@@ -222,33 +249,52 @@ function App() {
       <Navigation 
         username={username} 
         onLogout={handleLogout} 
-        onNavigate={(view) => {
-          setSelectedAppId(null);
-          setCurrentView(view);
-        }}
-        currentView={currentView}
       />
       
       <main className="main-content">
-        {selectedAppId !== null ? (
-          <AppDetail 
-            appId={selectedAppId} 
-            onBack={() => setSelectedAppId(null)}
-            activeTestRunId={activeTestRunId}
-            setActiveTestRunId={setActiveTestRunId}
-            activeTaskId={activeTaskId}
-            setActiveTaskId={setActiveTaskId}
+        <Routes>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route 
+            path="/scans/:id" 
+            element={
+              <AppDetail 
+                activeTaskId={activeTaskId}
+                setActiveTaskId={setActiveTaskId}
+              />
+            } 
           />
-        ) : currentView === 'dashboard' ? (
-          <Dashboard onSelectView={setCurrentView} onSelectApp={setSelectedAppId} />
-        ) : (
-          <BugList 
-            bugs={bugs} 
-            onRefreshBugs={fetchGlobalBugs} 
-            onRunTestCase={handleRunTestCaseFromGlobal}
-            activeTaskId={activeTaskId}
+          <Route 
+            path="/scans/:id/:tab" 
+            element={
+              <AppDetail 
+                activeTaskId={activeTaskId}
+                setActiveTaskId={setActiveTaskId}
+              />
+            } 
           />
-        )}
+          <Route 
+            path="/scans/:id/:tab/:runId" 
+            element={
+              <AppDetail 
+                activeTaskId={activeTaskId}
+                setActiveTaskId={setActiveTaskId}
+              />
+            } 
+          />
+          <Route path="/results/:id" element={<TestResultsRoute />} />
+          <Route 
+            path="/bugs" 
+            element={
+              <BugList 
+                bugs={bugs} 
+                onRefreshBugs={fetchGlobalBugs} 
+                onRunTestCase={handleRunTestCaseFromGlobal}
+                activeTaskId={activeTaskId}
+              />
+            } 
+          />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
       </main>
       
       <footer className="app-footer">

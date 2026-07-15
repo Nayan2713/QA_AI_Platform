@@ -52,13 +52,13 @@ class TestValidationViewSet(viewsets.ReadOnlyModelViewSet):
             test_case = TestCase.objects.get(id=test_case_id, app__user=request.user)
             page = test_case.app.pages.first()
             page_url = page.url if page else ''
-            task = validate_test_relevance.delay(test_case_id, page_url)
+            task = validate_test_relevance.apply_async(args=[test_case_id, page_url], queue='quality')
             return Response({
                 'test_case_id': test_case_id,
                 'task_id': task.id,
                 'message': 'Test validation queued',
                 'status': 'success'
-            })
+            }, status=status.HTTP_202_ACCEPTED)
         except TestCase.DoesNotExist:
             return Response(
                 {'error': 'Test case not found'},
@@ -92,14 +92,14 @@ class CoverageReportViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             app = Application.objects.get(id=app_id, user=request.user)
-            task = analyze_coverage.delay(app_id)
+            task = analyze_coverage.apply_async(args=[app_id], queue='quality')
             return Response({
                 'application_id': app_id,
                 'task_id': task.id,
                 'application_name': app.url,
                 'message': 'Coverage analysis queued',
                 'status': 'success'
-            })
+            }, status=status.HTTP_202_ACCEPTED)
         except Application.DoesNotExist:
             return Response(
                 {'error': 'Application not found'},
@@ -151,13 +151,13 @@ class FlakinessReportViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             test_case = TestCase.objects.get(id=test_id, app__user=request.user)
-            task = detect_flakiness.delay(test_id, 5)
+            task = detect_flakiness.apply_async(args=[test_id, 5], queue='quality')
             return Response({
                 'test_case_id': test_id,
                 'task_id': task.id,
                 'message': 'Flakiness check queued',
                 'status': 'success'
-            })
+            }, status=status.HTTP_202_ACCEPTED)
         except TestCase.DoesNotExist:
             return Response(
                 {'error': 'Test case not found'},
@@ -212,13 +212,13 @@ class BugValidationViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             bug = Bug.objects.get(id=bug_id, test_run__test_case__app__user=request.user)
-            task = validate_bug_accuracy.delay(bug_id)
+            task = validate_bug_accuracy.apply_async(args=[bug_id], queue='quality')
             return Response({
                 'bug_id': bug_id,
                 'task_id': task.id,
                 'message': 'Bug validation queued',
                 'status': 'success'
-            })
+            }, status=status.HTTP_202_ACCEPTED)
         except Bug.DoesNotExist:
             return Response(
                 {'error': 'Bug not found'},
@@ -283,13 +283,13 @@ class QualityMetricsViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             app = Application.objects.get(id=app_id, user=request.user)
-            task = calculate_quality_metrics.delay(app_id)
+            task = calculate_quality_metrics.apply_async(args=[app_id], queue='quality')
             return Response({
                 'application_id': app_id,
                 'task_id': task.id,
                 'message': 'Quality metrics calculation queued',
                 'status': 'success'
-            })
+            }, status=status.HTTP_202_ACCEPTED)
         except Application.DoesNotExist:
             return Response(
                 {'error': 'Application not found'},
@@ -436,17 +436,18 @@ class QualityDashboardView(viewsets.ViewSet):
                 progress=5,
                 result={"status_text": "Queuing full quality check..."}
             )
-            from core.signals import register_task_user
+            from core.signals import register_task_user, register_task_app
             register_task_user(task_id, request.user.id)
+            register_task_app(task_id, app_id)
             
-            task = run_full_quality_check.apply_async(args=[app_id], task_id=task_id)
+            task = run_full_quality_check.apply_async(args=[app_id], task_id=task_id, queue='quality')
             
             return Response({
                 'application_id': app_id,
                 'task_id': task_id,
                 'status': 'queued',
                 'message': 'Full quality check started'
-            })
+            }, status=status.HTTP_202_ACCEPTED)
         except Application.DoesNotExist:
             return Response(
                 {'error': 'Application not found'},

@@ -1,7 +1,6 @@
 import json
 import logging
 import time
-import asyncio
 import redis
 from django.http import StreamingHttpResponse
 from django.views import View
@@ -12,14 +11,14 @@ from django.contrib.auth.models import User
 logger = logging.getLogger(__name__)
 
 class RealTimeEventView(View):
-    async def _async_error_generator(self, message):
+    def _error_generator(self, message):
         yield f"data: {json.dumps({'type': 'auth_error', 'message': message})}\n\n"
 
-    async def get(self, request, *args, **kwargs):
+    def get(self, request, *args, **kwargs):
         token_str = request.GET.get('token')
         if not token_str:
             return StreamingHttpResponse(
-                self._async_error_generator('Authentication token is required'),
+                self._error_generator('Authentication token is required'),
                 status=200,
                 content_type='text/event-stream'
             )
@@ -31,16 +30,16 @@ class RealTimeEventView(View):
         except Exception as e:
             logger.warning(f"SSE authentication failed: {e}")
             return StreamingHttpResponse(
-                self._async_error_generator('Invalid token'),
+                self._error_generator('Invalid token'),
                 status=200,
                 content_type='text/event-stream'
             )
 
-        async def event_generator():
-            from qa_engine.redis_client import get_async_redis_client
-            r = get_async_redis_client()
+        def event_generator():
+            from qa_engine.redis_client import get_redis_client
+            r = get_redis_client()
             pubsub = r.pubsub()
-            await pubsub.subscribe('qa_platform_events')
+            pubsub.subscribe('qa_platform_events')
             
             # Send initial connection status
             yield f"data: {json.dumps({'type': 'connected', 'user_id': user_id})}\n\n"
@@ -50,7 +49,7 @@ class RealTimeEventView(View):
                 while True:
                     try:
                         # Non-blocking check for new messages with 1s timeout
-                        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                        message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                         if message:
                             payload_str = message['data'].decode('utf-8')
                             payload = json.loads(payload_str)
@@ -68,20 +67,18 @@ class RealTimeEventView(View):
                             
                     except (redis.ConnectionError, redis.TimeoutError) as conn_err:
                         logger.warning(f"SSE Redis connection issue: {conn_err}. Reconnecting...")
-                        await asyncio.sleep(1)
+                        time.sleep(1)
                         pubsub = r.pubsub()
-                        await pubsub.subscribe('qa_platform_events')
+                        pubsub.subscribe('qa_platform_events')
                     except Exception as loop_err:
                         logger.error(f"Error in SSE loop: {loop_err}")
-                        await asyncio.sleep(1)
-            except asyncio.CancelledError:
-                logger.info(f"SSE stream cancelled/disconnected for user {user_id}")
+                        time.sleep(1)
             except GeneratorExit:
                 logger.info(f"SSE stream generator exit for user {user_id}")
             finally:
                 try:
-                    await pubsub.unsubscribe('qa_platform_events')
-                    await pubsub.close()
+                    pubsub.unsubscribe('qa_platform_events')
+                    pubsub.close()
                 except Exception:
                     pass
 

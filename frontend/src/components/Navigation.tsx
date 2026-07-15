@@ -1,40 +1,40 @@
 import React from 'react';
+import { Link, useLocation } from 'react-router-dom';
 
 interface NavigationProps {
   username?: string;
   onLogout: () => void;
-  onNavigate: (view: 'dashboard' | 'bugs') => void;
-  currentView: string;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ 
   username, 
-  onLogout, 
-  onNavigate,
-  currentView
+  onLogout 
 }) => {
+  const location = useLocation();
+  const currentView = location.pathname === '/bugs' ? 'bugs' : 'dashboard';
+
   return (
     <nav className="glass-nav">
       <div className="nav-container">
-        <div className="nav-brand" onClick={() => onNavigate('dashboard')}>
+        <Link to="/dashboard" className="nav-brand">
           <span className="brand-icon">⚡</span>
           <span className="brand-text">QA Engineer MVP</span>
-        </div>
+        </Link>
         
         {username && (
           <div className="nav-menu">
-            <button 
+            <Link 
+              to="/dashboard" 
               className={`nav-link ${currentView === 'dashboard' ? 'active' : ''}`}
-              onClick={() => onNavigate('dashboard')}
             >
               🖥️ Dashboard
-            </button>
-            <button 
+            </Link>
+            <Link 
+              to="/bugs" 
               className={`nav-link ${currentView === 'bugs' ? 'active' : ''}`}
-              onClick={() => onNavigate('bugs')}
             >
               🐞 All Bugs
-            </button>
+            </Link>
             
             <div className="nav-divider"></div>
             

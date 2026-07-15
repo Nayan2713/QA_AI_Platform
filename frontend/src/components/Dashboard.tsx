@@ -1,19 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { Application } from '../lib/types';
 import { AppForm } from './AppForm';
-import { AppDetail } from './AppDetail';
 
-interface DashboardProps {
-  onSelectView: (view: 'dashboard' | 'bugs') => void;
-  onSelectApp: (appId: number) => void;
-}
-
-export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp }) => {
+export const Dashboard: React.FC = () => {
   const [applications, setApplications] = useState<Application[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const navigate = useNavigate();
 
   const fetchApplications = async () => {
     try {
@@ -50,7 +46,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
     if (!token) return;
 
     const apiBase = (import.meta as any).env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin + '/api/' : 'http://127.0.0.1:8000/api/');
-    const sseBase = apiBase.replace('/api/', '/api/events/');
+    let sseBase = apiBase.replace('/api/', '/api/events/');
+    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      sseBase = 'http://127.0.0.1:8000/api/events/';
+    }
     const sseUrl = `${sseBase}?token=${encodeURIComponent(token)}`;
 
     const eventSource = new EventSource(sseUrl);
@@ -82,7 +81,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
   const handleAppCreated = (newApp: Application) => {
     setApplications([newApp, ...applications]);
     setShowAddForm(false);
-    onSelectApp(newApp.id); // Auto-navigate to details
+    navigate(`/scans/${newApp.id}`); // Auto-navigate to scans detail page
   };
 
   const handleDeleteApp = async (id: number, url: string) => {
@@ -96,8 +95,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
       }
     }
   };
-
-
 
   return (
     <div className="dashboard-container">
@@ -149,7 +146,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectView, onSelectApp 
             <div 
               key={app.id} 
               className="glass-card application-card"
-              onClick={() => onSelectApp(app.id)}
+              onClick={() => navigate(`/scans/${app.id}`)}
+              style={{ cursor: 'pointer' }}
             >
               <div className="app-card-header">
                 <h4>{app.url}</h4>

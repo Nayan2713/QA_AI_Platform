@@ -24,6 +24,8 @@ export const TestCaseFormModal: React.FC<TestCaseFormModalProps> = ({ appId, tes
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [modelChoice, setModelChoice] = useState('auto');
+  const [aiGenerated, setAiGenerated] = useState(testCase?.ai_generated || false);
+  const [generatedModel, setGeneratedModel] = useState<string | null>(testCase?.model_used || null);
 
   const isEdit = !!testCase;
 
@@ -61,7 +63,8 @@ export const TestCaseFormModal: React.FC<TestCaseFormModalProps> = ({ appId, tes
       if (generated.category) setCategory(generated.category);
       if (generated.expected_result) setExpectedResult(generated.expected_result);
       if (generated.steps && generated.steps.length > 0) setSteps(generated.steps);
-      
+      setAiGenerated(true);
+      setGeneratedModel(generated.model_used || modelChoice);
     } catch (err: any) {
       console.error(err);
       setError('Failed to generate test case via AI. Ensure the backend LLM service is running.');
@@ -87,7 +90,8 @@ export const TestCaseFormModal: React.FC<TestCaseFormModalProps> = ({ appId, tes
         category,
         expected_result: expectedResult,
         steps: steps,
-        ai_generated: isEdit ? testCase.ai_generated : false,
+        ai_generated: aiGenerated,
+        generation_context: { model_used: generatedModel || (aiGenerated ? modelChoice : 'Manual') },
       };
 
       if (isEdit) {

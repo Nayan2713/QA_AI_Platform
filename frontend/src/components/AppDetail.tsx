@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { Application, TestCase, Bug, CeleryTask, APIEndpoint, AgentSession } from '../lib/types';
 import { DiscoveryStatus } from './DiscoveryStatus';
@@ -8,8 +9,8 @@ import { BugList } from './BugList';
 import QualityDashboard from './QualityDashboard/QualityDashboard';
 
 interface AppDetailProps {
-  appId: number;
-  onBack: () => void;
+  appId?: number;
+  onBack?: () => void;
   activeTestRunId?: number | null;
   setActiveTestRunId?: (id: number | null) => void;
   activeTaskId?: string | null;
@@ -17,13 +18,17 @@ interface AppDetailProps {
 }
 
 export const AppDetail: React.FC<AppDetailProps> = ({ 
-  appId, 
+  appId: propAppId, 
   onBack,
   activeTestRunId: propActiveTestRunId,
   setActiveTestRunId: propSetActiveTestRunId,
   activeTaskId: propActiveTaskId,
   setActiveTaskId: propSetActiveTaskId
 }) => {
+  const { id, tab, runId } = useParams<{ id: string; tab?: string; runId?: string }>();
+  const appId = propAppId || parseInt(id || '0');
+  const navigate = useNavigate();
+
   const [app, setApp] = useState<Application | null>(null);
   const [testCases, setTestCases] = useState<TestCase[]>([]);
   const [bugs, setBugs] = useState<Bug[]>([]);
@@ -34,13 +39,25 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [loadingApiAnalysisId, setLoadingApiAnalysisId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [discovering, setDiscovering] = useState(false);
-  const [activeTab, setActiveTab] = useState<'discovery' | 'apis' | 'tests' | 'bugs' | 'sessions' | 'quality'>('discovery');
+  const activeTab = (tab as any) || 'discovery';
+  const setActiveTab = (tabName: string) => {
+    navigate(`/scans/${appId}/${tabName}`);
+  };
   const [showLoginError, setShowLoginError] = useState(false);
   
-  // Track active execution
-  const [localActiveTestRunId, setLocalActiveTestRunId] = useState<number | null>(null);
-  const activeTestRunId = propActiveTestRunId !== undefined ? propActiveTestRunId : localActiveTestRunId;
-  const setActiveTestRunId = propSetActiveTestRunId || setLocalActiveTestRunId;
+  // Track active execution via Route parameter
+  const activeTestRunId = propActiveTestRunId !== undefined ? propActiveTestRunId : (runId ? parseInt(runId) : null);
+  const setActiveTestRunId = (rId: number | null) => {
+    if (propSetActiveTestRunId) {
+      propSetActiveTestRunId(rId);
+    } else {
+      if (rId) {
+        navigate(`/scans/${appId}/${activeTab}/${rId}`);
+      } else {
+        navigate(`/scans/${appId}/${activeTab}`);
+      }
+    }
+  };
 
   // Task progress tracking
   const [localActiveTaskId, setLocalActiveTaskId] = useState<string | null>(null);
@@ -80,6 +97,18 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         setApiGraph(graphRes.data);
       } catch (graphErr) {
         console.warn('Failed to fetch api dependency graph:', graphErr);
+      }
+
+      // Restore active task if one is running for this application
+      try {
+        const tasksRes = await api.get<CeleryTask[]>(`tasks/?app_id=${appId}`);
+        const active = tasksRes.data.find(t => t.status === 'pending' || t.status === 'progress');
+        if (active) {
+          setActiveTaskId(active.task_id);
+          setCurrentTask(active);
+        }
+      } catch (taskErr) {
+        console.warn('Failed to restore active tasks:', taskErr);
       }
     } catch (err) {
       console.error(err);
@@ -128,7 +157,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     if (!token) return;
 
     const apiBase = (import.meta as any).env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin + '/api/' : 'http://127.0.0.1:8000/api/');
-    const sseBase = apiBase.replace('/api/', '/api/events/');
+    let sseBase = apiBase.replace('/api/', '/api/events/');
+    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      sseBase = 'http://127.0.0.1:8000/api/events/';
+    }
     const sseUrl = `${sseBase}?token=${encodeURIComponent(token)}`;
 
     const eventSource = new EventSource(sseUrl);
@@ -147,6 +179,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                 fetchAppDetailsDebounced();
                 setTimeout(() => {
                   setActiveTaskId(null);
+                  setCurrentTask(null);
                 }, 3000);
               }
             }
@@ -184,6 +217,56 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     };
   }, [appId]);
 
+  // Backup polling for Celery tasks using real-time celery-status endpoint
+  useEffect(() => {
+    if (!activeTaskId) return;
+    
+    let isMounted = true;
+    let pollCount = 0;
+    const MAX_POLLS = 150; // 5 minutes
+    
+    const pollInterval = setInterval(async () => {
+      if (!isMounted || pollCount >= MAX_POLLS) {
+        clearInterval(pollInterval);
+        return;
+      }
+      pollCount++;
+      
+      try {
+        const res = await api.get(`tasks/${activeTaskId}/celery-status/`);
+        if (!isMounted) return;
+        
+        const celeryStatus = res.data.status;
+        
+        if (celeryStatus === 'SUCCESS' || celeryStatus === 'FAILURE') {
+          fetchAppDetailsDebounced();
+          clearInterval(pollInterval);
+          setTimeout(() => {
+            if (isMounted) {
+              setActiveTaskId(null);
+              setCurrentTask(null);
+            }
+          }, 3000);
+        } else {
+          // Fetch DB task record details
+          try {
+            const taskDb = await api.get<CeleryTask>(`tasks/${activeTaskId}/`);
+            if (isMounted) setCurrentTask(taskDb.data);
+          } catch (dbErr) {
+            console.warn("Failed to fetch detailed task DB record:", dbErr);
+          }
+        }
+      } catch (err) {
+        console.error("Backup task status polling error:", err);
+      }
+    }, 2000);
+    
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+    };
+  }, [activeTaskId]);
+
   const handleStopTask = async () => {
     if (!activeTaskId) return;
     try {
@@ -198,16 +281,22 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
   const handleStartDiscovery = async () => {
     if (!app) return;
+    const oldStatus = app.status;
+    
+    // Optimistic UI updates
     setDiscovering(true);
+    setApp(prev => prev ? { ...prev, status: 'DISCOVERING' } : null);
+    
     try {
       const res = await api.post(`applications/${appId}/discover/`);
-      setApp(prev => prev ? { ...prev, status: 'DISCOVERING' } : null);
       if (res.data.task_id) {
         setActiveTaskId(res.data.task_id);
       }
     } catch (err) {
       console.error(err);
+      // Rollback on error
       setDiscovering(false);
+      setApp(prev => prev ? { ...prev, status: oldStatus } : null);
     }
   };
 
@@ -222,7 +311,11 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     if (window.confirm(`Are you sure you want to delete "${app.url}"? All tests, runs, and bugs will be permanently deleted.`)) {
       try {
         await api.delete(`applications/${appId}/`);
-        onBack();
+        if (onBack) {
+          onBack();
+        } else {
+          navigate('/dashboard');
+        }
       } catch (err) {
         console.error('Failed to delete application environment:', err);
       }
@@ -233,10 +326,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     try {
       const response = await api.post('test-runs/execute/', { test_case_id: testCaseId });
       if (response.data.test_run_id) {
-        setActiveTestRunId(response.data.test_run_id);
         if (response.data.task_id) {
           setActiveTaskId(response.data.task_id);
         }
+        navigate(`/results/${response.data.test_run_id}`);
       }
     } catch (err) {
       console.error('Failed to execute test run:', err);
@@ -677,6 +770,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                   `Test generation complete! Created ${currentTask.result?.tests_generated || 0} test cases using ${currentTask.result?.model_used || 'Fallback Templates'}.`
                 ) : currentTask.task_type === 'execution' ? (
                   `Execution complete! ${currentTask.result?.passed_steps || 0}/${currentTask.result?.total_steps || 0} steps passed.`
+                ) : currentTask.task_type === 'bug_detection' ? (
+                  `Bug audit complete! Discovered ${currentTask.result?.bugs_found || 0} defects.`
+                ) : currentTask.task_type === 'quality_check' ? (
+                  `Quality check complete! Calculations updated.`
                 ) : (
                   currentTask.result?.status_text || 'Task completed successfully.'
                 )
@@ -875,10 +972,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               testCases={testCases}
               onRefreshTests={fetchAppDetails}
               onTestExecuted={(runId, taskId) => {
-                setActiveTestRunId(runId);
                 if (taskId) {
                   setActiveTaskId(taskId);
                 }
+                navigate(`/results/${runId}`);
               }}
               onTaskTriggered={(taskId) => {
                 setActiveTaskId(taskId);

@@ -35,7 +35,22 @@ export const BugList: React.FC<BugListProps> = ({
     <div className="glass-card bug-list-card">
       <div className="card-header bugs-header">
         <div>
-          <h3>🐞 Bug and Defect Registry</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h3 style={{ margin: 0 }}>🐞 Bug and Defect Registry</h3>
+            {!activeTaskId && bugs.length > 0 && (
+              <span className="badge-status status-success" style={{
+                fontSize: '0.8rem',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                fontWeight: '600',
+                backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                color: '#22c55e',
+                border: '1px solid rgba(34, 197, 94, 0.3)'
+              }}>
+                Bugs Audited Successfully
+              </span>
+            )}
+          </div>
           <p className="card-subtitle">AI-classified functional and presentation errors discovered during automation</p>
         </div>
         {onRefreshBugs && (

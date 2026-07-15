@@ -1,0 +1,16 @@
+[Unit]
+Description=Celery Heavy Tasks Worker (Test Case Executions)
+After=network.target redis-server.service postgresql.service
+
+[Service]
+Type=simple
+User=django
+Group=django
+WorkingDirectory=/var/www/QA_AI_Platform/backend
+ExecStart=/var/www/QA_AI_Platform/backend/venv/bin/celery -A qa_engine worker -l info --concurrency=4 -Q execution -n heavy_worker@%%h
+Restart=always
+RestartSec=5
+EnvironmentFile=/var/www/QA_AI_Platform/.env
+
+[Install]
+WantedBy=multi-user.target

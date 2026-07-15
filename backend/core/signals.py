@@ -1,7 +1,7 @@
 import json
 import logging
 import redis
-from django.db.models.signals import post_save, post_delete
+from django.db.models.signals import post_save, post_delete, pre_delete
 from django.dispatch import receiver
 from django.conf import settings
 
@@ -63,6 +63,16 @@ def register_task_user(task_id, user_id):
         r.setex(f"task_user:{task_id}", 86400, int(user_id))
     except Exception as e:
         logger.error(f"Failed to register task user: {e}")
+
+def register_task_app(task_id, app_id):
+    """
+    Map task_id to app_id in Redis so we can track active tasks for applications.
+    """
+    try:
+        r = get_redis_client()
+        r.setex(f"task_app:{task_id}", 86400, int(app_id))
+    except Exception as e:
+        logger.error(f"Failed to register task app: {e}")
 
 @receiver(post_save)
 def model_post_save(sender, instance, created, **kwargs):
@@ -137,3 +147,39 @@ def model_post_delete(sender, instance, **kwargs):
         data['task_id'] = instance.task_id
         
     publish_event(user_id, event_type, data)
+
+
+@receiver(pre_delete, sender=Application)
+def application_pre_delete(sender, instance, **kwargs):
+    """
+    When an Application is deleted, find and stop/revoke all active Celery tasks
+    associated with it in Redis.
+    """
+    from qa_engine.celery import app as celery_app
+    
+    try:
+        r = get_redis_client()
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match='task_app:*', count=200)
+            for key in keys:
+                val = r.get(key)
+                if val and int(val) == instance.id:
+                    task_id = key.decode().replace('task_app:', '', 1)
+                    logger.info(f"Revoking active Celery task {task_id} due to application {instance.id} deletion.")
+                    # Revoke Celery task instantly (sending SIGKILL to running browser sessions)
+                    celery_app.control.revoke(task_id, terminate=True, signal='SIGKILL')
+                    
+                    # Update task status in database
+                    try:
+                        task = CeleryTask.objects.filter(task_id=task_id).first()
+                        if task and task.status in ['pending', 'progress']:
+                            task.status = 'failed'
+                            task.error = "Application deleted by user."
+                            task.save()
+                    except Exception as db_err:
+                        logger.error(f"Failed to update database status for revoked task {task_id}: {db_err}")
+            if cursor == 0:
+                break
+    except Exception as e:
+        logger.error(f"Error revoking tasks during application pre_delete: {e}")

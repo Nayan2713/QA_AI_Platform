@@ -76,19 +76,20 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             status='pending',
             progress=0
         )
-        from .signals import register_task_user
+        from .signals import register_task_user, register_task_app
         register_task_user(task_id, request.user.id)
+        register_task_app(task_id, app.id)
         
         # Trigger Celery Task
         from tasks.discovery import start_discovery
         model_choice = request.data.get('model_choice')
-        task = start_discovery.apply_async(args=[app.id, model_choice], task_id=task_id)
+        task = start_discovery.apply_async(args=[app.id, model_choice], task_id=task_id, queue='discovery')
         
         return Response({
             "status": "Discovery started",
             "task_id": task_id,
             "app_status": app.status
-        }, status=status.HTTP_200_OK)
+        }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['get'])
     def pages(self, request, pk=None):
@@ -129,10 +130,11 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 progress=0,
                 result={"status_text": f"Starting test execution run for {tc.title}..."}
             )
-            from .signals import register_task_user
+            from .signals import register_task_user, register_task_app
             register_task_user(task_id, request.user.id)
+            register_task_app(task_id, app.id)
             model_choice = request.data.get('model_choice')
-            execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id)
+            execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id, queue='execution')
             task_ids.append(task_id)
             test_run_ids.append(test_run.id)
             
@@ -140,7 +142,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             "status": "Test execution runs started",
             "test_run_ids": test_run_ids,
             "task_ids": task_ids
-        }, status=status.HTTP_200_OK)
+        }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['post'], url_path='detect-bugs')
     def detect_bugs(self, request, pk=None):
@@ -155,16 +157,17 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             progress=0,
             result={"status_text": "Initializing agentic bug audit..."}
         )
-        from .signals import register_task_user
+        from .signals import register_task_user, register_task_app
         register_task_user(task_id, request.user.id)
+        register_task_app(task_id, app.id)
         
         from tasks.bug_detection import start_agentic_bug_detection
-        task = start_agentic_bug_detection.apply_async(args=[app.id], task_id=task_id)
+        task = start_agentic_bug_detection.apply_async(args=[app.id], task_id=task_id, queue='quality')
         
         return Response({
             "status": "Bug detection started",
             "task_id": task_id
-        }, status=status.HTTP_200_OK)
+        }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['get'])
     def bugs(self, request, pk=None):
@@ -242,17 +245,18 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             progress=0,
             result={"status_text": "Initializing test generation..."}
         )
-        from .signals import register_task_user
+        from .signals import register_task_user, register_task_app
         register_task_user(task_id, request.user.id)
+        register_task_app(task_id, app.id)
 
         # Trigger Celery Task
         from tasks.test_generation import generate_tests
-        task = generate_tests.apply_async(args=[app.id, model_choice], task_id=task_id)
+        task = generate_tests.apply_async(args=[app.id, model_choice], task_id=task_id, queue='discovery')
         
         return Response({
             "status": "Test case generation started",
             "task_id": task_id
-        }, status=status.HTTP_200_OK)
+        }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=False, methods=['post'], url_path='generate_single')
     def generate_single(self, request):
@@ -302,6 +306,13 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         if not test_case_data:
             return Response({"error": "Failed to generate test case"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
+        from config.llm_config import get_llm
+        try:
+            llm = get_llm(model_choice=model_choice)
+            test_case_data["model_used"] = getattr(llm, 'model', model_choice)
+        except Exception:
+            test_case_data["model_used"] = model_choice
+            
         return Response(test_case_data)
 
     @action(detail=True, methods=['post'])
@@ -336,6 +347,10 @@ class TestRunViewSet(viewsets.ModelViewSet):
         elif self.action == 'list' and 'page' not in self.request.query_params:
             # Safeguard against MemoryError when retrieving all test runs
             queryset = queryset[:100]
+
+        # Defer loading the large metadata field for list/bulk actions to prevent database OutOfMemory crashes
+        if self.action == 'list' or ids:
+            queryset = queryset.defer('metadata')
 
         if self.action == 'retrieve':
             queryset = queryset.prefetch_related('step_results')
@@ -374,19 +389,20 @@ class TestRunViewSet(viewsets.ModelViewSet):
             progress=0,
             result={"status_text": "Starting test execution run..."}
         )
-        from .signals import register_task_user
+        from .signals import register_task_user, register_task_app
         register_task_user(task_id, request.user.id)
+        register_task_app(task_id, test_case.app_id)
 
         # Trigger Celery Task
         from tasks.execution import execute_test
-        task = execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id)
+        task = execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id, queue='execution')
         
         return Response({
             "status": "Execution started",
             "test_run_id": test_run.id,
             "task_id": task_id
-        }, status=status.HTTP_201_CREATED)
-
+        }, status=status.HTTP_202_ACCEPTED)
+ 
     @action(detail=False, methods=['post'])
     def execute_batch(self, request):
         test_case_ids = request.data.get('test_case_ids', [])
@@ -413,11 +429,12 @@ class TestRunViewSet(viewsets.ModelViewSet):
                     progress=0,
                     result={"status_text": "Starting test execution run..."}
                 )
-                from .signals import register_task_user
+                from .signals import register_task_user, register_task_app
                 register_task_user(task_id, request.user.id)
+                register_task_app(task_id, test_case.app_id)
                 
                 from tasks.execution import execute_test
-                execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id)
+                execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id, queue='execution')
                 
                 runs.append({
                     "test_run_id": test_run.id,
@@ -426,7 +443,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
                 })
             except TestCase.DoesNotExist:
                 continue
-        return Response({"runs": runs}, status=status.HTTP_200_OK)
+        return Response({"runs": runs}, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['get'])
     def status(self, request, pk=None):
@@ -656,7 +673,23 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
                 if cursor == 0:
                     break
             if user_task_ids:
-                qs = qs.filter(task_id__in=user_task_ids)
+                app_id_param = self.request.query_params.get('app_id')
+                if app_id_param:
+                    try:
+                        target_app_id = int(app_id_param)
+                        filtered_app_task_ids = []
+                        for tid in user_task_ids:
+                            app_val = r.get(f"task_app:{tid}")
+                            if app_val and int(app_val) == target_app_id:
+                                filtered_app_task_ids.append(tid)
+                        user_task_ids = filtered_app_task_ids
+                    except ValueError:
+                        pass
+                
+                if user_task_ids:
+                    qs = qs.filter(task_id__in=user_task_ids)
+                else:
+                    qs = qs.none()
             else:
                 qs = qs.none()
         except Exception:
@@ -675,6 +708,28 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
             "result": task.result,
             "error": task.error
         })
+
+    @action(detail=True, methods=['get'], url_path='celery-status')
+    def celery_status(self, request, task_id=None):
+        """
+        Get the real-time Celery task status using AsyncResult.
+        """
+        from celery.result import AsyncResult
+        result = AsyncResult(task_id)
+        
+        response_data = {
+            "task_id": task_id,
+            "status": result.state,  # PENDING, STARTED, SUCCESS, FAILURE, etc.
+            "result": None,
+            "error": None
+        }
+        
+        if result.state == 'SUCCESS':
+            response_data["result"] = result.result
+        elif result.state == 'FAILURE':
+            response_data["error"] = str(result.result)
+            
+        return Response(response_data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
     def stop(self, request, task_id=None):

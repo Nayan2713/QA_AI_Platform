@@ -180,7 +180,7 @@ class TestCaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestCase
         fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'generation_context', 'created_at')
-        read_only_fields = ('generation_context',)
+        read_only_fields = ()
 
     def get_model_used(self, obj):
         if obj.generation_context and isinstance(obj.generation_context, dict):

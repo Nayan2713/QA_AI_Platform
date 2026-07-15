@@ -122,21 +122,26 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       pollCount++;
 
       try {
-        let updatedRuns;
+        let updatedRuns = [...suiteRuns];
         if (suiteRuns.length === 1) {
           const runId = suiteRuns[0].id;
-          const res = await api.get<{ status: string }>(`test-runs/${runId}/status/`);
-          if (!isMounted) return;
-          updatedRuns = [{ ...suiteRuns[0], status: res.data.status }];
+          if (runId > 0) {
+            const res = await api.get<{ status: string }>(`test-runs/${runId}/status/`);
+            if (!isMounted) return;
+            updatedRuns = [{ ...suiteRuns[0], status: res.data.status }];
+          }
         } else {
-          const ids = suiteRuns.map(r => r.id).join(',');
-          const res = await api.get('test-runs/', { params: { ids } });
-          if (!isMounted) return;
-          const latestRuns = res.data;
-          updatedRuns = suiteRuns.map(r => {
-            const match = latestRuns.find((lr: any) => lr.id === r.id);
-            return match ? { ...r, status: match.status } : r;
-          });
+          const validIds = suiteRuns.map(r => r.id).filter(id => id > 0);
+          if (validIds.length > 0) {
+            const ids = validIds.join(',');
+            const res = await api.get('test-runs/', { params: { ids } });
+            if (!isMounted) return;
+            const latestRuns = res.data;
+            updatedRuns = suiteRuns.map(r => {
+              const match = latestRuns.find((lr: any) => lr.id === r.id);
+              return match ? { ...r, status: match.status } : r;
+            });
+          }
         }
 
         const hasChanges = updatedRuns.some((r, i) => r.status !== suiteRuns[i].status);
@@ -196,28 +201,39 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   };
 
   const handleRunTest = async (testCaseId: number) => {
+    // Optimistic UI updates
     setExecutingTestCaseId(testCaseId);
     setError('');
-    setSuccessMsg('');
+    setSuccessMsg('Triggering test run...');
+    const tc = testCases.find(t => t.id === testCaseId);
+    const tempRunId = Date.now();
+    setSuiteRuns([{
+      id: tempRunId,
+      testCaseId: testCaseId,
+      title: tc?.title || `Test Case #${testCaseId}`,
+      status: 'PENDING'
+    }]);
+    setSuiteRunStartTime(Date.now());
+    setShowSuiteProgress(true);
+
     try {
       const response = await api.post('test-runs/execute/', { test_case_id: testCaseId, model_choice: selectedModel });
       setSuccessMsg(`Test run execution started successfully.`);
       if (response.data.test_run_id) {
         onTestExecuted(response.data.test_run_id, response.data.task_id);
-        
-        const tc = testCases.find(t => t.id === testCaseId);
         setSuiteRuns([{
           id: response.data.test_run_id,
           testCaseId: testCaseId,
           title: tc?.title || `Test Case #${testCaseId}`,
           status: 'PENDING'
         }]);
-        setSuiteRunStartTime(Date.now());
-        setShowSuiteProgress(true);
       }
     } catch (err: any) {
       console.error(err);
       setError('Failed to execute test run.');
+      // Rollback on error
+      setShowSuiteProgress(false);
+      setSuiteRuns([]);
     } finally {
       setExecutingTestCaseId(null);
     }
@@ -268,11 +284,21 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
 
   const handleRunAllTests = async () => {
     if (testCases.length === 0) return;
+    // Optimistic UI updates
     setExecutingAll(true);
     setError('');
-    setSuccessMsg('');
+    setSuccessMsg(`Queueing execution for all ${testCases.length} tests...`);
+    const tempRuns = testCases.map(tc => ({
+      id: Math.random() * -1000,
+      testCaseId: tc.id!,
+      title: tc.title,
+      status: 'PENDING' as const
+    }));
+    setSuiteRuns(tempRuns);
+    setSuiteRunStartTime(Date.now());
+    setShowSuiteProgress(true);
+
     try {
-      setSuccessMsg(`Queueing execution for all ${testCases.length} tests...`);
       const testCaseIds = testCases.map(tc => tc.id);
       const response = await api.post('test-runs/execute_batch/', { test_case_ids: testCaseIds, model_choice: selectedModel });
       
@@ -287,12 +313,16 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       });
       
       setSuiteRuns(runs);
-      setSuiteRunStartTime(Date.now());
-      setShowSuiteProgress(true);
+      if (runs.length > 0) {
+        onTestExecuted(runs[0].id, runs[0].task_id);
+      }
       setSuccessMsg(`Successfully queued all ${testCases.length} tests for execution.`);
     } catch (err: any) {
       console.error(err);
       setError('Failed to run all test cases.');
+      // Rollback on error
+      setShowSuiteProgress(false);
+      setSuiteRuns([]);
     } finally {
       setExecutingAll(false);
     }
@@ -359,7 +389,22 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     <div className="glass-card test-cases-card">
       <div className="card-header tests-header">
         <div>
-          <h3>📋 AI-Generated Test Suite</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h3 style={{ margin: 0 }}>📋 AI-Generated Test Suite</h3>
+            {testCases.length > 0 && !generating && !activeTaskId && (
+              <span className="badge-status status-success" style={{
+                fontSize: '0.8rem',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                fontWeight: '600',
+                backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                color: '#22c55e',
+                border: '1px solid rgba(34, 197, 94, 0.3)'
+              }}>
+                Generation Finished
+              </span>
+            )}
+          </div>
           <p className="card-subtitle">Complete test plans constructed from discovered page structures</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
@@ -694,7 +739,11 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
                           </span>
                         )}
                         <span className={`badge-ai ${tc.ai_generated ? 'badge-ai-model' : 'badge-ai-fallback'}`}>
-                          {tc.ai_generated ? `🤖 AI Generated (${tc.model_used || 'Local LLM'})` : '📋 Fallback Template'}
+                          {tc.ai_generated 
+                            ? `🤖 AI Generated (${tc.model_used || 'Local LLM'})` 
+                            : tc.model_used === 'Manual' || !tc.model_used
+                              ? '✍️ Manual Test'
+                              : `📋 Fallback Template (${tc.model_used})`}
                         </span>
                         {getValidationBadge(tc.validation_status)}
                       </div>
