@@ -1,0 +1,8 @@
+services:
+  postgres:
+    ports: []
+  redis:
+    ports: []
+  nginx:
+    ports:
+      - "8080:80"

@@ -162,7 +162,7 @@ AUTH_PASSWORD_VALIDATORS = [
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # FIX: enable HTTPS security headers when not in debug mode
-if not DEBUG:
+if not DEBUG and os.getenv('ENABLE_SSL', 'False') == 'True':
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
