@@ -115,7 +115,7 @@ cd backend
 celery -A qa_engine worker -l info -P solo
 
 # On Mac/Linux:
-celery -A qa_engine worker -l info -P threads --concurrency=6 -Q discovery,execution,quality,celery
+celery -A qa_engine worker -l info -P threads --concurrency=2 -Q discovery,execution,quality,celery
 ```
 
 If you ever need to purge the task queue or flush Redis database due to stalled tasks:

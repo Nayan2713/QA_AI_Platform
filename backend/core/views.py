@@ -199,6 +199,11 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         app_id = self.request.query_params.get('app')
         if app_id:
             queryset = queryset.filter(app_id=app_id)
+        if self.action == 'list':
+            from django.db.models.fields.json import KeyTextTransform
+            queryset = queryset.annotate(
+                model_used_annotated=KeyTextTransform('model_used', 'generation_context')
+            ).defer('generation_context')
         return queryset
 
     def get_serializer_class(self):

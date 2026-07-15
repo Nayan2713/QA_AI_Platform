@@ -245,6 +245,8 @@ class TestCaseListSerializer(serializers.ModelSerializer):
         fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'created_at')
 
     def get_model_used(self, obj):
+        if hasattr(obj, 'model_used_annotated'):
+            return obj.model_used_annotated
         if obj.generation_context and isinstance(obj.generation_context, dict):
             return obj.generation_context.get("model_used")
         return None

@@ -95,8 +95,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }, 1000);
   }, [refetchAll]);
 
-  // 1. Fetch App details (Parallel/non-blocking)
+  // 1. Fetch App details (Parallel/non-blocking with double-guard)
   useEffect(() => {
+    let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
     setIsAppLoading(true);
@@ -105,19 +106,24 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     const fetchApp = async () => {
       try {
         const res = await api.get<Application>(`applications/${appId}/`, { signal });
-        setApp(res.data);
+        if (active) {
+          setApp(res.data);
+        }
       } catch (err: any) {
-        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+        if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch app details:', err);
           setAppError('Failed to fetch application details.');
         }
       } finally {
-        setIsAppLoading(false);
+        if (active) {
+          setIsAppLoading(false);
+        }
       }
     };
 
     fetchApp();
     return () => {
+      active = false;
       controller.abort();
     };
   }, [appId, refreshTrigger]);
@@ -129,8 +135,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }
   }, [app]);
 
-  // 2. Fetch Test Cases (Parallel/non-blocking, decoupled loader with 15s timeout)
+  // 2. Fetch Test Cases (Decoupled, parallel, 15s timeout with double-guard)
   useEffect(() => {
+    let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
     setIsTestCasesLoading(true);
@@ -141,25 +148,31 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const res = await api.get(`test-cases/?app=${appId}`, { signal, timeout: 15000 });
         const rawData = res.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
-        setTestCases(data);
+        if (active) {
+          setTestCases(data);
+        }
       } catch (err: any) {
-        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+        if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch test cases:', err);
           setTestCasesError(err);
         }
       } finally {
-        setIsTestCasesLoading(false);
+        if (active) {
+          setIsTestCasesLoading(false);
+        }
       }
     };
 
     fetchTestCases();
     return () => {
+      active = false;
       controller.abort();
     };
   }, [appId, refreshTrigger]);
 
   // 3. Fetch Bugs
   useEffect(() => {
+    let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
     setIsBugsLoading(true);
@@ -169,24 +182,30 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const res = await api.get(`bugs/?app=${appId}`, { signal });
         const rawData = res.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
-        setBugs(data);
+        if (active) {
+          setBugs(data);
+        }
       } catch (err: any) {
-        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+        if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch bugs:', err);
         }
       } finally {
-        setIsBugsLoading(false);
+        if (active) {
+          setIsBugsLoading(false);
+        }
       }
     };
 
     fetchBugs();
     return () => {
+      active = false;
       controller.abort();
     };
   }, [appId, refreshTrigger]);
 
   // 4. Fetch API Endpoints
   useEffect(() => {
+    let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
     setIsApiEndpointsLoading(true);
@@ -194,24 +213,30 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     const fetchEndpoints = async () => {
       try {
         const res = await api.get<APIEndpoint[]>(`api-endpoints/?app=${appId}`, { signal });
-        setApiEndpoints(res.data);
+        if (active) {
+          setApiEndpoints(res.data);
+        }
       } catch (err: any) {
-        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+        if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch API endpoints:', err);
         }
       } finally {
-        setIsApiEndpointsLoading(false);
+        if (active) {
+          setIsApiEndpointsLoading(false);
+        }
       }
     };
 
     fetchEndpoints();
     return () => {
+      active = false;
       controller.abort();
     };
   }, [appId, refreshTrigger]);
 
   // 5. Fetch Agent Sessions
   useEffect(() => {
+    let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
     setIsAgentSessionsLoading(true);
@@ -219,24 +244,30 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     const fetchSessions = async () => {
       try {
         const res = await api.get<AgentSession[]>(`agent-sessions/?app=${appId}`, { signal });
-        setAgentSessions(res.data);
+        if (active) {
+          setAgentSessions(res.data);
+        }
       } catch (err: any) {
-        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+        if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.warn('Failed to fetch agent sessions:', err);
         }
       } finally {
-        setIsAgentSessionsLoading(false);
+        if (active) {
+          setIsAgentSessionsLoading(false);
+        }
       }
     };
 
     fetchSessions();
     return () => {
+      active = false;
       controller.abort();
     };
   }, [appId, refreshTrigger]);
 
   // 6. Fetch API dependency Graph
   useEffect(() => {
+    let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
     setIsApiGraphLoading(true);
@@ -244,18 +275,23 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     const fetchGraph = async () => {
       try {
         const res = await api.get<any>(`applications/${appId}/api-dependency-graph/`, { signal });
-        setApiGraph(res.data);
+        if (active) {
+          setApiGraph(res.data);
+        }
       } catch (err: any) {
-        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+        if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.warn('Failed to fetch api dependency graph:', err);
         }
       } finally {
-        setIsApiGraphLoading(false);
+        if (active) {
+          setIsApiGraphLoading(false);
+        }
       }
     };
 
     fetchGraph();
     return () => {
+      active = false;
       controller.abort();
     };
   }, [appId, refreshTrigger]);
@@ -276,10 +312,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       try {
         const tasksRes = await api.get<CeleryTask[]>(`tasks/?app_id=${appId}`);
         if (!isMounted) return;
-        const active = tasksRes.data.find(t => t.status === 'pending' || t.status === 'progress');
-        if (active) {
-          setActiveTaskId(active.task_id);
-          setCurrentTask(active);
+        const activeTask = tasksRes.data.find(t => t.status === 'pending' || t.status === 'progress');
+        if (activeTask) {
+          setActiveTaskId(activeTask.task_id);
+          setCurrentTask(activeTask);
         }
       } catch (taskErr) {
         console.warn('Failed to restore active tasks:', taskErr);
@@ -583,6 +619,21 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }
   };
 
+  // If base application metadata failed to load, render connection retry overlay
+  if (appError) {
+    return (
+      <div className="glass-card loading-state" style={{ padding: '40px', textAlign: 'center', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+        <span style={{ fontSize: '2rem' }}>⚠️</span>
+        <h3 style={{ color: '#ef4444', margin: '12px 0' }}>Error Loading Application</h3>
+        <p style={{ color: 'rgba(255, 255, 255, 0.6)', marginBottom: '20px' }}>{appError}</p>
+        <button onClick={() => refetchAll()} className="btn-secondary" style={{ padding: '8px 20px' }}>
+          🔄 Retry Connection
+        </button>
+      </div>
+    );
+  }
+
+  // Render shimmer page skeleton *only* while base app details are missing/loading
   if (isAppLoading || !app) {
     return (
       <div className="glass-card loading-state" style={{ padding: '40px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
