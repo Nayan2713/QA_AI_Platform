@@ -16,14 +16,9 @@ from .serializers import (
 from services.test_validation_service import TestValidationService
 
 class StandardResultsSetPagination(PageNumberPagination):
-    page_size = 20
+    page_size = 50
     page_size_query_param = 'page_size'
     max_page_size = 100
-
-    def paginate_queryset(self, queryset, request, view=None):
-        if 'page' not in request.query_params:
-            return None
-        return super().paginate_queryset(queryset, request, view)
 
 # Celery task imports - imported inside methods to prevent circular dependency
 # or loading issues before Celery is ready.

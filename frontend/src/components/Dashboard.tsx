@@ -1,47 +1,35 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { Application } from '../lib/types';
 import { AppForm } from './AppForm';
 
 export const Dashboard: React.FC = () => {
-  const [applications, setApplications] = useState<Application[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  const fetchApplications = async () => {
-    try {
+  const { data: applications = [], isLoading, refetch } = useQuery({
+    queryKey: ['applications'],
+    queryFn: async () => {
       const response = await api.get<Application[]>('applications/');
-      setApplications(response.data);
-      setError('');
-    } catch (err) {
-      console.error(err);
-      setError('Failed to fetch applications list.');
-    } finally {
-      setLoading(false);
+      return response.data;
     }
-  };
-
-  const fetchTimeoutRef = React.useRef<any>(null);
-  const fetchApplicationsRef = React.useRef(fetchApplications);
-  useEffect(() => {
-    fetchApplicationsRef.current = fetchApplications;
   });
 
-  const fetchApplicationsDebounced = React.useCallback(() => {
-    if (fetchTimeoutRef.current) {
-      clearTimeout(fetchTimeoutRef.current);
+  const refetchTimeoutRef = React.useRef<any>(null);
+  const refetchDebounced = React.useCallback(() => {
+    if (refetchTimeoutRef.current) {
+      clearTimeout(refetchTimeoutRef.current);
     }
-    fetchTimeoutRef.current = setTimeout(() => {
-      fetchApplicationsRef.current();
+    refetchTimeoutRef.current = setTimeout(() => {
+      refetch();
     }, 1500);
-  }, []);
+  }, [refetch]);
 
   useEffect(() => {
-    fetchApplications();
-
     const token = localStorage.getItem('access_token');
     if (!token) return;
 
@@ -63,7 +51,7 @@ export const Dashboard: React.FC = () => {
           type.startsWith('application_') ||
           type.startsWith('bug_')
         ) {
-          fetchApplicationsDebounced();
+          refetchDebounced();
         }
       } catch (err) {
         console.error('Failed to parse SSE event on dashboard:', err);
@@ -72,14 +60,14 @@ export const Dashboard: React.FC = () => {
 
     return () => {
       eventSource.close();
-      if (fetchTimeoutRef.current) {
-        clearTimeout(fetchTimeoutRef.current);
+      if (refetchTimeoutRef.current) {
+        clearTimeout(refetchTimeoutRef.current);
       }
     };
-  }, []);
+  }, [refetchDebounced]);
 
   const handleAppCreated = (newApp: Application) => {
-    setApplications([newApp, ...applications]);
+    queryClient.invalidateQueries({ queryKey: ['applications'] });
     setShowAddForm(false);
     navigate(`/scans/${newApp.id}`); // Auto-navigate to scans detail page
   };
@@ -88,12 +76,29 @@ export const Dashboard: React.FC = () => {
     if (window.confirm(`Are you sure you want to delete "${url}"? All pages, test cases, and bug logs will be permanently deleted.`)) {
       try {
         await api.delete(`applications/${id}/`);
-        setApplications(applications.filter(app => app.id !== id));
+        queryClient.invalidateQueries({ queryKey: ['applications'] });
       } catch (err) {
         console.error(err);
         setError('Failed to delete application environment.');
       }
     }
+  };
+
+  const prefetchAppDetails = (appId: number) => {
+    queryClient.prefetchQuery({
+      queryKey: ['application', appId],
+      queryFn: async () => {
+        const res = await api.get(`applications/${appId}/`);
+        return res.data;
+      },
+    });
+    queryClient.prefetchQuery({
+      queryKey: ['testCases', appId],
+      queryFn: async () => {
+        const res = await api.get(`test-cases/?app=${appId}`);
+        return Array.isArray(res.data) ? res.data : (res.data.results || []);
+      },
+    });
   };
 
   return (
@@ -123,10 +128,40 @@ export const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {loading ? (
-        <div className="glass-card loading-state">
-          <div className="spinner"></div>
-          <p>Loading application environments...</p>
+      {isLoading ? (
+        <div className="applications-grid">
+          <style>{`
+            @keyframes shimmer {
+              0% { background-position: -200% 0; }
+              100% { background-position: 200% 0; }
+            }
+            .skeleton-card {
+              min-height: 180px;
+              background: rgba(255, 255, 255, 0.02);
+              border: 1px solid rgba(255, 255, 255, 0.05);
+              border-radius: 12px;
+              padding: 20px;
+              display: flex;
+              flex-direction: column;
+              gap: 16px;
+            }
+            .skeleton-shimmer {
+              background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.02) 75%);
+              background-size: 200% 100%;
+              animation: shimmer 1.5s infinite;
+              border-radius: 4px;
+            }
+          `}</style>
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="skeleton-card">
+              <div className="skeleton-shimmer" style={{ height: '24px', width: '70%' }} />
+              <div className="skeleton-shimmer" style={{ height: '16px', width: '40%' }} />
+              <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                <div className="skeleton-shimmer" style={{ height: '28px', width: '80px', borderRadius: '6px' }} />
+                <div className="skeleton-shimmer" style={{ height: '28px', width: '80px', borderRadius: '6px' }} />
+              </div>
+            </div>
+          ))}
         </div>
       ) : applications.length === 0 ? (
         <div className="glass-card empty-dashboard-card">
@@ -147,6 +182,8 @@ export const Dashboard: React.FC = () => {
               key={app.id} 
               className="glass-card application-card"
               onClick={() => navigate(`/scans/${app.id}`)}
+              onMouseEnter={() => prefetchAppDetails(app.id)}
+              onFocus={() => prefetchAppDetails(app.id)}
               style={{ cursor: 'pointer' }}
             >
               <div className="app-card-header">

@@ -1,0 +1,9 @@
+User-agent: *
+Disallow: /api/
+Disallow: /admin/
+Disallow: /results/
+Disallow: /scans/
+Allow: /dashboard
+Allow: /bugs
+Allow: /
+

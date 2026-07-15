@@ -29,15 +29,29 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const appId = propAppId || parseInt(id || '0');
   const navigate = useNavigate();
 
+  // Vanilla state management
   const [app, setApp] = useState<Application | null>(null);
+  const [isAppLoading, setIsAppLoading] = useState(true);
+  const [appError, setAppError] = useState('');
+
   const [testCases, setTestCases] = useState<TestCase[]>([]);
+  const [isTestCasesLoading, setIsTestCasesLoading] = useState(true);
+  const [testCasesError, setTestCasesError] = useState<any>(null);
+
   const [bugs, setBugs] = useState<Bug[]>([]);
+  const [isBugsLoading, setIsBugsLoading] = useState(true);
+
   const [apiEndpoints, setApiEndpoints] = useState<APIEndpoint[]>([]);
+  const [isApiEndpointsLoading, setIsApiEndpointsLoading] = useState(true);
+
   const [agentSessions, setAgentSessions] = useState<AgentSession[]>([]);
+  const [isAgentSessionsLoading, setIsAgentSessionsLoading] = useState(true);
+
   const [apiGraph, setApiGraph] = useState<{ nodes: any[]; links: any[] } | null>(null);
+  const [isApiGraphLoading, setIsApiGraphLoading] = useState(true);
+
   const [selectedApiAnalysis, setSelectedApiAnalysis] = useState<any | null>(null);
   const [loadingApiAnalysisId, setLoadingApiAnalysisId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
   const [discovering, setDiscovering] = useState(false);
   const activeTab = (tab as any) || 'discovery';
   const setActiveTab = (tabName: string) => {
@@ -65,43 +79,203 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const setActiveTaskId = propSetActiveTaskId || setLocalActiveTaskId;
   const [currentTask, setCurrentTask] = useState<CeleryTask | null>(null);
 
-  const fetchAppDetails = async () => {
-    try {
-      const appRes = await api.get<Application>(`applications/${appId}/`);
-      setApp(appRes.data);
-      setDiscovering(appRes.data.status === 'DISCOVERING');
+  // Manual refresh trigger increment to trigger re-fetches
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const refetchAll = React.useCallback(() => {
+    setRefreshTrigger(prev => prev + 1);
+  }, []);
 
-      // Fetch test cases
-      const testCasesRes = await api.get<TestCase[]>(`test-cases/?app=${appId}`);
-      setTestCases(testCasesRes.data);
+  const refetchTimeoutRef = React.useRef<any>(null);
+  const refetchAllDebounced = React.useCallback(() => {
+    if (refetchTimeoutRef.current) {
+      clearTimeout(refetchTimeoutRef.current);
+    }
+    refetchTimeoutRef.current = setTimeout(() => {
+      refetchAll();
+    }, 1000);
+  }, [refetchAll]);
 
-      // Fetch bugs
-      const bugsRes = await api.get<Bug[]>(`bugs/?app=${appId}`);
-      setBugs(bugsRes.data);
-      
-      // Fetch endpoints
-      const endpointsRes = await api.get<APIEndpoint[]>(`api-endpoints/?app=${appId}`);
-      setApiEndpoints(endpointsRes.data);
+  // 1. Fetch App details (Parallel/non-blocking)
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    setIsAppLoading(true);
+    setAppError('');
 
-      // Fetch sessions
+    const fetchApp = async () => {
       try {
-        const sessionsRes = await api.get<AgentSession[]>(`agent-sessions/?app=${appId}`);
-        setAgentSessions(sessionsRes.data);
-      } catch (sessionErr) {
-        console.warn('Failed to fetch agent sessions:', sessionErr);
+        const res = await api.get<Application>(`applications/${appId}/`, { signal });
+        setApp(res.data);
+      } catch (err: any) {
+        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+          console.error('Failed to fetch app details:', err);
+          setAppError('Failed to fetch application details.');
+        }
+      } finally {
+        setIsAppLoading(false);
       }
+    };
 
-      // Fetch graph
+    fetchApp();
+    return () => {
+      controller.abort();
+    };
+  }, [appId, refreshTrigger]);
+
+  // Sync discovering status
+  useEffect(() => {
+    if (app) {
+      setDiscovering(app.status === 'DISCOVERING');
+    }
+  }, [app]);
+
+  // 2. Fetch Test Cases (Parallel/non-blocking, decoupled loader with 15s timeout)
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    setIsTestCasesLoading(true);
+    setTestCasesError(null);
+
+    const fetchTestCases = async () => {
       try {
-        const graphRes = await api.get<any>(`applications/${appId}/api-dependency-graph/`);
-        setApiGraph(graphRes.data);
-      } catch (graphErr) {
-        console.warn('Failed to fetch api dependency graph:', graphErr);
+        const res = await api.get(`test-cases/?app=${appId}`, { signal, timeout: 15000 });
+        const rawData = res.data;
+        const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
+        setTestCases(data);
+      } catch (err: any) {
+        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+          console.error('Failed to fetch test cases:', err);
+          setTestCasesError(err);
+        }
+      } finally {
+        setIsTestCasesLoading(false);
       }
+    };
 
-      // Restore active task if one is running for this application
+    fetchTestCases();
+    return () => {
+      controller.abort();
+    };
+  }, [appId, refreshTrigger]);
+
+  // 3. Fetch Bugs
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    setIsBugsLoading(true);
+
+    const fetchBugs = async () => {
+      try {
+        const res = await api.get(`bugs/?app=${appId}`, { signal });
+        const rawData = res.data;
+        const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
+        setBugs(data);
+      } catch (err: any) {
+        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+          console.error('Failed to fetch bugs:', err);
+        }
+      } finally {
+        setIsBugsLoading(false);
+      }
+    };
+
+    fetchBugs();
+    return () => {
+      controller.abort();
+    };
+  }, [appId, refreshTrigger]);
+
+  // 4. Fetch API Endpoints
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    setIsApiEndpointsLoading(true);
+
+    const fetchEndpoints = async () => {
+      try {
+        const res = await api.get<APIEndpoint[]>(`api-endpoints/?app=${appId}`, { signal });
+        setApiEndpoints(res.data);
+      } catch (err: any) {
+        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+          console.error('Failed to fetch API endpoints:', err);
+        }
+      } finally {
+        setIsApiEndpointsLoading(false);
+      }
+    };
+
+    fetchEndpoints();
+    return () => {
+      controller.abort();
+    };
+  }, [appId, refreshTrigger]);
+
+  // 5. Fetch Agent Sessions
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    setIsAgentSessionsLoading(true);
+
+    const fetchSessions = async () => {
+      try {
+        const res = await api.get<AgentSession[]>(`agent-sessions/?app=${appId}`, { signal });
+        setAgentSessions(res.data);
+      } catch (err: any) {
+        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+          console.warn('Failed to fetch agent sessions:', err);
+        }
+      } finally {
+        setIsAgentSessionsLoading(false);
+      }
+    };
+
+    fetchSessions();
+    return () => {
+      controller.abort();
+    };
+  }, [appId, refreshTrigger]);
+
+  // 6. Fetch API dependency Graph
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    setIsApiGraphLoading(true);
+
+    const fetchGraph = async () => {
+      try {
+        const res = await api.get<any>(`applications/${appId}/api-dependency-graph/`, { signal });
+        setApiGraph(res.data);
+      } catch (err: any) {
+        if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+          console.warn('Failed to fetch api dependency graph:', err);
+        }
+      } finally {
+        setIsApiGraphLoading(false);
+      }
+    };
+
+    fetchGraph();
+    return () => {
+      controller.abort();
+    };
+  }, [appId, refreshTrigger]);
+
+  // Cleanup timeout hook
+  useEffect(() => {
+    return () => {
+      if (refetchTimeoutRef.current) {
+        clearTimeout(refetchTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Restore active task if one is running for this application on mount
+  useEffect(() => {
+    let isMounted = true;
+    const restoreActiveTask = async () => {
       try {
         const tasksRes = await api.get<CeleryTask[]>(`tasks/?app_id=${appId}`);
+        if (!isMounted) return;
         const active = tasksRes.data.find(t => t.status === 'pending' || t.status === 'progress');
         if (active) {
           setActiveTaskId(active.task_id);
@@ -110,39 +284,11 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       } catch (taskErr) {
         console.warn('Failed to restore active tasks:', taskErr);
       }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchTimeoutRef = React.useRef<any>(null);
-  const fetchAppDetailsRef = React.useRef(fetchAppDetails);
-  useEffect(() => {
-    fetchAppDetailsRef.current = fetchAppDetails;
-  });
-
-  const fetchAppDetailsDebounced = React.useCallback(() => {
-    if (fetchTimeoutRef.current) {
-      clearTimeout(fetchTimeoutRef.current);
-    }
-    fetchTimeoutRef.current = setTimeout(() => {
-      fetchAppDetailsRef.current();
-    }, 1000);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (fetchTimeoutRef.current) {
-        clearTimeout(fetchTimeoutRef.current);
-      }
     };
-  }, []);
-
-  useEffect(() => {
-    setShowLoginError(false);
-    fetchAppDetails();
+    restoreActiveTask();
+    return () => {
+      isMounted = false;
+    };
   }, [appId]);
 
   // Refs to allow SSE handler to access the latest state without reconnecting
@@ -176,7 +322,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             if (data.task_id === activeTaskIdRef.current) {
               setCurrentTask(data);
               if (data.status === 'success' || data.status === 'failed') {
-                fetchAppDetailsDebounced();
+                refetchAllDebounced();
                 setTimeout(() => {
                   setActiveTaskId(null);
                   setCurrentTask(null);
@@ -190,7 +336,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               setApp(prev => prev ? { ...prev, ...data } : null);
               if (data.status === 'DISCOVERED' || data.status === 'FAILED') {
                 setDiscovering(false);
-                fetchAppDetailsDebounced();
+                refetchAllDebounced();
               }
             }
             break;
@@ -201,7 +347,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           case 'bug_updated':
           case 'testrun_updated':
           case 'testresult_created':
-            fetchAppDetailsDebounced();
+            refetchAllDebounced();
             break;
 
           default:
@@ -215,7 +361,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     return () => {
       eventSource.close();
     };
-  }, [appId]);
+  }, [appId, refetchAllDebounced]);
 
   // Backup polling for Celery tasks using real-time celery-status endpoint
   useEffect(() => {
@@ -239,7 +385,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const celeryStatus = res.data.status;
         
         if (celeryStatus === 'SUCCESS' || celeryStatus === 'FAILURE') {
-          fetchAppDetailsDebounced();
+          refetchAllDebounced();
           clearInterval(pollInterval);
           setTimeout(() => {
             if (isMounted) {
@@ -260,12 +406,12 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         console.error("Backup task status polling error:", err);
       }
     }, 2000);
-    
+
     return () => {
       isMounted = false;
       clearInterval(pollInterval);
     };
-  }, [activeTaskId]);
+  }, [activeTaskId, refetchAllDebounced]);
 
   const handleStopTask = async () => {
     if (!activeTaskId) return;
@@ -273,7 +419,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       await api.post(`tasks/${activeTaskId}/stop/`);
       setActiveTaskId(null);
       setCurrentTask(null);
-      await fetchAppDetails();
+      await refetchAll();
     } catch (err) {
       console.error('Failed to stop task:', err);
     }
@@ -302,7 +448,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
   const handleDiscoveryComplete = () => {
     setDiscovering(false);
-    fetchAppDetails();
+    refetchAll();
     setActiveTab('tests'); // Auto navigate to tests when discovery completes
   };
 
@@ -437,11 +583,30 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }
   };
 
-  if (loading || !app) {
+  if (isAppLoading || !app) {
     return (
-      <div className="glass-card loading-state">
-        <div className="spinner"></div>
-        <p>Loading application details...</p>
+      <div className="glass-card loading-state" style={{ padding: '40px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <style>{`
+          @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+          }
+          .skeleton-line {
+            height: 16px;
+            background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 4px;
+          }
+        `}</style>
+        <div className="skeleton-line" style={{ width: '40%', height: '32px', marginBottom: '10px' }} />
+        <div className="skeleton-line" style={{ width: '80%' }} />
+        <div className="skeleton-line" style={{ width: '60%' }} />
+        <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+          <div className="skeleton-line" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
+          <div className="skeleton-line" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
+          <div className="skeleton-line" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
+        </div>
       </div>
     );
   }
@@ -967,27 +1132,47 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           )}
 
           {activeTab === 'tests' && (
-            <TestCaseList 
-              appId={app.id}
-              testCases={testCases}
-              onRefreshTests={fetchAppDetails}
-              onTestExecuted={(runId, taskId) => {
-                if (taskId) {
-                  setActiveTaskId(taskId);
-                }
-                navigate(`/results/${runId}`);
-              }}
-              onTaskTriggered={(taskId) => {
-                setActiveTaskId(taskId);
-              }}
-              activeTaskId={activeTaskId}
-            />
+            <div style={{ position: 'relative' }}>
+              {isTestCasesLoading ? (
+                <div className="glass-card" style={{ padding: '40px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
+                  <div className="spinner-small" style={{ borderTopColor: '#60a5fa' }} />
+                  <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }}>Loading test suite...</p>
+                </div>
+              ) : testCasesError ? (
+                <div className="glass-card" style={{ padding: '30px', textAlign: 'center', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                  <span style={{ fontSize: '2rem' }}>⚠️</span>
+                  <h4 style={{ color: '#ef4444', margin: '8px 0' }}>Failed to Load Test Cases</h4>
+                  <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem', marginBottom: '16px' }}>
+                    {testCasesError instanceof Error ? testCasesError.message : 'The request timed out or connection was refused.'}
+                  </p>
+                  <button onClick={() => refetchAll()} className="btn-secondary" style={{ padding: '6px 16px', fontSize: '0.8rem' }}>
+                    🔄 Try Again
+                  </button>
+                </div>
+              ) : (
+                <TestCaseList 
+                  appId={app.id}
+                  testCases={testCases}
+                  onRefreshTests={refetchAll}
+                  onTestExecuted={(runId, taskId) => {
+                    if (taskId) {
+                      setActiveTaskId(taskId);
+                    }
+                    navigate(`/results/${runId}`);
+                  }}
+                  onTaskTriggered={(taskId) => {
+                    setActiveTaskId(taskId);
+                  }}
+                  activeTaskId={activeTaskId}
+                />
+              )}
+            </div>
           )}
 
           {activeTab === 'bugs' && (
             <BugList 
               bugs={bugs} 
-              onRefreshBugs={fetchAppDetails}
+              onRefreshBugs={refetchAll}
               onRunTestCase={handleRunTestCase}
               activeTaskId={activeTaskId}
             />
@@ -1134,7 +1319,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             <TestResults 
               testRunId={activeTestRunId} 
               onClose={() => setActiveTestRunId(null)}
-              onBugDetected={fetchAppDetails}
+              onBugDetected={refetchAll}
             />
           </div>
         </div>

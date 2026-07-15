@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import api from './lib/api';
 import { User, Bug } from './lib/types';
+import { useQuery } from '@tanstack/react-query';
 import { Navigation } from './components/Navigation';
-import { Dashboard } from './components/Dashboard';
-import { AppDetail } from './components/AppDetail';
-import { BugList } from './components/BugList';
-import { TestResults } from './components/TestResults';
 import './App.css';
+
+const Dashboard = React.lazy(() => import('./components/Dashboard').then(module => ({ default: module.Dashboard })));
+const AppDetail = React.lazy(() => import('./components/AppDetail').then(module => ({ default: module.AppDetail })));
+const BugList = React.lazy(() => import('./components/BugList').then(module => ({ default: module.BugList })));
+const TestResults = React.lazy(() => import('./components/TestResults').then(module => ({ default: module.TestResults })));
 
 // Standalone wrapper for rendering execution results route-based
 const TestResultsRoute = () => {
@@ -27,11 +29,20 @@ const TestResultsRoute = () => {
 function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('access_token'));
   const [username, setUsername] = useState<string>(localStorage.getItem('username') || '');
-  const [bugs, setBugs] = useState<Bug[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   
   const navigate = useNavigate();
   const location = useLocation();
+
+  const { data: bugs = [], refetch: fetchGlobalBugs } = useQuery({
+    queryKey: ['globalBugs'],
+    queryFn: async ({ signal }) => {
+      const response = await api.get<Bug[]>('bugs/', { signal });
+      const rawData = response.data as any;
+      return Array.isArray(rawData) ? rawData : (rawData.results || []);
+    },
+    enabled: !!token && location.pathname === '/bugs',
+  });
 
   // Auth Form State
   const [isLogin, setIsLogin] = useState(true);
@@ -51,22 +62,6 @@ function App() {
       setUsername(storedUser);
     }
   }, []);
-
-  // Fetch bugs if global bugs view is selected (or path is /bugs)
-  useEffect(() => {
-    if (token && location.pathname === '/bugs') {
-      fetchGlobalBugs();
-    }
-  }, [location.pathname, token]);
-
-  const fetchGlobalBugs = async () => {
-    try {
-      const response = await api.get<Bug[]>('bugs/');
-      setBugs(response.data);
-    } catch (err) {
-      console.error('Failed to fetch bugs:', err);
-    }
-  };
 
   const handleRunTestCaseFromGlobal = async (testCaseId: number) => {
     try {
@@ -252,49 +247,38 @@ function App() {
       />
       
       <main className="main-content">
-        <Routes>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route 
-            path="/scans/:id" 
-            element={
-              <AppDetail 
-                activeTaskId={activeTaskId}
-                setActiveTaskId={setActiveTaskId}
-              />
-            } 
-          />
-          <Route 
-            path="/scans/:id/:tab" 
-            element={
-              <AppDetail 
-                activeTaskId={activeTaskId}
-                setActiveTaskId={setActiveTaskId}
-              />
-            } 
-          />
-          <Route 
-            path="/scans/:id/:tab/:runId" 
-            element={
-              <AppDetail 
-                activeTaskId={activeTaskId}
-                setActiveTaskId={setActiveTaskId}
-              />
-            } 
-          />
-          <Route path="/results/:id" element={<TestResultsRoute />} />
-          <Route 
-            path="/bugs" 
-            element={
-              <BugList 
-                bugs={bugs} 
-                onRefreshBugs={fetchGlobalBugs} 
-                onRunTestCase={handleRunTestCaseFromGlobal}
-                activeTaskId={activeTaskId}
-              />
-            } 
-          />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+        <React.Suspense fallback={
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '200px', gap: '16px' }}>
+            <div className="spinner-small"></div>
+            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }}>Loading view...</p>
+          </div>
+        }>
+          <Routes>
+            <Route path="/dashboard" element={<Dashboard />} />
+             <Route 
+               path="/scans/:id/:tab?/:runId?" 
+               element={
+                 <AppDetail 
+                   activeTaskId={activeTaskId}
+                   setActiveTaskId={setActiveTaskId}
+                 />
+               } 
+             />
+            <Route path="/results/:id" element={<TestResultsRoute />} />
+            <Route 
+              path="/bugs" 
+              element={
+                <BugList 
+                  bugs={bugs} 
+                  onRefreshBugs={fetchGlobalBugs} 
+                  onRunTestCase={handleRunTestCaseFromGlobal}
+                  activeTaskId={activeTaskId}
+                />
+              } 
+            />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </React.Suspense>
       </main>
       
       <footer className="app-footer">
