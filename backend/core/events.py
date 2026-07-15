@@ -59,9 +59,9 @@ class RealTimeEventView(View):
                             if event_user_id is None or int(event_user_id) == user_id:
                                 yield f"data: {payload_str}\n\n"
                         
-                        # Send periodic keep-alive heartbeat every 15 seconds to prevent connection drops
+                        # Send periodic keep-alive heartbeat every 5 seconds to prevent connection drops and detect disconnects
                         now = time.time()
-                        if now - last_heartbeat > 15:
+                        if now - last_heartbeat > 5:
                             yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
                             last_heartbeat = now
                             
@@ -70,6 +70,9 @@ class RealTimeEventView(View):
                         time.sleep(1)
                         pubsub = r.pubsub()
                         pubsub.subscribe('qa_platform_events')
+                    except (BrokenPipeError, ConnectionResetError) as write_err:
+                        logger.info(f"SSE client disconnected: {write_err}")
+                        break
                     except Exception as loop_err:
                         logger.error(f"Error in SSE loop: {loop_err}")
                         time.sleep(1)
