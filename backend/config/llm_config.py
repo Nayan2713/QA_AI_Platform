@@ -229,13 +229,29 @@ def get_llm(application=None, model_choice: str | None = None):
             raise RuntimeError(f"Failed to initialize ChatGPT: {e}")
 
     # ---- Fallback Sequence (Auto / None) ----
-    # 1. Local Ollama
+    # 1. Cloud OpenAI — try first if key is valid
+    cloud_api_key = getattr(settings, 'OPENAI_API_KEY', None)
+    if _is_valid_openai_key(cloud_api_key):
+        try:
+            from langchain_openai import ChatOpenAI
+            logger.info("Instantiating Cloud OpenAI (gpt-4o-mini) as primary auto choice.")
+            return ChatOpenAI(
+                api_key=cloud_api_key,
+                model="gpt-4o-mini",
+                temperature=0.2,
+                timeout=30.0,
+                max_retries=1,
+            )
+        except Exception as e:
+            logger.warning(f"Cloud OpenAI init failed as auto choice: {e}. Trying local Ollama next...")
+
+    # 2. Local Ollama
     try:
         return _build_ollama()
     except Exception as e:
-        logger.warning(f"Ollama init failed: {e}. Trying next gateway...")
+        logger.warning(f"Local Ollama init failed: {e}. Trying local OpenAI gateway next...")
 
-    # 2. Local OpenAI-compatible gateway (e.g. LM Studio)
+    # 3. Local OpenAI-compatible gateway (e.g. LM Studio)
     try:
         local_url = getattr(settings, 'LOCAL_LLM_API_URL', 'http://localhost:1234/v1')
         if is_port_open(local_url, timeout=0.5):
@@ -252,30 +268,9 @@ def get_llm(application=None, model_choice: str | None = None):
         else:
             logger.warning(f"Local OpenAI gateway port closed at {local_url}. Skipping.")
     except Exception as e:
-        logger.warning(f"Local OpenAI gateway init failed: {e}. Trying cloud...")
+        logger.warning(f"Local OpenAI gateway init failed: {e}.")
 
-    # 3. Cloud OpenAI — only when key is valid
-    cloud_api_key = getattr(settings, 'OPENAI_API_KEY', None)
-    if not _is_valid_openai_key(cloud_api_key):
-        logger.warning(
-            "OPENAI_API_KEY is not set or invalid. "
-            "Skipping Cloud OpenAI — falling back to deterministic test generation."
-        )
-        raise RuntimeError("No LLM gateway available. Using deterministic fallback.")
-
-    try:
-        from langchain_openai import ChatOpenAI
-        logger.info("Instantiating Cloud OpenAI (gpt-4o-mini) as fallback.")
-        return ChatOpenAI(
-            api_key=cloud_api_key,
-            model="gpt-4o-mini",
-            temperature=0.2,
-            timeout=30.0,
-            max_retries=1,
-        )
-    except Exception as e:
-        logger.error(f"Cloud OpenAI init failed: {e}")
-        raise RuntimeError(f"All LLM gateways failed: {e}")
+    raise RuntimeError("No LLM gateway available. Using deterministic fallback.")
 
 
 # ---------------------------------------------------------------------------
