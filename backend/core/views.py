@@ -66,6 +66,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         task_id = str(uuid.uuid4())
         
         CeleryTask.objects.create(
+            app=app,
             task_id=task_id,
             task_type='discovery',
             status='pending',
@@ -119,6 +120,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             test_run = TestRun.objects.create(test_case=tc, status='PENDING')
             task_id = str(uuid.uuid4())
             CeleryTask.objects.create(
+                app=app,
                 task_id=task_id,
                 task_type='execution',
                 status='pending',
@@ -146,6 +148,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         task_id = str(uuid.uuid4())
         
         CeleryTask.objects.create(
+            app=app,
             task_id=task_id,
             task_type='bug_detection',
             status='pending',
@@ -187,6 +190,102 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         from services.dependency_mapper import APIDependencyMapper
         graph = APIDependencyMapper.build_dependency_graph(app)
         return Response(graph)
+
+    @action(detail=True, methods=['post'], url_path='stop-all')
+    def stop_all(self, request, pk=None):
+        """
+        Stop ALL pending/running Celery tasks for this application.
+
+        For -P threads workers (Windows), Celery revoke(terminate=True) cannot
+        kill threads via SIGKILL. We use cooperative cancellation via Redis
+        stop flags — each task calls check_cancelled(task_id) at every step,
+        and raises TaskCancelled when the flag is set.
+        """
+        app = self.get_object()
+        from qa_engine.celery import app as celery_app
+        from qa_engine.redis_client import get_redis_client
+        from tasks.cancellation import set_stop_flag
+
+        stopped_task_ids = []
+        errors = []
+
+        try:
+            # 1. Fetch active task IDs from SQL database first (robust persistent mapping)
+            db_task_ids = list(
+                CeleryTask.objects.filter(
+                    app=app,
+                    status__in=['pending', 'progress']
+                ).values_list('task_id', flat=True)
+            )
+
+            # 2. Redis scan fallback
+            redis_task_ids = []
+            try:
+                r = get_redis_client()
+                cursor = 0
+                while True:
+                    cursor, keys = r.scan(cursor, match='task_app:*', count=200)
+                    for key in keys:
+                        val = r.get(key)
+                        if val and int(val) == app.id:
+                            tid = key.decode().replace('task_app:', '', 1)
+                            redis_task_ids.append(tid)
+                    if cursor == 0:
+                        break
+            except Exception as redis_err:
+                errors.append(f"Redis registry lookup warning: {str(redis_err)}")
+
+            # Combine unique task IDs
+            all_task_ids = list(set(db_task_ids + redis_task_ids))
+
+            for tid in all_task_ids:
+                try:
+                    # Set cooperative stop flag (works for threads)
+                    set_stop_flag(tid)
+
+                    # Try Celery revoke
+                    try:
+                        celery_app.control.revoke(tid, terminate=True, signal='SIGTERM')
+                    except Exception:
+                        pass
+
+                    # Mark CeleryTask as failed in DB
+                    updated = CeleryTask.objects.filter(
+                        task_id=tid,
+                        status__in=['pending', 'progress']
+                    ).update(status='failed', error='Stopped by user.')
+                    stopped_task_ids.append(tid)
+                except Exception as e:
+                    errors.append(f"{tid}: {str(e)}")
+
+        except Exception as e:
+            return Response(
+                {"status": "error", "message": f"Failed to stop tasks: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # Mark any PENDING/RUNNING TestRuns for this app as FAILED
+        try:
+            TestRun.objects.filter(
+                test_case__app=app,
+                status__in=['PENDING', 'RUNNING']
+            ).update(status='FAILED')
+        except Exception as e:
+            errors.append(f"TestRun update failed: {str(e)})")
+
+        # Reset app to IDLE if it was DISCOVERING
+        try:
+            Application.objects.filter(id=app.id, status='DISCOVERING').update(status='IDLE')
+        except Exception as e:
+            errors.append(f"App status reset failed: {str(e)}")
+
+        return Response({
+            "status": "success",
+            "stopped_count": len(stopped_task_ids),
+            "errors": errors,
+            "message": f"Stop signal sent to {len(stopped_task_ids)} task(s) for this application."
+        })
+
 
 
 class TestCaseViewSet(viewsets.ModelViewSet):
@@ -239,6 +338,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         task_id = str(uuid.uuid4())
         
         CeleryTask.objects.create(
+            app=app,
             task_id=task_id,
             task_type='test_generation',
             status='pending',
@@ -383,6 +483,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
         task_id = str(uuid.uuid4())
         
         CeleryTask.objects.create(
+            app=test_case.app,
             task_id=task_id,
             task_type='execution',
             status='pending',
@@ -423,6 +524,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
                 task_id = str(uuid.uuid4())
                 
                 CeleryTask.objects.create(
+                    app=test_case.app,
                     task_id=task_id,
                     task_type='execution',
                     status='pending',
@@ -771,6 +873,7 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
 class AgentSessionViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AgentSessionSerializer
     permission_classes = (permissions.IsAuthenticated,)
+    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
         queryset = AgentSession.objects.filter(application__user=self.request.user).order_by('-created_at')

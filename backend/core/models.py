@@ -208,6 +208,7 @@ class CeleryTask(models.Model):
     """Track all celery tasks"""
     TASK_STATUS_CHOICES = CeleryTaskStatus.choices
     
+    app = models.ForeignKey(Application, on_delete=models.CASCADE, null=True, blank=True, related_name='celery_tasks')
     task_id = models.CharField(max_length=255, unique=True)
     task_type = models.CharField(max_length=100)  # 'discovery', 'test_gen', etc
     status = models.CharField(

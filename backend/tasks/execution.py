@@ -11,6 +11,7 @@ from django.db import transaction
 from playwright.sync_api import sync_playwright, Browser, BrowserContext
 
 from core.models import TestRun, TestResult, TestCase, CeleryTask
+from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -358,6 +359,9 @@ def execute_test(self, test_run_id, model_choice=None):
 
             # ─── Step execution loop ───────────────────────
             for index, step in enumerate(steps):
+                # Cooperative cancellation: check stop flag before every step
+                check_cancelled(task_id)
+
                 ensure_authenticated(page, context, app)
 
                 step_num = index + 1
@@ -654,6 +658,22 @@ def execute_test(self, test_run_id, model_choice=None):
         # TestRun.metadata, avoiding a potentially large broker payload.
         run_quality_analysis.apply_async(args=[test_run.id], queue='quality')
 
+    except TaskCancelled:
+        logger.info(f"execute_test {task_id} cancelled by user.")
+        def handle_cancelled():
+            try:
+                test_run.status = 'FAILED'
+                test_run.save(update_fields=['status'])
+            except Exception:
+                pass
+            task_record.status = 'failed'
+            task_record.error = 'Stopped by user.'
+            task_record.completed_at = timezone.now()
+            task_record.save()
+            clear_stop_flag(task_id)
+        run_in_thread(handle_cancelled)
+        return {"status": "CANCELLED", "message": "Stopped by user."}
+
     except Exception as e:
         logger.error(f"execute_test outer failure: {e}")
         def handle_outer_error():
@@ -661,8 +681,11 @@ def execute_test(self, test_run_id, model_choice=None):
             task_record.error = str(e)
             task_record.completed_at = timezone.now()
             task_record.save()
+            clear_stop_flag(task_id)
         run_in_thread(handle_outer_error)
         return {"error": str(e)}
+
+    clear_stop_flag(task_id)
 
     return {
         "status": test_run.status,

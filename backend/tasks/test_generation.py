@@ -6,6 +6,7 @@ from django.db import transaction
 
 from core.models import Application, Page, TestCase, CeleryTask
 from services.llm_service import LLMService
+from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,9 @@ def generate_tests(self, app_id, model_choice=None):
             task_record.save()
         run_in_thread(update_progress_50)
 
+        # Cooperative cancellation before the expensive LLM call
+        check_cancelled(task_id)
+
         llm_service = LLMService(model_choice=model_choice)
         test_cases_data, industry_val, was_ai, resolved_model = llm_service.generate_test_cases(pages_data)
 
@@ -178,6 +182,17 @@ def generate_tests(self, app_id, model_choice=None):
 
         run_in_thread(save_test_cases)
 
+    except TaskCancelled:
+        logger.info(f"Test generation task {task_id} cancelled by user.")
+        def handle_gen_cancelled():
+            task_record.status = 'failed'
+            task_record.error = 'Stopped by user.'
+            task_record.completed_at = timezone.now()
+            task_record.save()
+            clear_stop_flag(task_id)
+        run_in_thread(handle_gen_cancelled)
+        return {"status": "CANCELLED", "message": "Generation stopped by user."}
+
     except Exception as e:
         logger.error(f"Failed to save test cases to database: {e}")
         def mark_error():
@@ -185,6 +200,7 @@ def generate_tests(self, app_id, model_choice=None):
             task_record.error = str(e)
             task_record.completed_at = timezone.now()
             task_record.save()
+            clear_stop_flag(task_id)
         run_in_thread(mark_error)
         return {"error": f"Failed to save test cases: {str(e)}"}
 

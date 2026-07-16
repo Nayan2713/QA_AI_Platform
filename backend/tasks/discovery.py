@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from core.models import CeleryTask, Application, Page, APIEndpoint
 from services.mcp_detector import route_discovery
 from services.browser_discovery import BrowserDiscoveryService
+from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +325,9 @@ def start_discovery(self, app_id, model_choice=None):
 
     run_in_thread(set_discovering)
 
+    # Cooperative cancellation check after app status update
+    check_cancelled(task_id)
+
     # ------------------------------------------------------------------
     # Route decision
     # ------------------------------------------------------------------
@@ -529,6 +533,21 @@ def start_discovery(self, app_id, model_choice=None):
 
         run_in_thread(save_discovered_pages)
 
+    except TaskCancelled:
+        logger.info(f"Discovery task {task_id} cancelled by user.")
+        def handle_discovery_cancelled():
+            # Reset app to IDLE so user can restart discovery
+            if Application.objects.filter(id=app_id).exists():
+                app.status = 'IDLE'
+                app.save(update_fields=['status'])
+            task_record.status = 'failed'
+            task_record.error = 'Stopped by user.'
+            task_record.completed_at = timezone.now()
+            task_record.save()
+            clear_stop_flag(task_id)
+        run_in_thread(handle_discovery_cancelled)
+        return {"status": "CANCELLED", "message": "Discovery stopped by user."}
+
     except Exception as e:
         logger.error(f"Failed to save pages to DB: {e}")
         def handle_db_error():
@@ -539,9 +558,11 @@ def start_discovery(self, app_id, model_choice=None):
             task_record.error = str(e)
             task_record.completed_at = timezone.now()
             task_record.save()
+            clear_stop_flag(task_id)
         run_in_thread(handle_db_error)
         return {"status": "FAILED", "error": str(e)}
 
+    clear_stop_flag(task_id)
     logger.info(f"Discovery completed for app {app.url}")
     return {
         "status": "SUCCESS",

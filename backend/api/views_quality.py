@@ -430,6 +430,7 @@ class QualityDashboardView(viewsets.ViewSet):
             
             from core.models import CeleryTask
             CeleryTask.objects.create(
+                app=app,
                 task_id=task_id,
                 task_type='quality_check',
                 status='pending',
