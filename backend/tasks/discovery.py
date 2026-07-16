@@ -239,28 +239,18 @@ def run_async(coro):
     return res[0][0] if res else None
 
 
+import os
+os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
+
+
 def run_in_thread(func, *args, **kwargs):
     """
-    Runs a function in a separate thread to bypass Django's
-    SynchronousOnlyOperation check.
-    
-    OPTIMIZED: Removed connection.close() to preserve CONN_MAX_AGE connection pooling.
+    Runs a function directly in the current thread since we have enabled
+    DJANGO_ALLOW_ASYNC_UNSAFE = True. This avoids spawning unnecessary
+    threads and leaking Django database connections.
     """
-    res = []
-    err = []
+    return func(*args, **kwargs)
 
-    def target():
-        try:
-            res.append((func(*args, **kwargs),))
-        except Exception as e:
-            err.append(e)
-
-    thread = threading.Thread(target=target)
-    thread.start()
-    thread.join()
-    if err:
-        raise err[0]
-    return res[0][0] if res else None
 
 
 # ---------------------------------------------------------------------------
