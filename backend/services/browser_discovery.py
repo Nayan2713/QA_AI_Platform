@@ -1,4 +1,5 @@
 import logging
+import os
 import json
 import asyncio
 import re
@@ -915,7 +916,13 @@ class BrowserDiscoveryService:
                 await worker_page.close()
                 logger.info(f"Worker {worker_id} finished and closed.")
 
-            workers = [crawl_worker(i) for i in range(5)]
+            try:
+                crawler_max_pages = int(os.environ.get("CRAWLER_MAX_PAGES", "2"))
+            except ValueError:
+                crawler_max_pages = 2
+            logger.info(f"Spawning {crawler_max_pages} concurrent crawl workers (configured via CRAWLER_MAX_PAGES)")
+
+            workers = [crawl_worker(i) for i in range(crawler_max_pages)]
             await asyncio.gather(*workers)
 
             # Discover OpenAPI/Swagger endpoints
