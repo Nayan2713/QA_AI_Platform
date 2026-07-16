@@ -188,15 +188,14 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   };
 
   const handleStopGeneration = async () => {
-    if (!activeTaskId) return;
     try {
-      await api.post(`tasks/${activeTaskId}/stop/`);
+      await api.post(`applications/${appId}/stop-all/`);
       setGenerating(false);
-      setSuccessMsg('Generation task stopped by user.');
+      setSuccessMsg('All tasks stopped by user.');
       onRefreshTests();
     } catch (err) {
-      console.error('Failed to stop task:', err);
-      setError('Failed to stop the generation task.');
+      console.error('Failed to stop tasks:', err);
+      setError('Failed to stop the tasks.');
     }
   };
 

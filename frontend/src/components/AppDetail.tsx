@@ -92,7 +92,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }
     refetchTimeoutRef.current = setTimeout(() => {
       refetchAll();
-    }, 1000);
+    }, 3000); // 3s debounce absorbs bursts of SSE events during Run All Tests
   }, [refetchAll]);
 
   // 1. Fetch App details (Parallel/non-blocking with double-guard)
@@ -100,7 +100,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    setIsAppLoading(true);
+    // Only show the full-page skeleton on the very first load (no app data yet).
+    // Background refreshes (triggered by SSE/polling) update silently in-place.
+    if (!app) setIsAppLoading(true);
     setAppError('');
 
     const fetchApp = async () => {
@@ -140,7 +142,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    setIsTestCasesLoading(true);
+    // Only show loading spinner on first fetch — not on background refreshes (avoids blinking)
+    if (testCases.length === 0) setIsTestCasesLoading(true);
     setTestCasesError(null);
 
     const fetchTestCases = async () => {
@@ -175,7 +178,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    setIsBugsLoading(true);
+    // Only show loading spinner on first fetch
+    if (bugs.length === 0) setIsBugsLoading(true);
 
     const fetchBugs = async () => {
       try {
@@ -208,7 +212,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    setIsApiEndpointsLoading(true);
+    // Only show loading spinner on first fetch
+    if (apiEndpoints.length === 0) setIsApiEndpointsLoading(true);
 
     const fetchEndpoints = async () => {
       try {
@@ -239,13 +244,16 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    setIsAgentSessionsLoading(true);
+    // Only show loading spinner on first fetch
+    if (agentSessions.length === 0) setIsAgentSessionsLoading(true);
 
     const fetchSessions = async () => {
       try {
-        const res = await api.get<AgentSession[]>(`agent-sessions/?app=${appId}`, { signal });
+        const res = await api.get(`agent-sessions/?app=${appId}`, { signal });
+        const rawData = res.data;
+        const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
         if (active) {
-          setAgentSessions(res.data);
+          setAgentSessions(data);
         }
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
@@ -382,8 +390,15 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           case 'bug_created':
           case 'bug_updated':
           case 'testrun_updated':
-          case 'testresult_created':
+            // Full data refetch when a complete run or bug finishes.
+            // testresult_created (individual steps) is intentionally excluded to prevent
+            // constant refetching during Run All Tests execution.
             refetchAllDebounced();
+            break;
+
+          case 'testresult_created':
+            // Individual step results — no full refetch needed, the task progress
+            // tracker already shows live step info via the backup polling loop.
             break;
 
           default:
@@ -450,14 +465,15 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   }, [activeTaskId, refetchAllDebounced]);
 
   const handleStopTask = async () => {
-    if (!activeTaskId) return;
     try {
-      await api.post(`tasks/${activeTaskId}/stop/`);
+      // Call stop-all to cancel every queued/running task for this app,
+      // not just the single activeTaskId (Run All Tests queues many tasks at once)
+      await api.post(`applications/${appId}/stop-all/`);
       setActiveTaskId(null);
       setCurrentTask(null);
       await refetchAll();
     } catch (err) {
-      console.error('Failed to stop task:', err);
+      console.error('Failed to stop all tasks:', err);
     }
   };
 
@@ -633,8 +649,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     );
   }
 
-  // Render shimmer page skeleton *only* while base app details are missing/loading
-  if (isAppLoading || !app) {
+  // Render shimmer page skeleton *only* on initial load when app data is not yet available
+  if (!app) {
     return (
       <div className="glass-card loading-state" style={{ padding: '40px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <style>{`
@@ -1020,13 +1036,13 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             className={`tab-btn ${activeTab === 'tests' ? 'active' : ''}`}
             onClick={() => setActiveTab('tests')}
           >
-            📋 Test Suite ({testCases.length})
+            📋 Test Suite ({app.test_case_count})
           </button>
           <button 
             className={`tab-btn ${activeTab === 'bugs' ? 'active' : ''}`}
             onClick={() => setActiveTab('bugs')}
           >
-            🐞 App Bugs ({bugs.length})
+            🐞 App Bugs ({app.bug_count})
           </button>
           <button 
             className={`tab-btn ${activeTab === 'sessions' ? 'active' : ''}`}
