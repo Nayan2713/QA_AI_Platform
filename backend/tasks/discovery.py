@@ -9,7 +9,7 @@ import asyncio
 import json
 import re
 from urllib.parse import urlparse
-from core.models import CeleryTask, Application, Page, APIEndpoint
+from core.models import CeleryTask, Application, Page, APIEndpoint, Bug
 from services.mcp_detector import route_discovery
 from services.browser_discovery import BrowserDiscoveryService
 from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
@@ -391,6 +391,7 @@ def start_discovery(self, app_id, model_choice=None):
     storage_state_data = None
     captured_storage_state = None
     api_logs_data = []
+    a11y_bugs = []
 
     # ------------------------------------------------------------------
     # Browser / Playwright path
@@ -422,13 +423,16 @@ def start_discovery(self, app_id, model_choice=None):
                 username=app.username,
                 password=app.password,
                 storage_state=storage_state_data,
-                on_progress=on_crawler_progress
+                on_progress=on_crawler_progress,
+                task_id=task_id
             ))
+            check_cancelled(task_id)
             pages_data = result.get("pages", [])
             login_successful = result.get("login_successful")
             captured_storage_state = result.get("storage_state")
             api_logs_data = result.get("api_logs", [])
             login_error_val = result.get("login_error")
+            a11y_bugs = result.get("accessibility_bugs", [])
 
             def set_browser_source():
                 if not Application.objects.filter(id=app_id).exists():
@@ -473,6 +477,8 @@ def start_discovery(self, app_id, model_choice=None):
                 # Clear stale records
                 Page.objects.filter(app=app).delete()
                 APIEndpoint.objects.filter(application=app).delete()
+                Bug.objects.filter(application=app, bug_type='accessibility').delete()
+                Bug.objects.filter(application=app, bug_type='security').delete()
 
                 # ---- OPTIMIZED: bulk_create instead of per-page create ----
                 page_objects = [
@@ -500,6 +506,29 @@ def start_discovery(self, app_id, model_choice=None):
                 if api_logs_data:
                     save_api_endpoints(app, api_logs_data)
 
+                # Save accessibility bugs
+                if a11y_bugs:
+                    a11y_bug_objects = [
+                        Bug(
+                            application=app,
+                            bug_type='accessibility',
+                            severity=b.get('severity', 'medium'),
+                            title=b.get('title'),
+                            description=f"Accessibility violation found on {b.get('url')}: {b.get('description')}",
+                            element_selector=b.get('selector'),
+                            status='open'
+                        )
+                        for b in a11y_bugs
+                    ]
+                    Bug.objects.bulk_create(a11y_bug_objects, batch_size=100)
+
+                # Run domain security scan
+                try:
+                    from services.security_scanner import run_security_scan
+                    run_security_scan(app)
+                except Exception as sec_err:
+                    logger.error(f"Failed running domain security scan: {sec_err}")
+
                 # Finalize app status
                 app.status = 'DISCOVERED'
                 if app.login_url:
@@ -525,30 +554,47 @@ def start_discovery(self, app_id, model_choice=None):
 
     except TaskCancelled:
         logger.info(f"Discovery task {task_id} cancelled by user.")
+        from django.db import connection
+        try:
+            connection.close()
+        except Exception:
+            pass
         def handle_discovery_cancelled():
-            # Reset app to IDLE so user can restart discovery
-            if Application.objects.filter(id=app_id).exists():
-                app.status = 'IDLE'
-                app.save(update_fields=['status'])
-            task_record.status = 'failed'
-            task_record.error = 'Stopped by user.'
-            task_record.completed_at = timezone.now()
-            task_record.save()
-            clear_stop_flag(task_id)
+            try:
+                if Application.objects.filter(id=app_id).exists():
+                    app.status = 'IDLE'
+                    app.save(update_fields=['status'])
+                task_record.status = 'failed'
+                task_record.error = 'Stopped by user.'
+                task_record.completed_at = timezone.now()
+                task_record.save()
+            except Exception as inner_err:
+                logger.error(f"Error in handle_discovery_cancelled fallback: {inner_err}")
+            finally:
+                clear_stop_flag(task_id)
         run_in_thread(handle_discovery_cancelled)
         return {"status": "CANCELLED", "message": "Discovery stopped by user."}
 
     except Exception as e:
         logger.error(f"Failed to save pages to DB: {e}")
+        from django.db import connection
+        try:
+            connection.close()
+        except Exception:
+            pass
         def handle_db_error():
-            if Application.objects.filter(id=app_id).exists():
-                app.status = 'FAILED'
-                app.save(update_fields=['status'])
-            task_record.status = 'failed'
-            task_record.error = str(e)
-            task_record.completed_at = timezone.now()
-            task_record.save()
-            clear_stop_flag(task_id)
+            try:
+                if Application.objects.filter(id=app_id).exists():
+                    app.status = 'FAILED'
+                    app.save(update_fields=['status'])
+                task_record.status = 'failed'
+                task_record.error = str(e)
+                task_record.completed_at = timezone.now()
+                task_record.save()
+            except Exception as inner_err:
+                logger.error(f"Error in handle_db_error fallback: {inner_err}")
+            finally:
+                clear_stop_flag(task_id)
         run_in_thread(handle_db_error)
         return {"status": "FAILED", "error": str(e)}
 

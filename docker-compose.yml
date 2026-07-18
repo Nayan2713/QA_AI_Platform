@@ -64,6 +64,8 @@ services:
       - OLLAMA_API_URL=${OLLAMA_API_URL:-http://host.docker.internal:11434/api/generate}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SHODAN_API_KEY=${SHODAN_API_KEY}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -85,13 +87,15 @@ services:
       start_period: 60s
 
   # --- Celery Worker ---
+  # --- Celery Worker ---
   celery_worker:
     build:
       context: ./backend
     container_name: qa_platform_celery_worker
     restart: always
     shm_size: 1gb
-    command: celery -A qa_engine worker -l info -P threads --concurrency=6 -Q discovery,execution,quality,celery
+    mem_limit: 3g
+    command: celery -A qa_engine worker -l info -P threads --concurrency=1 -Q discovery,execution,quality,celery
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - DEBUG=${DEBUG:-False}
@@ -106,6 +110,9 @@ services:
       - OLLAMA_API_URL=${OLLAMA_API_URL:-http://host.docker.internal:11434/api/generate}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CRAWLER_MAX_PAGES=${CRAWLER_MAX_PAGES:-1}
+      - SHODAN_API_KEY=${SHODAN_API_KEY}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

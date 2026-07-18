@@ -52,11 +52,9 @@ class ApplicationSerializer(serializers.ModelSerializer):
         read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'storage_state', 'login_error')
 
     def get_bug_count(self, obj):
-        # B6 FIX: Use a simple DB count instead of iterating every bug in Python.
-        # The full dedup logic is still available in BugViewSet.list() for the
-        # detailed view; here we just need a fast count for the app list.
+        from django.db.models import Q
         return Bug.objects.filter(
-            test_run__test_case__app=obj
+            Q(test_run__test_case__app=obj) | Q(application=obj)
         ).values('title', 'severity').distinct().count()
 
 
@@ -110,7 +108,7 @@ class ApplicationListSerializer(ApplicationSerializer):
 class PageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Page
-        fields = ('id', 'app', 'url', 'title', 'forms', 'buttons', 'page_type', 'elements', 'workflows', 'created_at')
+        fields = ('id', 'app', 'url', 'title', 'forms', 'buttons', 'page_type', 'elements', 'workflows', 'accessibility_roles', 'created_at')
 
 
 # class TestCaseSerializer(serializers.ModelSerializer):

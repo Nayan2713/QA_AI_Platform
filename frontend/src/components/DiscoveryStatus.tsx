@@ -192,6 +192,36 @@ export const DiscoveryStatus: React.FC<DiscoveryStatusProps> = ({
                       </div>
                     )}
 
+                    {page.accessibility_roles && page.accessibility_roles.length > 0 && (
+                      <div className="details-section" style={{ borderTop: '1px dashed rgba(239, 68, 68, 0.2)', paddingTop: '12px', marginTop: '12px' }}>
+                        <h5 style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px', margin: '0 0 8px 0' }}>♿ Accessibility Issues</h5>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                          {page.accessibility_roles.map((role, rIdx) => {
+                            let label = role;
+                            if (role === 'html-has-lang') label = 'Missing HTML Lang';
+                            else if (role === 'image-alt') label = 'Missing Image Alt Attribute';
+                            else if (role === 'button-name') label = 'Empty Button Label';
+                            else if (role === 'link-name') label = 'Empty Link Text';
+                            else if (role === 'label') label = 'Input Missing Label';
+                            else if (role === 'heading-order') label = 'Skipped Heading Levels';
+                            return (
+                              <span key={rIdx} className="badge-severity severity-medium" style={{
+                                background: 'rgba(239, 68, 68, 0.15)',
+                                border: '1px solid rgba(239, 68, 68, 0.3)',
+                                color: '#ef4444',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                fontWeight: '600'
+                              }}>
+                                ⚠️ {label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {!page.forms?.length && !page.buttons?.length && (
                       <p className="no-elements-tip">No forms or buttons detected on this page.</p>
                     )}

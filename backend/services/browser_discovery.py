@@ -398,7 +398,7 @@ class BrowserDiscoveryService:
         except Exception as e:
             logger.error(f"Error in background AI summarization for {page_info['url']}: {e}")
 
-    async def discover(self, start_url, login_url=None, username=None, password=None, storage_state=None, on_progress=None):
+    async def discover(self, start_url, login_url=None, username=None, password=None, storage_state=None, on_progress=None, task_id=None):
         """
         High-performance concurrent async page crawler sharing session contexts.
 
@@ -620,6 +620,7 @@ class BrowserDiscoveryService:
 
             pages_list = []
             to_visit = []
+            accessibility_bugs = []
 
             # ------------------------------------------------------------------
             # FIX 3: After a successful login, extract links from the
@@ -715,6 +716,14 @@ class BrowserDiscoveryService:
                                 break
                         continue
 
+                    # Check for task cancellation
+                    if task_id:
+                        from tasks.cancellation import is_cancelled
+                        if is_cancelled(task_id):
+                            logger.info(f"Worker {worker_id} detected task cancellation. Stopping crawl.")
+                            to_visit_queue.task_done()
+                            break
+
                     # FIX 4: atomic check-and-mark inside the lock
                     async with visited_lock:
                         pattern = self.get_path_pattern(current_url)
@@ -795,9 +804,140 @@ class BrowserDiscoveryService:
                             "page_type": page_type,
                             "elements": {},
                             "workflows": [],
+                            "accessibility_roles": [],
                             "ai_summary": ""
                         }
                         pages_list.append(page_info)
+
+                        # Run Accessibility Audit (WCAG 2.1 check)
+                        a11y_violations = []
+                        try:
+                            a11y_violations = await worker_page.evaluate("""() => {
+                                const violations = [];
+                                
+                                // 1. HTML lang attribute
+                                if (!document.documentElement.getAttribute('lang')) {
+                                    violations.push({
+                                        rule: 'html-has-lang',
+                                        severity: 'low',
+                                        title: 'HTML element is missing a lang attribute',
+                                        description: 'Screen readers use the lang attribute to detect the language of the page. Without it, the screen reader may read the page in the wrong language.',
+                                        selector: 'html'
+                                    });
+                                }
+                                
+                                // 2. Missing alt attribute on images
+                                const images = document.querySelectorAll('img');
+                                images.forEach((img, idx) => {
+                                    if (!img.hasAttribute('alt')) {
+                                        const src = img.getAttribute('src') || '';
+                                        const selector = img.id ? '#' + img.id : 'img:nth-of-type(' + (idx+1) + ')';
+                                        violations.push({
+                                            rule: 'image-alt',
+                                            severity: 'medium',
+                                            title: 'Image is missing an alt attribute',
+                                            description: 'Images must have an alt attribute describing their content or be marked as decorative (alt="") for screen-reader users. Image source: ' + src,
+                                            selector: selector
+                                        });
+                                    }
+                                });
+                                
+                                // 3. Empty buttons
+                                const btns = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
+                                btns.forEach((btn, idx) => {
+                                    const text = btn.innerText?.trim() || btn.getAttribute('value')?.trim() || '';
+                                    const label = btn.getAttribute('aria-label')?.trim() || '';
+                                    const labelledBy = btn.getAttribute('aria-labelledby')?.trim() || '';
+                                    const title = btn.getAttribute('title')?.trim() || '';
+                                    if (!text && !label && !labelledBy && !title) {
+                                        const selector = btn.id ? '#' + btn.id : 'button:nth-of-type(' + (idx+1) + ')';
+                                        violations.push({
+                                            rule: 'button-name',
+                                            severity: 'high',
+                                            title: 'Button has no accessible name/label',
+                                            description: 'Buttons must have readable text or an aria-label so screen readers can explain their function to users.',
+                                            selector: selector
+                                        });
+                                    }
+                                });
+
+                                // 4. Empty links
+                                const links = document.querySelectorAll('a');
+                                links.forEach((a, idx) => {
+                                    const text = a.innerText?.trim() || '';
+                                    const label = a.getAttribute('aria-label')?.trim() || '';
+                                    const labelledBy = a.getAttribute('aria-labelledby')?.trim() || '';
+                                    const title = a.getAttribute('title')?.trim() || '';
+                                    const href = a.getAttribute('href') || '';
+                                    if (!text && !label && !labelledBy && !title && !a.querySelector('img[alt]')) {
+                                        const selector = a.id ? '#' + a.id : 'a:nth-of-type(' + (idx+1) + ')';
+                                        violations.push({
+                                            rule: 'link-name',
+                                            severity: 'medium',
+                                            title: 'Anchor link has no accessible name/text',
+                                            description: 'Links must have descriptive text or labels so users know where they lead. Link target: ' + href,
+                                            selector: selector
+                                        });
+                                    }
+                                });
+                                
+                                // 5. Input elements missing label
+                                const inputs = document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea, select');
+                                inputs.forEach((input, idx) => {
+                                    const id = input.id;
+                                    const name = input.getAttribute('name');
+                                    const ariaLabel = input.getAttribute('aria-label');
+                                    const ariaLabelledBy = input.getAttribute('aria-labelledby');
+                                    const placeholder = input.getAttribute('placeholder');
+                                    
+                                    let hasLabel = false;
+                                    if (id) {
+                                        const associatedLabel = document.querySelector('label[for="' + id + '"]');
+                                        if (associatedLabel) hasLabel = true;
+                                    }
+                                    if (!hasLabel && input.closest('label')) {
+                                        hasLabel = true;
+                                    }
+                                    
+                                    if (!hasLabel && !ariaLabel && !ariaLabelledBy) {
+                                        const selector = id ? '#' + id : (name ? 'input[name="' + name + '"]' : 'input:nth-of-type(' + (idx+1) + ')');
+                                        violations.push({
+                                            rule: 'label',
+                                            severity: 'medium',
+                                            title: 'Input field has no associated label',
+                                            description: 'Form controls must have associated label elements or ARIA descriptors to help screen-reader users understand what input is expected. Placeholder: ' + (placeholder || 'None'),
+                                            selector: selector
+                                        });
+                                    }
+                                });
+
+                                // 6. Heading skipping
+                                const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(el => parseInt(el.tagName[1]));
+                                let maxHeading = 0;
+                                headings.forEach(level => {
+                                    if (level > maxHeading + 1 && maxHeading > 0) {
+                                        violations.push({
+                                            rule: 'heading-order',
+                                            severity: 'low',
+                                            title: 'Skipped heading level (H' + level + ' detected after H' + maxHeading + ')',
+                                            description: 'Headings should follow a sequential logical order (H1, then H2, then H3...) to ensure structured page reading for screen-reader users.',
+                                            selector: 'h' + level
+                                        });
+                                    }
+                                    maxHeading = Math.max(maxHeading, level);
+                                });
+                                
+                                return violations;
+                            }""")
+                        except Exception as a11y_err:
+                            logger.error(f"Error executing accessibility audit script: {a11y_err}")
+
+                        if a11y_violations:
+                            page_info["accessibility_roles"] = list(set([v['rule'] for v in a11y_violations]))
+                            async with api_logs_lock:
+                                for violation in a11y_violations:
+                                    violation["url"] = current_url
+                                    accessibility_bugs.append(violation)
 
                         # Start background AI summarization in parallel
                         if self.use_llm:
@@ -957,5 +1097,6 @@ class BrowserDiscoveryService:
                 "login_successful": self.login_successful or logged_in,
                 "login_error": self.login_error_message,
                 "storage_state": captured_storage,
-                "api_logs": api_logs
+                "api_logs": api_logs,
+                "accessibility_bugs": accessibility_bugs
             }

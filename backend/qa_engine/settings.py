@@ -318,5 +318,9 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', None)
 
 MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')
 
+SHODAN_API_KEY = os.getenv('SHODAN_API_KEY', None)
+VIRUSTOTAL_API_KEY = os.getenv('VIRUSTOTAL_API_KEY', None)
+
+
 
 

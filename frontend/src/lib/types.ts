@@ -35,6 +35,7 @@ export interface Page {
   page_type?: string;
   elements?: Record<string, any>;
   workflows?: string[];
+  accessibility_roles?: string[];
   created_at: string;
 }
 
