@@ -267,10 +267,17 @@ export const TestResults: React.FC<TestResultsProps> = ({
                     <span className="step-result-status">{res.status}</span>
                   </div>
                   
-                  {res.error && (
+                  {res.status === 'FAILED' && res.error && (
                     <div className="step-error-box">
                       <strong>Execution Error:</strong>
                       <pre className="error-trace">{res.error}</pre>
+                    </div>
+                  )}
+
+                  {res.status === 'PASSED' && res.error && (
+                    <div className="step-info-box" style={{ marginTop: '8px', padding: '12px', background: 'rgba(46, 204, 113, 0.05)', borderRadius: '6px', borderLeft: '3px solid #2ecc71' }}>
+                      <strong style={{ color: '#2ecc71' }}>Step Details:</strong>
+                      <pre className="info-trace" style={{ margin: '8px 0 0 0', fontFamily: 'monospace', fontSize: '13px', color: 'rgba(255, 255, 255, 0.8)', whiteSpace: 'pre-wrap', background: 'transparent', border: 'none', padding: 0 }}>{res.error}</pre>
                     </div>
                   )}
 

@@ -933,10 +933,29 @@ class BrowserDiscoveryService:
                             logger.error(f"Error executing accessibility audit script: {a11y_err}")
 
                         if a11y_violations:
+                            # Capture a screenshot for the accessibility bug
+                            screenshot_file = None
+                            try:
+                                ss_bytes = await worker_page.screenshot(full_page=False)
+                                import os
+                                import uuid
+                                from django.conf import settings
+                                filename = f"a11y_{uuid.uuid4().hex[:12]}.png"
+                                media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
+                                os.makedirs(media_path, exist_ok=True)
+                                full_path = os.path.join(media_path, filename)
+                                with open(full_path, 'wb') as f:
+                                    f.write(ss_bytes)
+                                screenshot_file = f"bugs/{filename}"
+                                logger.info(f"Captured accessibility screenshot: {screenshot_file}")
+                            except Exception as ss_err:
+                                logger.error(f"Failed capturing accessibility screenshot: {ss_err}")
+
                             page_info["accessibility_roles"] = list(set([v['rule'] for v in a11y_violations]))
                             async with api_logs_lock:
                                 for violation in a11y_violations:
                                     violation["url"] = current_url
+                                    violation["screenshot"] = screenshot_file
                                     accessibility_bugs.append(violation)
 
                         # Start background AI summarization in parallel

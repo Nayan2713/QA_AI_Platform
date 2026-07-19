@@ -516,6 +516,7 @@ def start_discovery(self, app_id, model_choice=None):
                             title=b.get('title'),
                             description=f"Accessibility violation found on {b.get('url')}: {b.get('description')}",
                             element_selector=b.get('selector'),
+                            screenshot=b.get('screenshot'),
                             status='open'
                         )
                         for b in a11y_bugs

@@ -8,6 +8,52 @@ from core.models import Bug
 
 logger = logging.getLogger(__name__)
 
+def capture_security_screenshot(url, ignore_https=True):
+    from playwright.sync_api import sync_playwright
+    import os
+    import uuid
+    
+    screenshot_file = None
+    playwright = None
+    browser = None
+    try:
+        playwright = sync_playwright().start()
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        )
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            ignore_https_errors=ignore_https,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        ss_bytes = page.screenshot(full_page=False)
+        
+        filename = f"sec_{uuid.uuid4().hex[:12]}.png"
+        media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
+        os.makedirs(media_path, exist_ok=True)
+        full_path = os.path.join(media_path, filename)
+        with open(full_path, 'wb') as f:
+            f.write(ss_bytes)
+        screenshot_file = f"bugs/{filename}"
+        logger.info(f"Successfully captured security screenshot for {url}: {screenshot_file}")
+    except Exception as e:
+        logger.error(f"Failed capturing security screenshot for {url} (ignore_https={ignore_https}): {e}")
+    finally:
+        if browser:
+            try:
+                browser.close()
+            except Exception:
+                pass
+        if playwright:
+            try:
+                playwright.stop()
+            except Exception:
+                pass
+    return screenshot_file
+
 def run_security_scan(application):
     """
     Runs domain-wide security audits including SSL/TLS verification, security headers checking,
@@ -24,6 +70,9 @@ def run_security_scan(application):
     if not hostname:
         logger.warning(f"Invalid hostname parsed from application URL: {target_url}")
         return
+        
+    # Capture standard/reference homepage screenshot (ignoring SSL errors if any, so we load the site successfully)
+    base_screenshot = capture_security_screenshot(target_url, ignore_https=True)
     
     # --- PROTOCOL CHECK ---
     if target_url.startswith("http://"):
@@ -41,7 +90,9 @@ def run_security_scan(application):
             steps_to_reproduce=[
                 f"Navigate to {target_url} in a browser.",
                 "Observe the lack of a padlock icon/security warning in the address bar."
-            ]
+            ],
+            screenshot=base_screenshot,
+            status='open'
         )
     
     # --- SSL/TLS CERTIFICATE VERIFICATION ---
@@ -55,6 +106,8 @@ def run_security_scan(application):
                     cert = ssock.getpeercert()
                     ssl_valid = True
         except ssl.SSLError as ssl_err:
+            # Capture the browser's SSL warning screen by setting ignore_https=False
+            ssl_screenshot = capture_security_screenshot(target_url, ignore_https=False)
             Bug.objects.create(
                 application=application,
                 bug_type='security',
@@ -68,7 +121,9 @@ def run_security_scan(application):
                 steps_to_reproduce=[
                     f"Navigate to {target_url} using HTTPS.",
                     "Observe the browser security warning screen."
-                ]
+                ],
+                screenshot=ssl_screenshot or base_screenshot,
+                status='open'
             )
         except Exception as e:
             logger.warning(f"SSL cert verification exception: {e}")
@@ -121,7 +176,9 @@ def run_security_scan(application):
                         f"Send a HTTP GET request to {target_url}.",
                         "Verify response headers in browser network tab or via curl.",
                         f"Notice that the '{header_name}' header is absent."
-                    ]
+                    ],
+                    screenshot=base_screenshot,
+                    status='open'
                 )
     except Exception as e:
         logger.warning(f"Failed to fetch security headers for {target_url}: {e}")
@@ -166,7 +223,9 @@ def run_security_scan(application):
                         steps_to_reproduce=[
                             f"Visit VirusTotal and search for the domain '{hostname}'.",
                             "Review detailed vendor classification logs."
-                        ]
+                        ],
+                        screenshot=base_screenshot,
+                        status='open'
                     )
             else:
                 logger.warning(f"VirusTotal query failed: {res.status_code} - {res.text}")
@@ -186,7 +245,9 @@ def run_security_scan(application):
             steps_to_reproduce=[
                 "Configure VIRUSTOTAL_API_KEY in the root .env file.",
                 "Restart Celery worker and run a discovery task."
-            ]
+            ],
+            screenshot=base_screenshot,
+            status='open'
         )
         
     # --- SHODAN SCAN ---
@@ -227,7 +288,9 @@ def run_security_scan(application):
                         steps_to_reproduce=[
                             f"Perform a Shodan search for host IP: {ip_addr}.",
                             f"Confirm that the following ports are listed as open: {[p for p in exposed]}."
-                        ]
+                        ],
+                        screenshot=base_screenshot,
+                        status='open'
                     )
                 
                 if vulns:
@@ -244,7 +307,9 @@ def run_security_scan(application):
                         steps_to_reproduce=[
                             f"Perform a Shodan scan for host {ip_addr}.",
                             "Check the 'Vulnerabilities' section in the Shodan report."
-                        ]
+                        ],
+                        screenshot=base_screenshot,
+                        status='open'
                     )
             else:
                 logger.warning(f"Shodan scan returned error code {res.status_code}: {res.text}")
@@ -265,7 +330,9 @@ def run_security_scan(application):
             steps_to_reproduce=[
                 "Configure SHODAN_API_KEY in the root .env file.",
                 "Restart Celery worker and run a discovery task."
-            ]
+            ],
+            screenshot=base_screenshot,
+            status='open'
         )
         
     logger.info(f"Finished security scan for application: {application.url}")
