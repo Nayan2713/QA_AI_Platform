@@ -519,6 +519,9 @@ def execute_test(self, test_run_id, model_choice=None):
 
                         break  # success — exit retry loop
 
+                    except TaskCancelled:
+                        # Never treat a user stop as a step failure/retry.
+                        raise
                     except Exception as e:
                         step_passed = False
                         error_msg = str(e)
@@ -526,6 +529,7 @@ def execute_test(self, test_run_id, model_choice=None):
                             logger.warning(
                                 f"Step {step_num} failed attempt 1, retrying in 1s... {error_msg}"
                             )
+                            check_cancelled(task_id)
                             page.wait_for_timeout(400)
                         else:
                             run_failed = True
@@ -609,6 +613,14 @@ def execute_test(self, test_run_id, model_choice=None):
             video_relative_path = None
             har_relative_path = None
 
+        except TaskCancelled:
+            # Propagate to the outer handler which marks the run CANCELLED.
+            logger.info("Test execution cancelled by user — closing context.")
+            try:
+                context.close()
+            except Exception:
+                pass
+            raise
         except Exception as global_err:
             run_failed = True
             logger.error(f"Playwright runner crash: {global_err}")

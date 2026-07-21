@@ -399,7 +399,15 @@ def start_discovery(self, app_id, model_choice=None):
     if route == 'browser':
         logger.info("Executing Playwright browser discovery path...")
         try:
-            crawler = BrowserDiscoveryService(max_pages=50, model_choice=model_choice, use_llm=app.use_llm_in_crawl)
+            try:
+                _max_pages = int(os.environ.get("CRAWLER_MAX_PAGES", "50"))
+            except ValueError:
+                _max_pages = 50
+            crawler = BrowserDiscoveryService(
+                max_pages=_max_pages,
+                model_choice=model_choice,
+                use_llm=app.use_llm_in_crawl
+            )
 
             storage_state_data = run_in_thread(lambda: app.storage_state)
 

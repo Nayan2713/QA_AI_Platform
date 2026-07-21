@@ -10,6 +10,7 @@ from django.db import transaction
 
 from core.models import TestRun, TestResult, Bug, APIEndpoint
 from tasks.discovery import get_url_pattern
+from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -299,8 +300,11 @@ def start_agentic_bug_detection(self, app_id):
         return {"error": f"Application with ID {app_id} not found."}
 
     try:
+        # Cooperative cancellation before the expensive agentic browser run
+        check_cancelled(task_id)
+
         from services.browser_use_agent import BrowserUseAgent
-        
+
         def run_agentic_bugs():
             agent = BrowserUseAgent()
             credentials = {
@@ -315,20 +319,26 @@ def start_agentic_bug_detection(self, app_id):
             return run_async(agent.detect_bugs(app, credentials))
             
         bugs_found = run_in_thread(run_agentic_bugs)
-        
+
+        # Cancellation may have been requested while the agent was running.
+        check_cancelled(task_id)
+
         def save_bugs():
             with transaction.atomic():
-                for b_info in bugs_found:
-                    Bug.objects.create(
+                # OPTIMIZED: bulk_create instead of one INSERT per bug.
+                Bug.objects.bulk_create([
+                    Bug(
                         application=app,
                         bug_type=b_info.get("bug_type", "functional"),
                         severity=b_info.get("severity", "medium"),
                         title=b_info.get("title", "Discovered UI/Functional Bug"),
                         description=b_info.get("description", "Error observed during crawler audit."),
                         element_selector=b_info.get("element_selector"),
-                        screenshot=b_info.get("screenshot"),  # persist screenshot path returned by the agent
+                        screenshot=b_info.get("screenshot"),
                         status="open"
                     )
+                    for b_info in bugs_found
+                ], batch_size=100)
                 
                 task_record.status = 'success'
                 task_record.progress = 100
@@ -340,14 +350,31 @@ def start_agentic_bug_detection(self, app_id):
                 task_record.save()
                 
         run_in_thread(save_bugs)
+        clear_stop_flag(task_id)
         return {"status": "SUCCESS", "bugs_found": len(bugs_found)}
+
+    except TaskCancelled:
+        logger.info(f"Agentic bug detection task {task_id} cancelled by user.")
+        def handle_bug_cancelled():
+            try:
+                task_record.status = 'failed'
+                task_record.error = 'Stopped by user.'
+                task_record.completed_at = timezone.now()
+                task_record.save()
+            finally:
+                clear_stop_flag(task_id)
+        run_in_thread(handle_bug_cancelled)
+        return {"status": "CANCELLED", "message": "Bug detection stopped by user."}
+
     except Exception as e:
         logger.error(f"Agentic bug detection failed: {e}")
         def handle_error():
-            task_record.status = 'failed'
-            task_record.error = str(e)
-            task_record.completed_at = timezone.now()
-            task_record.save()
+            try:
+                task_record.status = 'failed'
+                task_record.error = str(e)
+                task_record.completed_at = timezone.now()
+                task_record.save()
+            finally:
+                clear_stop_flag(task_id)
         run_in_thread(handle_error)
         return {"status": "FAILED", "error": str(e)}
-
