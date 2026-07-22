@@ -151,6 +151,7 @@ export interface Bug {
 
 export interface CeleryTask {
   id: number;
+  app?: number | null;
   task_id: string;
   task_type: string;
   status: 'pending' | 'progress' | 'success' | 'failed';

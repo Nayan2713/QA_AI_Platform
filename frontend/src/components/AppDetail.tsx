@@ -316,6 +316,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   // Restore active task if one is running for this application on mount
   useEffect(() => {
     let isMounted = true;
+    // Reset currentTask immediately when switching applications
+    setCurrentTask(null);
+
     const restoreActiveTask = async () => {
       try {
         const tasksRes = await api.get<CeleryTask[]>(`tasks/?app_id=${appId}`);
@@ -324,9 +327,16 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         if (activeTask) {
           setActiveTaskId(activeTask.task_id);
           setCurrentTask(activeTask);
+        } else {
+          setActiveTaskId(null);
+          setCurrentTask(null);
         }
       } catch (taskErr) {
         console.warn('Failed to restore active tasks:', taskErr);
+        if (isMounted) {
+          setActiveTaskId(null);
+          setCurrentTask(null);
+        }
       }
     };
     restoreActiveTask();
@@ -363,7 +373,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         switch (type) {
           case 'celerytask_created':
           case 'celerytask_updated':
-            if (data.task_id === activeTaskIdRef.current) {
+            if (data.task_id === activeTaskIdRef.current && (!data.app || data.app === appId)) {
               setCurrentTask(data);
               if (data.status === 'success' || data.status === 'failed') {
                 refetchAllDebounced();
@@ -448,7 +458,16 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           // Fetch DB task record details
           try {
             const taskDb = await api.get<CeleryTask>(`tasks/${activeTaskId}/`);
-            if (isMounted) setCurrentTask(taskDb.data);
+            if (isMounted) {
+              if (taskDb.data.app && taskDb.data.app !== appId) {
+                // Task belongs to another application! Clear task state for this view
+                setActiveTaskId(null);
+                setCurrentTask(null);
+                clearInterval(pollInterval);
+                return;
+              }
+              setCurrentTask(taskDb.data);
+            }
           } catch (dbErr) {
             console.warn("Failed to fetch detailed task DB record:", dbErr);
           }
@@ -462,7 +481,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       isMounted = false;
       clearInterval(pollInterval);
     };
-  }, [activeTaskId, refetchAllDebounced]);
+  }, [activeTaskId, appId, refetchAllDebounced]);
 
   const handleStopTask = async () => {
     try {
@@ -914,7 +933,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       )}
 
       {/* Internal Task Progress Tracker */}
-      {currentTask && (
+      {currentTask && (!currentTask.app || currentTask.app === appId) && (
         <div className="glass-card task-progress-tracker" style={{
           margin: '20px 0',
           padding: '16px',
