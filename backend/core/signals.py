@@ -166,9 +166,13 @@ def application_pre_delete(sender, instance, **kwargs):
                 val = r.get(key)
                 if val and int(val) == instance.id:
                     task_id = key.decode().replace('task_app:', '', 1)
-                    logger.info(f"Revoking active Celery task {task_id} due to application {instance.id} deletion.")
-                    # Revoke Celery task instantly (sending SIGKILL to running browser sessions)
-                    celery_app.control.revoke(task_id, terminate=True, signal='SIGKILL')
+                    # Set cooperative stop flag and revoke Celery task safely across OS platforms
+                    from tasks.cancellation import set_stop_flag
+                    set_stop_flag(task_id)
+                    try:
+                        celery_app.control.revoke(task_id, terminate=True, signal='SIGTERM')
+                    except Exception:
+                        pass
                     
                     # Update task status in database
                     try:

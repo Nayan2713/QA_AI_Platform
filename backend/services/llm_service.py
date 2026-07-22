@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import requests
 from django.conf import settings
 
@@ -192,7 +193,7 @@ Requested Test Case Title: "{title}"
 3. Wait times: use "800" for navigation/heavy loads, "500" for quick interactions.
 
 === OUTPUT FORMAT ===
-Return ONLY valid JSON. No markdown, no explanation.
+Return ONLY valid, strictly-formatted JSON. Do NOT include markdown code block syntax, explanation text, JavaScript comments (like // or /* */), or trailing commas.
 
 {{
   "title": "{title}",
@@ -353,7 +354,7 @@ Start with {{ and end with }}.
 
     def parse_json_response(self, text, require_assert=True):
         """
-        Strips markdown fences and parses the LLM response as JSON.
+        Strips markdown fences, JS comments, trailing commas, and parses the LLM response as JSON.
         Returns (test_cases, industry) or None on failure.
         """
         cleaned = text.strip()
@@ -367,14 +368,38 @@ Start with {{ and end with }}.
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
 
-        # Find first { ... last } in case of preamble text
-        brace_start = cleaned.find('{')
-        brace_end = cleaned.rfind('}')
-        if brace_start > 0 and brace_end > brace_start:
-            cleaned = cleaned[brace_start:brace_end + 1]
+        # Extract JSON object or array payload boundaries
+        first_dict = cleaned.find('{')
+        first_list = cleaned.find('[')
+        if first_dict != -1 and (first_list == -1 or first_dict < first_list):
+            last_dict = cleaned.rfind('}')
+            if last_dict > first_dict:
+                cleaned = cleaned[first_dict:last_dict + 1]
+        elif first_list != -1:
+            last_list = cleaned.rfind(']')
+            if last_list > first_list:
+                cleaned = cleaned[first_list:last_list + 1]
+
+        # 1. Strip single-line JS comments (// ...) excluding http:// or https://
+        lines = []
+        for line in cleaned.splitlines():
+            line_no_comment = re.sub(r'(?<!http:)(?<!https:)//.*$', '', line)
+            lines.append(line_no_comment)
+        cleaned = "\n".join(lines)
+
+        # 2. Strip multi-line /* ... */ comments
+        cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+
+        # 3. Strip trailing commas before } or ]
+        cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
 
         try:
-            data = json.loads(cleaned)
+            try:
+                data = json.loads(cleaned)
+            except json.JSONDecodeError:
+                # Attempt to auto-close truncated JSON structure if LLM hit token limit
+                repaired = self._auto_close_json(cleaned)
+                data = json.loads(repaired)
             industry = "General"
             test_cases_list = []
 
@@ -444,6 +469,50 @@ Start with {{ and end with }}.
         except Exception as e:
             logger.error(f"Failed parsing LLM output: {e}. Raw: {text[:300]}")
         return None
+
+    def _auto_close_json(self, s: str) -> str:
+        """Closes unclosed braces and brackets for truncated JSON responses."""
+        stack = []
+        in_string = False
+        escape = False
+
+        for char in s:
+            if escape:
+                escape = False
+                continue
+            if char == '\\':
+                escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+
+            if char in '{[':
+                stack.append(char)
+            elif char == '}':
+                if stack and stack[-1] == '{':
+                    stack.pop()
+            elif char == ']':
+                if stack and stack[-1] == '[':
+                    stack.pop()
+
+        if in_string:
+            s += '"'
+
+        s = s.rstrip()
+        if s.endswith(','):
+            s = s[:-1]
+
+        while stack:
+            top = stack.pop()
+            if top == '{':
+                s += '}'
+            elif top == '[':
+                s += ']'
+
+        return s
 
     # ------------------------------------------------------------------ #
     # Helpers for fallback generator                                       #

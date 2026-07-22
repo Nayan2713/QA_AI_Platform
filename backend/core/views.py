@@ -837,11 +837,18 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
     def stop(self, request, task_id=None):
         task = self.get_object()
         
-        # 1. Revoke the Celery task
+        # 1. Set cooperative stop flag (for thread workers on Windows & Unix)
+        from tasks.cancellation import set_stop_flag
+        set_stop_flag(task.task_id)
+
+        # 2. Revoke the Celery task (SIGTERM is cross-platform, SIGKILL is POSIX-only)
         from qa_engine.celery import app as celery_app
-        celery_app.control.revoke(task.task_id, terminate=True, signal='SIGKILL')
+        try:
+            celery_app.control.revoke(task.task_id, terminate=True, signal='SIGTERM')
+        except Exception:
+            pass
         
-        # 2. Update status in database
+        # 3. Update status in database
         task.status = 'failed'
         task.error = "Task stopped by user."
         task.save()
