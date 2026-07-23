@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import api from './lib/api';
 import { User, Bug } from './lib/types';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigation } from './components/Navigation';
 import './App.css';
 
@@ -27,6 +27,7 @@ const TestResultsRoute = () => {
 };
 
 function App() {
+  const queryClient = useQueryClient();
   const [token, setToken] = useState<string | null>(localStorage.getItem('access_token'));
   const [username, setUsername] = useState<string>(localStorage.getItem('username') || '');
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -79,6 +80,7 @@ function App() {
   };
 
   const handleLogout = () => {
+    queryClient.clear();
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('username');
@@ -107,6 +109,8 @@ function App() {
 
     try {
       if (isLogin) {
+        // Clear old cached queries from previous user session before logging in new user
+        queryClient.clear();
         // Log in with email
         const response = await api.post<{ access: string; refresh: string; user: User }>('auth/login/', {
           email: authEmail,

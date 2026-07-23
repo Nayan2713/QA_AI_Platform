@@ -365,6 +365,15 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
     const eventSource = new EventSource(sseUrl);
 
+    let errCount = 0;
+    eventSource.onerror = () => {
+      errCount++;
+      if (errCount > 5) {
+        console.warn('SSE connection retry limit reached on AppDetail. Closing EventSource.');
+        eventSource.close();
+      }
+    };
+
     eventSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);

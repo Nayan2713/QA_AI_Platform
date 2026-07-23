@@ -211,7 +211,13 @@ class BugValidationViewSet(viewsets.ReadOnlyModelViewSet):
             )
         
         try:
-            bug = Bug.objects.get(id=bug_id, test_run__test_case__app__user=request.user)
+            from django.db.models import Q
+            bug = Bug.objects.get(
+                Q(id=bug_id) & (
+                    Q(test_run__test_case__app__user=request.user) |
+                    Q(application__user=request.user)
+                )
+            )
             task = validate_bug_accuracy.apply_async(args=[bug_id], queue='quality')
             return Response({
                 'bug_id': bug_id,

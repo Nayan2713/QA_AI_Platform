@@ -42,6 +42,15 @@ export const Dashboard: React.FC = () => {
 
     const eventSource = new EventSource(sseUrl);
 
+    let errCount = 0;
+    eventSource.onerror = () => {
+      errCount++;
+      if (errCount > 5) {
+        console.warn('SSE connection retry limit reached on Dashboard. Closing EventSource.');
+        eventSource.close();
+      }
+    };
+
     eventSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);

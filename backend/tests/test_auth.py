@@ -23,11 +23,20 @@ class AuthenticationTests(TestCase):
             password='testpassword123'
         )
 
+    def get_response_data(self, response):
+        data = response.json()
+        if isinstance(data, dict) and 'data' in data:
+            return data['data']
+        return data
+
     def get_error_data(self, response):
         """Helper to extract validation errors from custom exception handler wrapping"""
         data = response.json()
-        if 'detail' in data and isinstance(data['detail'], dict):
-            return data['detail']
+        if isinstance(data, dict) and 'data' in data:
+            data = data['data']
+        if isinstance(data, dict) and 'detail' in data:
+            if isinstance(data['detail'], dict):
+                return data['detail']
         return data
 
     # ==========================
@@ -47,7 +56,7 @@ class AuthenticationTests(TestCase):
             content_type='application/json'
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        data = response.json()
+        data = self.get_response_data(response)
         self.assertIn('access', data)
         self.assertIn('refresh', data)
         self.assertIn('user', data)
@@ -163,7 +172,7 @@ class AuthenticationTests(TestCase):
             content_type='application/json'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        data = response.json()
+        data = self.get_response_data(response)
         self.assertIn('access', data)
         self.assertIn('refresh', data)
         self.assertIn('user', data)
@@ -182,7 +191,8 @@ class AuthenticationTests(TestCase):
             content_type='application/json'
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertIn('detail', response.json())
+        err = self.get_response_data(response)
+        self.assertIn('detail', err)
 
     def test_invalid_login_wrong_password(self):
         """10. Login fails with 401 on wrong password"""
@@ -225,7 +235,7 @@ class AuthenticationTests(TestCase):
             data=json.dumps(login_payload),
             content_type='application/json'
         )
-        refresh_token = login_response.json()['refresh']
+        refresh_token = self.get_response_data(login_response)['refresh']
 
         # Call refresh endpoint
         refresh_payload = {
@@ -237,7 +247,7 @@ class AuthenticationTests(TestCase):
             content_type='application/json'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('access', response.json())
+        self.assertIn('access', self.get_response_data(response))
 
     def test_token_refresh_user_not_exist(self):
         """12b. Refreshing a token for a deleted user returns 401 Unauthorized instead of 500"""
@@ -251,7 +261,7 @@ class AuthenticationTests(TestCase):
             data=json.dumps(login_payload),
             content_type='application/json'
         )
-        refresh_token = login_response.json()['refresh']
+        refresh_token = self.get_response_data(login_response)['refresh']
 
         # Delete the user
         User.objects.filter(email='duplicate@qaengine.com').delete()
@@ -266,7 +276,8 @@ class AuthenticationTests(TestCase):
             content_type='application/json'
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertEqual(response.json()['detail'], 'No active account found for the given token.')
+        err_detail = self.get_response_data(response).get('detail', '')
+        self.assertEqual(err_detail, 'No active account found for the given token.')
 
     def test_protected_endpoint_without_token(self):
         """13. Accessing protected endpoint without token returns 401"""
@@ -285,7 +296,7 @@ class AuthenticationTests(TestCase):
             data=json.dumps(login_payload),
             content_type='application/json'
         )
-        access_token = login_response.json()['access']
+        access_token = self.get_response_data(login_response)['access']
 
         # Get protected endpoint with authorization headers
         headers = {

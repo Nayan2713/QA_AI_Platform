@@ -44,10 +44,14 @@ class EncryptedCharField(models.TextField):
     def from_db_value(self, value, expression, connection):
         if value is None:
             return value
-        try:
-            return _get_fernet().decrypt(value.encode()).decode()
-        except Exception:
-            return value  # return as-is if it was never encrypted (migration compatibility)
+        if value.startswith('gAAAAA'):
+            try:
+                return _get_fernet().decrypt(value.encode()).decode()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Fernet decryption failed for encrypted field: {e}")
+                return None
+        return value  # unencrypted legacy string
 
     def to_python(self, value):
         return value  # already a plain string in memory

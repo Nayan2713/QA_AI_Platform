@@ -298,11 +298,6 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         app_id = self.request.query_params.get('app')
         if app_id:
             queryset = queryset.filter(app_id=app_id)
-        if self.action == 'list':
-            from django.db.models.fields.json import KeyTextTransform
-            queryset = queryset.annotate(
-                model_used_annotated=KeyTextTransform('model_used', 'generation_context')
-            ).defer('generation_context')
         return queryset
 
     def get_serializer_class(self):
@@ -569,7 +564,7 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
                 Q(test_run__test_case__app__user=self.request.user) |
                 Q(application__user=self.request.user)
             )
-            .select_related('application', 'test_run', 'test_run__test_case', 'test_run__test_case__app')
+            .select_related('application', 'test_run', 'test_run__test_case', 'test_run__test_case__app', 'api_endpoint')
             .order_by('-created_at')
         )
         app_id = self.request.query_params.get('app')

@@ -46,12 +46,23 @@ def clear_stop_flag(task_id: str) -> None:
 
 
 def is_cancelled(task_id: str) -> bool:
-    """Returns True if a stop flag has been set for this task."""
+    """Returns True if a stop flag has been set for this task (checks Redis & DB fallback)."""
     try:
         r = get_redis_client()
-        return r.exists(f"stop_flag:{task_id}") == 1
+        if r.exists(f"stop_flag:{task_id}") == 1:
+            return True
     except Exception as e:
         logger.warning(f"[CANCELLATION] Redis check failed for {task_id}: {e}")
+
+    # Database fallback: check if CeleryTask was marked stopped/cancelled in DB
+    try:
+        from core.models import CeleryTask
+        return CeleryTask.objects.filter(
+            task_id=task_id,
+            status__in=['failed', 'cancelled'],
+            error__icontains='stopped'
+        ).exists()
+    except Exception:
         return False
 
 

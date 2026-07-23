@@ -64,6 +64,7 @@ class CeleryTaskStatus(models.TextChoices):
     PROGRESS = "progress", "In Progress"
     SUCCESS = "success", "Success"
     FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
 
 
 # ── TestValidation ───────────────────────────────────────────

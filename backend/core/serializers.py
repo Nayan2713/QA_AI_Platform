@@ -58,19 +58,6 @@ class ApplicationSerializer(serializers.ModelSerializer):
         ).values('title', 'severity').distinct().count()
 
 
-class ApplicationListSerializer(ApplicationSerializer):
-    class Meta:
-        model = Application
-        fields = (
-            'id', 'user', 'url', 'base_url', 'login_url', 
-            'username', 'status', 'discovery_source', 
-            'login_status', 'login_error', 'industry', 
-            'use_llm_in_crawl', 'page_count', 
-            'api_count', 'test_case_count', 'bug_count', 'created_at'
-        )
-        read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'login_error')
-
-
     def validate(self, attrs):
         url = attrs.get('url')
         if url:
@@ -93,9 +80,9 @@ class ApplicationListSerializer(ApplicationSerializer):
                     raise serializers.ValidationError({"url": "You have already registered this application URL."})
 
         # Validate that login credentials are provided if login_url is specified
-        login_url = attrs.get('login_url')
-        username = attrs.get('username')
-        password = attrs.get('password')
+        login_url = attrs.get('login_url', getattr(self.instance, 'login_url', None))
+        username = attrs.get('username', getattr(self.instance, 'username', None))
+        password = attrs.get('password', getattr(self.instance, 'password', None))
         if login_url and (not username or not password):
             raise serializers.ValidationError({
                 "username": "Username and password are required if login URL is specified.",
@@ -103,6 +90,19 @@ class ApplicationListSerializer(ApplicationSerializer):
             })
             
         return attrs
+
+
+class ApplicationListSerializer(ApplicationSerializer):
+    class Meta:
+        model = Application
+        fields = (
+            'id', 'user', 'url', 'base_url', 'login_url', 
+            'username', 'status', 'discovery_source', 
+            'login_status', 'login_error', 'industry', 
+            'use_llm_in_crawl', 'page_count', 
+            'api_count', 'test_case_count', 'bug_count', 'created_at'
+        )
+        read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'login_error')
 
 
 class PageSerializer(serializers.ModelSerializer):
@@ -265,7 +265,7 @@ class BugSerializer(serializers.ModelSerializer):
         return obj.test_run.test_case.steps if obj.test_run and obj.test_run.test_case else []
         
     def get_test_run_results(self, obj):
-        if obj.test_run:
+        if obj.test_run and hasattr(obj.test_run, '_prefetched_objects_cache') and 'step_results' in obj.test_run._prefetched_objects_cache:
             return TestResultListSerializer(obj.test_run.step_results.all(), many=True).data
         return []
 
