@@ -184,6 +184,13 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         serializer = BugSerializer(bugs, many=True)
         return Response(serializer.data)
 
+    @action(detail=True, methods=['get'], url_path='api-endpoints')
+    def api_endpoints(self, request, pk=None):
+        app = self.get_object()
+        endpoints = APIEndpoint.objects.filter(application=app).order_by('url_pattern')
+        serializer = APIEndpointSerializer(endpoints, many=True)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['get'], url_path='api-dependency-graph')
     def api_dependency_graph(self, request, pk=None):
         app = self.get_object()

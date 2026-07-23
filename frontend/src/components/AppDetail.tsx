@@ -17,6 +17,13 @@ interface AppDetailProps {
   setActiveTaskId?: (id: string | null) => void;
 }
 
+interface ToastMessage {
+  id: string;
+  type: 'success' | 'error' | 'info';
+  title: string;
+  message: string;
+}
+
 export const AppDetail: React.FC<AppDetailProps> = ({ 
   appId: propAppId, 
   onBack,
@@ -58,6 +65,18 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     navigate(`/scans/${appId}/${tabName}`);
   };
   const [showLoginError, setShowLoginError] = useState(false);
+  const [apiSearchQuery, setApiSearchQuery] = useState('');
+  
+  // Real-time toast notification system
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const addToast = (type: 'success' | 'error' | 'info', title: string, message: string) => {
+    const toastId = Math.random().toString(36).substring(2, 9);
+    setToasts(prev => [...prev.slice(-3), { id: toastId, type, title, message }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== toastId));
+    }, 4500);
+  };
   
   // Track active execution via Route parameter
   const activeTestRunId = propActiveTestRunId !== undefined ? propActiveTestRunId : (runId ? parseInt(runId) : null);
@@ -95,13 +114,11 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }, 3000); // 3s debounce absorbs bursts of SSE events during Run All Tests
   }, [refetchAll]);
 
-  // 1. Fetch App details (Parallel/non-blocking with double-guard)
+  // 1. Fetch App details
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    // Only show the full-page skeleton on the very first load (no app data yet).
-    // Background refreshes (triggered by SSE/polling) update silently in-place.
     if (!app) setIsAppLoading(true);
     setAppError('');
 
@@ -137,12 +154,11 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }
   }, [app]);
 
-  // 2. Fetch Test Cases (Decoupled, parallel, 15s timeout with double-guard)
+  // 2. Fetch Test Cases
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    // Only show loading spinner on first fetch — not on background refreshes (avoids blinking)
     if (testCases.length === 0) setIsTestCasesLoading(true);
     setTestCasesError(null);
 
@@ -178,7 +194,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    // Only show loading spinner on first fetch
     if (bugs.length === 0) setIsBugsLoading(true);
 
     const fetchBugs = async () => {
@@ -207,32 +222,40 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     };
   }, [appId, refreshTrigger]);
 
-  // 4. Fetch API Endpoints
+  // 4. Fetch API Endpoints & Graph
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    // Only show loading spinner on first fetch
     if (apiEndpoints.length === 0) setIsApiEndpointsLoading(true);
 
-    const fetchEndpoints = async () => {
+    const fetchApiData = async () => {
       try {
-        const res = await api.get<APIEndpoint[]>(`api-endpoints/?app=${appId}`, { signal });
-        if (active) {
-          setApiEndpoints(res.data);
-        }
+        const epRes = await api.get(`api-endpoints/?app=${appId}`, { signal });
+        const rawData = epRes.data;
+        const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
+        if (active) setApiEndpoints(data);
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch API endpoints:', err);
         }
       } finally {
-        if (active) {
-          setIsApiEndpointsLoading(false);
+        if (active) setIsApiEndpointsLoading(false);
+      }
+
+      try {
+        const graphRes = await api.get(`applications/${appId}/api-dependency-graph/`, { signal });
+        if (active) setApiGraph(graphRes.data);
+      } catch (err: any) {
+        if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
+          console.error('Failed to fetch API graph:', err);
         }
+      } finally {
+        if (active) setIsApiGraphLoading(false);
       }
     };
 
-    fetchEndpoints();
+    fetchApiData();
     return () => {
       active = false;
       controller.abort();
@@ -244,7 +267,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    // Only show loading spinner on first fetch
     if (agentSessions.length === 0) setIsAgentSessionsLoading(true);
 
     const fetchSessions = async () => {
@@ -252,17 +274,13 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const res = await api.get(`agent-sessions/?app=${appId}`, { signal });
         const rawData = res.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
-        if (active) {
-          setAgentSessions(data);
-        }
+        if (active) setAgentSessions(data as any);
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
-          console.warn('Failed to fetch agent sessions:', err);
+          console.error('Failed to fetch agent sessions:', err);
         }
       } finally {
-        if (active) {
-          setIsAgentSessionsLoading(false);
-        }
+        if (active) setIsAgentSessionsLoading(false);
       }
     };
 
@@ -273,85 +291,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     };
   }, [appId, refreshTrigger]);
 
-  // 6. Fetch API dependency Graph
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-    const signal = controller.signal;
-    setIsApiGraphLoading(true);
-
-    const fetchGraph = async () => {
-      try {
-        const res = await api.get<any>(`applications/${appId}/api-dependency-graph/`, { signal });
-        if (active) {
-          setApiGraph(res.data);
-        }
-      } catch (err: any) {
-        if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
-          console.warn('Failed to fetch api dependency graph:', err);
-        }
-      } finally {
-        if (active) {
-          setIsApiGraphLoading(false);
-        }
-      }
-    };
-
-    fetchGraph();
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [appId, refreshTrigger]);
-
-  // Cleanup timeout hook
-  useEffect(() => {
-    return () => {
-      if (refetchTimeoutRef.current) {
-        clearTimeout(refetchTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // Restore active task if one is running for this application on mount
-  useEffect(() => {
-    let isMounted = true;
-    // Reset currentTask immediately when switching applications
-    setCurrentTask(null);
-
-    const restoreActiveTask = async () => {
-      try {
-        const tasksRes = await api.get<CeleryTask[]>(`tasks/?app_id=${appId}`);
-        if (!isMounted) return;
-        const activeTask = tasksRes.data.find(t => t.status === 'pending' || t.status === 'progress');
-        if (activeTask) {
-          setActiveTaskId(activeTask.task_id);
-          setCurrentTask(activeTask);
-        } else {
-          setActiveTaskId(null);
-          setCurrentTask(null);
-        }
-      } catch (taskErr) {
-        console.warn('Failed to restore active tasks:', taskErr);
-        if (isMounted) {
-          setActiveTaskId(null);
-          setCurrentTask(null);
-        }
-      }
-    };
-    restoreActiveTask();
-    return () => {
-      isMounted = false;
-    };
-  }, [appId]);
-
-  // Refs to allow SSE handler to access the latest state without reconnecting
-  const activeTaskIdRef = React.useRef(activeTaskId);
-  useEffect(() => {
-    activeTaskIdRef.current = activeTaskId;
-  }, [activeTaskId]);
-
-  // Real-time updates via Server-Sent Events (SSE)
+  // Real-time SSE Event listener with Toast Feedback
   useEffect(() => {
     const token = localStorage.getItem('access_token');
     if (!token) return;
@@ -362,7 +302,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       sseBase = 'http://127.0.0.1:8000/api/events/';
     }
     const sseUrl = `${sseBase}?token=${encodeURIComponent(token)}`;
-
     const eventSource = new EventSource(sseUrl);
 
     let errCount = 0;
@@ -379,47 +318,28 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const payload = JSON.parse(event.data);
         const { type, data } = payload;
 
+        if (data && data.app_id && data.app_id !== appId) {
+          return;
+        }
+
         switch (type) {
-          case 'celerytask_created':
-          case 'celerytask_updated':
-            if (data.task_id === activeTaskIdRef.current && (!data.app || data.app === appId)) {
-              setCurrentTask(data);
-              if (data.status === 'success' || data.status === 'failed') {
-                refetchAllDebounced();
-                setTimeout(() => {
-                  setActiveTaskId(null);
-                  setCurrentTask(null);
-                }, 3000);
-              }
-            }
-            break;
-
-          case 'application_updated':
-            if (data.id === appId) {
-              setApp(prev => prev ? { ...prev, ...data } : null);
-              if (data.status === 'DISCOVERED' || data.status === 'FAILED') {
-                setDiscovering(false);
-                refetchAllDebounced();
-              }
-            }
-            break;
-
-          case 'page_created':
-          case 'apiendpoint_created':
           case 'bug_created':
-          case 'bug_updated':
-          case 'testrun_updated':
-            // Full data refetch when a complete run or bug finishes.
-            // testresult_created (individual steps) is intentionally excluded to prevent
-            // constant refetching during Run All Tests execution.
+            addToast('error', '🐞 Defect Identified', data.title || 'A new bug was captured during test execution.');
             refetchAllDebounced();
             break;
-
-          case 'testresult_created':
-            // Individual step results — no full refetch needed, the task progress
-            // tracker already shows live step info via the backup polling loop.
+          case 'application_updated':
+            if (data.status === 'DISCOVERED' || data.status === 'FAILED') {
+              setDiscovering(false);
+              addToast(data.status === 'DISCOVERED' ? 'success' : 'error', 'Discovery Complete', `App status is now ${data.status}`);
+              refetchAllDebounced();
+            }
             break;
-
+          case 'page_created':
+          case 'apiendpoint_created':
+          case 'bug_updated':
+          case 'testrun_updated':
+            refetchAllDebounced();
+            break;
           default:
             break;
         }
@@ -439,7 +359,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     
     let isMounted = true;
     let pollCount = 0;
-    const MAX_POLLS = 150; // 5 minutes
+    const MAX_POLLS = 150;
     
     const pollInterval = setInterval(async () => {
       if (!isMounted || pollCount >= MAX_POLLS) {
@@ -464,12 +384,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             }
           }, 3000);
         } else {
-          // Fetch DB task record details
           try {
             const taskDb = await api.get<CeleryTask>(`tasks/${activeTaskId}/`);
             if (isMounted) {
               if (taskDb.data.app && taskDb.data.app !== appId) {
-                // Task belongs to another application! Clear task state for this view
                 setActiveTaskId(null);
                 setCurrentTask(null);
                 clearInterval(pollInterval);
@@ -494,11 +412,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
   const handleStopTask = async () => {
     try {
-      // Call stop-all to cancel every queued/running task for this app,
-      // not just the single activeTaskId (Run All Tests queues many tasks at once)
       await api.post(`applications/${appId}/stop-all/`);
       setActiveTaskId(null);
       setCurrentTask(null);
+      addToast('info', 'Task Terminated', 'All running and queued task workflows were stopped.');
       await refetchAll();
     } catch (err) {
       console.error('Failed to stop all tasks:', err);
@@ -509,7 +426,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     if (!app) return;
     const oldStatus = app.status;
     
-    // Optimistic UI updates
     setDiscovering(true);
     setApp(prev => prev ? { ...prev, status: 'DISCOVERING' } : null);
     
@@ -518,9 +434,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       if (res.data.task_id) {
         setActiveTaskId(res.data.task_id);
       }
+      addToast('info', 'Discovery Started', 'Autonomous crawler is traversing target domain.');
     } catch (err) {
       console.error(err);
-      // Rollback on error
       setDiscovering(false);
       setApp(prev => prev ? { ...prev, status: oldStatus } : null);
     }
@@ -529,7 +445,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const handleDiscoveryComplete = () => {
     setDiscovering(false);
     refetchAll();
-    setActiveTab('tests'); // Auto navigate to tests when discovery completes
+    setActiveTab('tests');
   };
 
   const handleDeleteAppDetail = async () => {
@@ -565,7 +481,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const handleDownloadReport = async () => {
     if (!app) return;
     try {
-      // Fetch pages list dynamically to get full URLs and titles
       const pagesRes = await api.get<any[]>(`applications/${appId}/pages/`);
       const pages = pagesRes.data;
       
@@ -580,7 +495,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       reportContent += `**Total Bugs Detected**: ${bugs.length}\n\n`;
       
       reportContent += `---\n\n`;
-      
       reportContent += `## 📄 1. Test Scope (Discovered Pages)\n`;
       if (pages.length === 0) {
         reportContent += `No pages discovered yet.\n\n`;
@@ -597,7 +511,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       }
       
       reportContent += `---\n\n`;
-      
       reportContent += `## 📋 2. Automated Test Suite\n`;
       if (testCases.length === 0) {
         reportContent += `No test cases generated yet.\n\n`;
@@ -624,7 +537,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       }
       
       reportContent += `---\n\n`;
-      
       reportContent += `## 🐞 3. Defect Registry (Logged Bugs)\n`;
       if (bugs.length === 0) {
         reportContent += `✨ **Zero bugs detected!** The application passed all automation checks.\n\n`;
@@ -643,13 +555,11 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       reportContent += `---\n\n`;
       reportContent += `*Generated automatically by QA Engineer MVP Platform.*\n`;
       
-      // Trigger file download
       const blob = new Blob([reportContent], { type: 'text/markdown;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       
-      // Clean filename from app url
       const safeName = app.url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '_');
       link.setAttribute('download', `QA_Report_${safeName}.md`);
       document.body.appendChild(link);
@@ -663,7 +573,13 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     }
   };
 
-  // If base application metadata failed to load, render connection retry overlay
+  // Filtered APIs for search
+  const filteredApiEndpoints = apiEndpoints.filter(ep => {
+    if (!apiSearchQuery.trim()) return true;
+    const q = apiSearchQuery.toLowerCase();
+    return ep.method.toLowerCase().includes(q) || ep.url_pattern.toLowerCase().includes(q) || (ep.auth_type && ep.auth_type.toLowerCase().includes(q));
+  });
+
   if (appError) {
     return (
       <div className="glass-card loading-state" style={{ padding: '40px', textAlign: 'center', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
@@ -677,300 +593,222 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     );
   }
 
-  // Render shimmer page skeleton *only* on initial load when app data is not yet available
   if (!app) {
     return (
       <div className="glass-card loading-state" style={{ padding: '40px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <style>{`
-          @keyframes shimmer {
-            0% { background-position: -200% 0; }
-            100% { background-position: 200% 0; }
-          }
-          .skeleton-line {
-            height: 16px;
-            background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%);
-            background-size: 200% 100%;
-            animation: shimmer 1.5s infinite;
-            border-radius: 4px;
-          }
-        `}</style>
-        <div className="skeleton-line" style={{ width: '40%', height: '32px', marginBottom: '10px' }} />
-        <div className="skeleton-line" style={{ width: '80%' }} />
-        <div className="skeleton-line" style={{ width: '60%' }} />
+        <div className="skeleton-shimmer" style={{ width: '40%', height: '32px', marginBottom: '10px' }} />
+        <div className="skeleton-shimmer" style={{ width: '80%', height: '16px' }} />
+        <div className="skeleton-shimmer" style={{ width: '60%', height: '16px' }} />
         <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-          <div className="skeleton-line" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
-          <div className="skeleton-line" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
-          <div className="skeleton-line" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
+          <div className="skeleton-shimmer" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
+          <div className="skeleton-shimmer" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
+          <div className="skeleton-shimmer" style={{ width: '120px', height: '40px', borderRadius: '8px' }} />
         </div>
       </div>
     );
   }
 
+  const isDiscovering = app.status === 'DISCOVERING';
+
   return (
-    <div className="app-detail-container">
-      <button onClick={onBack} className="btn-back-link">
-        ← Back to Applications
-      </button>
-
-      {/* Main app panel */}
-      <div className="glass-card app-detail-header-card">
-        <div className="header-info">
-          <h2>🌐 {app.url}</h2>
-          <p className="base-url-text">Base Domain: <code>{app.base_url}</code></p>
-          <div className="app-details-metrics">
-            <span className="metric-tag">📄 {app.page_count} Pages Discovered</span>
-            <span className="metric-tag">🔗 {app.api_count} APIs Discovered</span>
-            <span className="metric-tag">📋 {app.test_case_count} Test Cases</span>
-            <span className="metric-tag bug-metric">🐞 {app.bug_count} Bugs Detected</span>
-            <span className="metric-tag industry-tag" style={{
-              borderColor: (!app.industry || app.industry === 'General') ? 'rgba(156, 163, 175, 0.4)' : 'rgba(99, 102, 241, 0.4)',
-              color: (!app.industry || app.industry === 'General') ? '#d1d5db' : '#a5b4fc',
-              backgroundColor: (!app.industry || app.industry === 'General') ? 'rgba(156, 163, 175, 0.1)' : 'rgba(99, 102, 241, 0.1)',
-              fontWeight: 600
-            }}>
-              🏭 Industry: {app.industry || 'General'}
+    <div className="app-detail-container animate-slide-up">
+      {/* Toast Notification Container */}
+      <div className="toast-container">
+        {toasts.map(toast => (
+          <div key={toast.id} className={`toast-item toast-${toast.type}`}>
+            <span style={{ fontSize: '1.2rem' }}>
+              {toast.type === 'error' ? '🚨' : toast.type === 'success' ? '✅' : 'ℹ️'}
             </span>
-            {app.login_url && (
-              <span className={`metric-tag login-status-tag ${
-                app.login_status === 'SUCCESS' ? 'login-success' : 
-                app.login_status === 'FAILED' ? 'login-failed' : 
-                'login-pending'
-              }`}
-              style={{
-                borderColor: 
-                  app.login_status === 'SUCCESS' ? 'rgba(34, 197, 94, 0.4)' : 
-                  app.login_status === 'FAILED' ? (showLoginError ? '#ff4d4d' : 'rgba(239, 68, 68, 0.4)') : 
-                  'rgba(234, 179, 8, 0.4)',
-                color: 
-                  app.login_status === 'SUCCESS' ? '#22c55e' : 
-                  app.login_status === 'FAILED' ? '#ff4d4d' : 
-                  '#eab308',
-                backgroundColor: 
-                  app.login_status === 'SUCCESS' ? 'rgba(34, 197, 94, 0.1)' : 
-                  app.login_status === 'FAILED' ? 'rgba(239, 68, 68, 0.15)' : 
-                  'rgba(234, 179, 8, 0.1)',
-                cursor: app.login_status === 'FAILED' ? 'pointer' : 'default',
-                boxShadow: app.login_status === 'FAILED' && showLoginError ? '0 0 10px rgba(239, 68, 68, 0.3)' : 'none',
-                transition: 'all 0.2s ease',
-                userSelect: 'none'
-              }}
-              onClick={() => {
-                if (app.login_status === 'FAILED') {
-                  setShowLoginError(prev => !prev);
-                }
-              }}
-              title={app.login_status === 'FAILED' ? "Click to view login failure details" : undefined}
-              >
-                {app.login_status === 'SUCCESS' ? '🔑 Authenticated' : 
-                 app.login_status === 'FAILED' ? (showLoginError ? '⚠️ Login Failed ▲' : '⚠️ Login Failed ▼ (Click for details)') : 
-                 '🔑 Auth Pending'}
-              </span>
-            )}
+            <div>
+              <strong style={{ display: 'block', fontWeight: 600 }}>{toast.title}</strong>
+              <span style={{ fontSize: '0.8rem', opacity: 0.85 }}>{toast.message}</span>
+            </div>
           </div>
-        </div>
-        
-        <div className="header-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <button 
-            onClick={handleStartDiscovery} 
-            disabled={discovering} 
-            className={`btn-primary btn-discover ${discovering ? 'discovering' : ''}`}
-          >
-            {discovering ? (
-              <div className="loader-container-inline">
-                <div className="spinner-small"></div>
-                <span>Discovering...</span>
-              </div>
-            ) : (
-              '🔍 Start Discovery Run'
-            )}
-          </button>
-
-          <button 
-            onClick={handleDownloadReport}
-            className="btn-secondary"
-            style={{
-              backgroundColor: '#4a5568',
-              color: '#ffffff',
-              border: 'none',
-              padding: '10px 16px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            📋 Export QA Report
-          </button>
-          
-          <button 
-            onClick={handleDeleteAppDetail}
-            className="btn-danger"
-            style={{
-              backgroundColor: '#ff4d4d',
-              color: '#ffffff',
-              border: 'none',
-              padding: '10px 16px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            🗑️ Delete
-          </button>
-        </div>
-
+        ))}
       </div>
 
-      {/* Login Failure Diagnostics Card */}
-      {showLoginError && app.login_status === 'FAILED' && (
-        <>
-          <style>{`
-            @keyframes slideDownFade {
-              from {
-                opacity: 0;
-                transform: translateY(-8px);
-              }
-              to {
-                opacity: 1;
-                transform: translateY(0);
-              }
-            }
-            .diagnostic-card-container {
-              animation: slideDownFade 0.25s ease-out forwards;
-            }
-          `}</style>
-          <div className="glass-card diagnostic-card-container" style={{
-            marginTop: '-12px',
-            padding: '20px',
-            border: '1px solid rgba(239, 68, 68, 0.35)',
-            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(20, 10, 10, 0.7) 100%)',
-            backdropFilter: 'blur(16px)',
-            borderRadius: '12px',
-            boxShadow: '0 8px 32px 0 rgba(239, 68, 68, 0.15)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '16px'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '1.4rem' }}>🚨</span>
-                <div>
-                  <h4 style={{ margin: 0, color: '#ff6b6b', fontWeight: 600, fontSize: '1.1rem' }}>
-                    Login Failure Diagnostic Details
-                  </h4>
-                  <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.5)' }}>
-                    Captured during target environment analysis and test runs
-                  </p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowLoginError(false)}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  borderRadius: '6px',
-                  color: 'rgba(255, 255, 255, 0.7)',
-                  cursor: 'pointer',
-                  fontSize: '0.8rem',
-                  padding: '4px 8px',
-                  transition: 'all 0.2s'
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
-                  e.currentTarget.style.color = '#fff';
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
-                  e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
-                }}
-              >
-                ✕ Close
-              </button>
-            </div>
+      <button onClick={onBack || (() => navigate('/dashboard'))} className="btn-back-link" style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        fontSize: '0.9rem',
+        fontWeight: 600,
+        marginBottom: '16px',
+        color: '#a5b4fc',
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer'
+      }}>
+        ← Back to Dashboard
+      </button>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fca5a5', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Error Description
-              </span>
-              <div style={{
-                background: 'rgba(0, 0, 0, 0.4)',
-                border: '1px solid rgba(239, 68, 68, 0.25)',
+      {/* Main App Overview Card */}
+      <div className="glass-card app-detail-header-card" style={{ padding: '24px', marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', width: '100%' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span className={`live-pulse-dot ${isDiscovering ? 'running' : ''}`} />
+              <h2 style={{ fontSize: '1.65rem', fontWeight: 700, margin: 0, color: '#fff' }}>🌐 {app.url}</h2>
+            </div>
+            <p className="base-url-text" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+              Base Domain: <code>{app.base_url}</code>
+            </p>
+          </div>
+
+          <div className="header-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button 
+              onClick={handleStartDiscovery} 
+              disabled={discovering} 
+              className={`btn-primary btn-discover ${discovering ? 'discovering' : ''}`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 18px',
                 borderRadius: '8px',
-                padding: '16px',
-                fontFamily: 'Consolas, Monaco, monospace',
-                fontSize: '0.85rem',
-                color: '#fca5a5',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.5)',
-                maxHeight: '200px',
-                overflowY: 'auto'
-              }}>
-                {app.login_error || 'No specific error message was captured. Please check if the login page is accessible and the configured credentials are valid.'}
-              </div>
-            </div>
+                fontWeight: 600
+              }}
+            >
+              {discovering ? (
+                <>
+                  <div className="spinner-small"></div>
+                  <span>Crawling Site...</span>
+                </>
+              ) : (
+                '🔍 Start Discovery Run'
+              )}
+            </button>
 
-            <div style={{
-              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-              paddingTop: '14px',
-              fontSize: '0.85rem',
-              color: 'rgba(255, 255, 255, 0.85)'
-            }}>
-              <strong style={{ color: '#fff', display: 'block', marginBottom: '8px' }}>💡 Recommended Troubleshooting Steps:</strong>
-              <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <li>
-                  Check if the target login URL is active and matches: <a href={app.login_url} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}><code>{app.login_url}</code></a>
-                </li>
-                <li>
-                  Ensure the configured <strong>email/username</strong> and <strong>password</strong> fields are correct and have access rights.
-                </li>
-                <li>
-                  Verify that your login form uses standard email/username and password input elements so that Playwright can automatically locate and fill them.
-                </li>
-                <li>
-                  Ensure that your target site is not blocked by CAPTCHA, Cloudflare, or Multi-Factor Authentication (MFA) during automated login attempts.
-                </li>
-              </ul>
+            <button 
+              onClick={handleDownloadReport}
+              className="btn-secondary"
+              style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                color: '#ffffff',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              📄 Export QA Report
+            </button>
+            
+            <button 
+              onClick={handleDeleteAppDetail}
+              className="btn-danger"
+              style={{
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#ef4444',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              🗑️ Delete
+            </button>
+          </div>
+        </div>
+
+        {/* High-Level Overview Metrics Grid (5 cards across full width) */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+          gap: '12px',
+          width: '100%',
+          marginTop: '8px',
+          paddingTop: '16px',
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)'
+        }}>
+          <div style={{ background: 'rgba(11, 8, 22, 0.45)', padding: '14px 16px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>Pages Discovered</span>
+            <div style={{ fontSize: '1.35rem', fontWeight: 700, color: '#fff', marginTop: '4px' }}>📄 {app.page_count}</div>
+          </div>
+
+          <div style={{ background: 'rgba(11, 8, 22, 0.45)', padding: '14px 16px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>APIs Intercepted</span>
+            <div style={{ fontSize: '1.35rem', fontWeight: 700, color: '#fff', marginTop: '4px' }}>🔌 {app.api_count}</div>
+          </div>
+
+          <div style={{ background: 'rgba(11, 8, 22, 0.45)', padding: '14px 16px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>Test Scenarios</span>
+            <div style={{ fontSize: '1.35rem', fontWeight: 700, color: '#fff', marginTop: '4px' }}>📋 {app.test_case_count}</div>
+          </div>
+
+          <div style={{ background: 'rgba(11, 8, 22, 0.45)', padding: '14px 16px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>Bugs Found</span>
+            <div style={{ fontSize: '1.35rem', fontWeight: 700, color: app.bug_count > 0 ? '#ef4444' : '#34d399', marginTop: '4px' }}>
+              🐞 {app.bug_count}
             </div>
           </div>
-        </>
+
+          <div style={{ background: 'rgba(11, 8, 22, 0.45)', padding: '14px 16px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px' }}>Auth Status</span>
+            <div style={{ fontSize: '0.92rem', fontWeight: 600, marginTop: '6px', color: app.login_status === 'SUCCESS' ? '#34d399' : app.login_status === 'FAILED' ? '#ef4444' : '#fbbf24' }}>
+              {app.login_status === 'SUCCESS' ? '🔑 Authenticated' : app.login_status === 'FAILED' ? '⚠️ Auth Failed' : '🔑 Auth Pending'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Login Diagnostic Drawer */}
+      {showLoginError && app.login_status === 'FAILED' && (
+        <div className="glass-card diagnostic-card-container animate-slide-up" style={{
+          marginBottom: '20px',
+          padding: '20px',
+          border: '1px solid rgba(239, 68, 68, 0.35)',
+          background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(20, 10, 10, 0.75) 100%)',
+          borderRadius: '12px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h4 style={{ margin: 0, color: '#ff6b6b', fontWeight: 600 }}>🚨 Authentication Failure Details</h4>
+            <button onClick={() => setShowLoginError(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>✕</button>
+          </div>
+          <div style={{
+            background: 'rgba(0, 0, 0, 0.4)',
+            padding: '12px',
+            borderRadius: '8px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.82rem',
+            color: '#fca5a5',
+            whiteSpace: 'pre-wrap'
+          }}>
+            {app.login_error || 'No detailed trace available.'}
+          </div>
+        </div>
       )}
 
-      {/* Internal Task Progress Tracker */}
+      {/* Real-time Task Execution Progress Tracker */}
       {currentTask && (!currentTask.app || currentTask.app === appId) && (
-        <div className="glass-card task-progress-tracker" style={{
-          margin: '20px 0',
-          padding: '16px',
+        <div className="glass-card task-progress-tracker animate-slide-up" style={{
+          marginBottom: '24px',
+          padding: '18px 20px',
           border: `1px solid ${
-            currentTask.status === 'success' ? 'rgba(34, 197, 94, 0.35)' :
-            currentTask.status === 'failed' ? 'rgba(239, 68, 68, 0.35)' :
-            'rgba(255, 255, 255, 0.15)'
+            currentTask.status === 'success' ? 'rgba(16, 185, 129, 0.4)' :
+            currentTask.status === 'failed' ? 'rgba(239, 68, 68, 0.4)' :
+            'rgba(245, 158, 11, 0.4)'
           }`,
-          background: 'rgba(30, 30, 40, 0.65)',
-          backdropFilter: 'blur(16px)',
-          borderRadius: '12px',
-          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)'
+          background: 'rgba(18, 14, 33, 0.85)',
+          borderRadius: '12px'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ 
-              fontSize: '0.9rem', 
-              fontWeight: 'bold', 
-              textTransform: 'uppercase', 
-              letterSpacing: '0.05em', 
-              color: currentTask.status === 'success' ? '#22c55e' : currentTask.status === 'failed' ? '#ff4d4d' : '#a0a0ff' 
-            }}>
-              {currentTask.status === 'success' ? '✓ ' : currentTask.status === 'failed' ? '✗ ' : '⚙️ '} 
-              Internal Progress: {currentTask.task_type.replace('_', ' ')}
-            </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span className={`live-pulse-dot ${currentTask.status === 'progress' || currentTask.status === 'pending' ? 'running' : ''}`} />
+              <strong style={{ fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#fff' }}>
+                {currentTask.task_type.replace('_', ' ')} Workflow
+              </strong>
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#ffffff' }}>
-                {currentTask.progress}%
-              </span>
+              <span style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff' }}>{currentTask.progress}%</span>
               {(currentTask.status === 'pending' || currentTask.status === 'progress') && (
                 <button
                   onClick={handleStopTask}
@@ -978,114 +816,87 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                     backgroundColor: 'rgba(239, 68, 68, 0.2)',
                     border: '1px solid rgba(239, 68, 68, 0.4)',
                     color: '#ff8888',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    fontSize: '0.75rem',
+                    padding: '3px 10px',
+                    borderRadius: '6px',
+                    fontSize: '0.78rem',
                     cursor: 'pointer',
-                    fontWeight: 'bold',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.4)';
-                    e.currentTarget.style.color = '#ffffff';
-                  }}
-                  onMouseOut={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
-                    e.currentTarget.style.color = '#ff8888';
+                    fontWeight: 600
                   }}
                 >
-                  🛑 Stop
+                  🛑 Cancel Task
                 </button>
               )}
             </div>
           </div>
-          
-          <div style={{
-            width: '100%',
-            height: '8px',
-            backgroundColor: 'rgba(255, 255, 255, 0.1)',
-            borderRadius: '4px',
-            overflow: 'hidden',
-            marginBottom: '10px'
-          }}>
+
+          <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255, 255, 255, 0.08)', borderRadius: '4px', overflow: 'hidden', marginBottom: '10px' }}>
             <div style={{
               width: `${currentTask.progress}%`,
               height: '100%',
-              backgroundColor: 
-                currentTask.status === 'success' ? '#22c55e' : 
-                currentTask.status === 'failed' ? '#ff4d4d' : 
-                '#a0a0ff',
-              transition: 'width 0.4s ease-in-out',
+              backgroundColor: currentTask.status === 'success' ? '#10b981' : currentTask.status === 'failed' ? '#ef4444' : '#f59e0b',
+              transition: 'width 0.4s ease',
               borderRadius: '4px'
             }} />
           </div>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {currentTask.status === 'progress' && <div className="spinner-small" />}
-            <span style={{ fontSize: '0.9rem', color: 'rgba(255, 255, 255, 0.85)' }}>
-              {currentTask.status === 'success' ? (
-                currentTask.task_type === 'discovery' ? (
-                  `Discovery complete! Found ${currentTask.result?.pages_discovered || 0} pages and cataloged ${currentTask.result?.apis_cataloged || 0} APIs.`
-                ) : currentTask.task_type === 'test_generation' ? (
-                  `Test generation complete! Created ${currentTask.result?.tests_generated || 0} test cases using ${currentTask.result?.model_used || 'Fallback Templates'}.`
-                ) : currentTask.task_type === 'execution' ? (
-                  `Execution complete! ${currentTask.result?.passed_steps || 0}/${currentTask.result?.total_steps || 0} steps passed.`
-                ) : currentTask.task_type === 'bug_detection' ? (
-                  `Bug audit complete! Discovered ${currentTask.result?.bugs_found || 0} defects.`
-                ) : currentTask.task_type === 'quality_check' ? (
-                  `Quality check complete! Calculations updated.`
-                ) : (
-                  currentTask.result?.status_text || 'Task completed successfully.'
-                )
-              ) : (
-                currentTask.result?.status_text || currentTask.error || 'Running internal tasks...'
-              )}
-            </span>
+
+          <div style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.8)' }}>
+            {currentTask.status === 'success' ? (
+              `Task finished cleanly. ${currentTask.result?.status_text || ''}`
+            ) : (
+              currentTask.result?.status_text || currentTask.error || 'Executing Playwright automation steps...'
+            )}
           </div>
         </div>
       )}
 
-      {/* Tab system */}
+      {/* Main Tabs Navigation Bar */}
       <div className="tabs-container">
-        <div className="tabs-header">
+        <div className="tabs-header" style={{ display: 'flex', gap: '4px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', marginBottom: '24px', overflowX: 'auto' }}>
           <button 
             className={`tab-btn ${activeTab === 'discovery' ? 'active' : ''}`}
             onClick={() => setActiveTab('discovery')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             🔍 Discovery Details
           </button>
           <button 
             className={`tab-btn ${activeTab === 'apis' ? 'active' : ''}`}
             onClick={() => setActiveTab('apis')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             🔌 APIs & Graph ({apiEndpoints.length})
           </button>
           <button 
             className={`tab-btn ${activeTab === 'tests' ? 'active' : ''}`}
             onClick={() => setActiveTab('tests')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             📋 Test Suite ({app.test_case_count})
           </button>
           <button 
             className={`tab-btn ${activeTab === 'bugs' ? 'active' : ''}`}
             onClick={() => setActiveTab('bugs')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             🐞 App Bugs ({app.bug_count})
           </button>
           <button 
             className={`tab-btn ${activeTab === 'sessions' ? 'active' : ''}`}
             onClick={() => setActiveTab('sessions')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             🔑 Sessions & Auth
           </button>
           <button 
             className={`tab-btn ${activeTab === 'quality' ? 'active' : ''}`}
             onClick={() => setActiveTab('quality')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             📊 Quality Dashboard
           </button>
         </div>
 
+        {/* Tab Content Views */}
         <div className="tab-content">
           {activeTab === 'discovery' && (
             <DiscoveryStatus 
@@ -1097,57 +908,78 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           )}
 
           {activeTab === 'apis' && (
-            <div className="glass-card api-status-card" style={{ padding: '20px' }}>
-              <div className="card-header" style={{ marginBottom: '20px' }}>
+            <div className="glass-card api-status-card animate-slide-up" style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <h3>🔌 Discovered API Catalog</h3>
-                  <p className="card-subtitle">REST, Axios, and GraphQL endpoints monitored during crawlers and runs.</p>
+                  <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>🔌 Intercepted API Endpoints</h3>
+                  <p className="card-subtitle" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    REST, Axios, and GraphQL endpoints monitored during crawlers and runs
+                  </p>
                 </div>
+
+                <input
+                  type="text"
+                  placeholder="🔍 Search endpoints by method or URL pattern..."
+                  value={apiSearchQuery}
+                  onChange={(e) => setApiSearchQuery(e.target.value)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    background: 'rgba(11, 8, 22, 0.6)',
+                    color: '#fff',
+                    fontSize: '0.85rem',
+                    minWidth: '260px'
+                  }}
+                />
               </div>
               
-              <div className="api-endpoints-table-container" style={{ overflowX: 'auto', marginBottom: '30px' }}>
-                <table className="api-endpoints-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
-                      <th style={{ padding: '12px' }}>Method</th>
-                      <th style={{ padding: '12px' }}>Pattern</th>
-                      <th style={{ padding: '12px' }}>Auth Type</th>
-                      <th style={{ padding: '12px' }}>Schema</th>
-                      <th style={{ padding: '12px' }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {apiEndpoints.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                          No background APIs intercepted yet. Perform crawler discovery or execute test cases.
-                        </td>
+              {apiEndpoints.length === 0 ? (
+                <div className="empty-state-card">
+                  <svg className="empty-state-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#06b6d4' }}>
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                  </svg>
+                  <h4 className="empty-state-title">No API Endpoints Captured Yet</h4>
+                  <p className="empty-state-desc">
+                    As Playwright crawls your application or executes automated test cases, background HTTP API traffic 
+                    (GET, POST, PUT, DELETE) will automatically be intercepted and cataloged here.
+                  </p>
+                  <button onClick={handleStartDiscovery} className="btn-primary" style={{ padding: '8px 20px' }}>
+                    🔍 Run Crawler to Discover APIs
+                  </button>
+                </div>
+              ) : (
+                <div className="api-endpoints-table-container" style={{ overflowX: 'auto', marginBottom: '30px' }}>
+                  <table className="api-endpoints-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                        <th style={{ padding: '12px' }}>METHOD</th>
+                        <th style={{ padding: '12px' }}>URL PATTERN</th>
+                        <th style={{ padding: '12px' }}>AUTH TYPE</th>
+                        <th style={{ padding: '12px' }}>SCHEMA FIELDS</th>
+                        <th style={{ padding: '12px' }}>ACTIONS</th>
                       </tr>
-                    ) : (
-                      apiEndpoints.map((ep) => (
+                    </thead>
+                    <tbody>
+                      {filteredApiEndpoints.map((ep) => (
                         <React.Fragment key={ep.id}>
                           <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                             <td style={{ padding: '12px' }}>
-                              <span className={`badge-method method-${ep.method.toLowerCase()}`} style={{
-                                padding: '4px 8px',
-                                borderRadius: '4px',
-                                fontWeight: 'bold',
-                                fontSize: '0.75rem',
-                                background: ep.method === 'GET' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(59, 130, 246, 0.2)',
-                                color: ep.method === 'GET' ? '#22c55e' : '#3b82f6'
-                              }}>
+                              <span className={`method-badge method-${ep.method.toLowerCase()}`}>
                                 {ep.method}
                               </span>
                             </td>
-                            <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: '0.85rem' }}>{ep.url_pattern}</td>
-                            <td style={{ padding: '12px' }}>{ep.auth_type || 'none'}</td>
-                            <td style={{ padding: '12px', fontSize: '0.8rem' }}>
+                            <td style={{ padding: '12px', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>{ep.url_pattern}</td>
+                            <td style={{ padding: '12px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{ep.auth_type || 'none'}</td>
+                            <td style={{ padding: '12px', fontSize: '0.82rem' }}>
                               {ep.response_schema ? `${Object.keys(ep.response_schema).length} fields` : 'no schema'}
                             </td>
                             <td style={{ padding: '12px' }}>
                               <button 
                                 className="btn-secondary" 
-                                style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                                style={{ padding: '4px 10px', fontSize: '0.78rem' }}
                                 onClick={async () => {
                                   if (selectedApiAnalysis?.endpoint_id === ep.id) {
                                     setSelectedApiAnalysis(null);
@@ -1164,27 +996,25 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                                   }
                                 }}
                               >
-                                {loadingApiAnalysisId === ep.id ? 'Loading...' : selectedApiAnalysis?.endpoint_id === ep.id ? 'Hide Analysis' : 'Analyze API'}
+                                {loadingApiAnalysisId === ep.id ? 'Loading...' : selectedApiAnalysis?.endpoint_id === ep.id ? 'Hide Analysis' : 'Inspect API'}
                               </button>
                             </td>
                           </tr>
                           {selectedApiAnalysis?.endpoint_id === ep.id && (
                             <tr>
-                              <td colSpan={5} style={{ background: 'rgba(0,0,0,0.2)', padding: '16px' }}>
+                              <td colSpan={5} style={{ background: 'rgba(0,0,0,0.3)', padding: '16px' }}>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                                   <div>
-                                    <h4 style={{ margin: '0 0 8px 0', color: '#60a5fa' }}>📈 Live Metrics & Health</h4>
-                                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px' }}>
+                                    <h4 style={{ margin: '0 0 8px 0', color: '#60a5fa', fontSize: '0.9rem' }}>📈 Live Health Metrics</h4>
+                                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', fontSize: '0.82rem' }}>
                                       <p><strong>Health Score:</strong> {selectedApiAnalysis.health_score} / 100</p>
                                       <p><strong>Total Calls:</strong> {selectedApiAnalysis.total_calls_tracked}</p>
                                       <p><strong>Average Latency:</strong> {selectedApiAnalysis.latency.avg_ms} ms</p>
-                                      <p><strong>Status Failures:</strong> {selectedApiAnalysis.failures.status_errors}</p>
-                                      <p><strong>Schema Violations:</strong> {selectedApiAnalysis.failures.schema_violations}</p>
                                     </div>
                                   </div>
                                   <div>
-                                    <h4 style={{ margin: '0 0 8px 0', color: '#60a5fa' }}>📄 Response Schema contract</h4>
-                                    <pre style={{ background: '#111827', padding: '12px', borderRadius: '6px', fontSize: '0.75rem', margin: 0, maxHeight: '150px', overflowY: 'auto' }}>
+                                    <h4 style={{ margin: '0 0 8px 0', color: '#60a5fa', fontSize: '0.9rem' }}>📄 Response Schema</h4>
+                                    <pre style={{ background: '#111827', padding: '12px', borderRadius: '8px', fontSize: '0.75rem', margin: 0, maxHeight: '140px', overflowY: 'auto' }}>
                                       {JSON.stringify(ep.response_schema, null, 2)}
                                     </pre>
                                   </div>
@@ -1193,34 +1023,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                             </tr>
                           )}
                         </React.Fragment>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Dependency Graph visual list */}
-              {apiGraph && apiGraph.links.length > 0 && (
-                <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px' }}>
-                  <h4>🕸️ API Dependency Flow Graph</h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
-                    {apiGraph.links.map((link, lIdx) => {
-                      const srcNode = apiGraph.nodes.find(n => n.id === link.source);
-                      const tgtNode = apiGraph.nodes.find(n => n.id === link.target);
-                      if (!srcNode || !tgtNode) return null;
-                      return (
-                        <div key={lIdx} style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(255,255,255,0.03)', padding: '8px 12px', borderRadius: '6px' }}>
-                          <span style={{ fontSize: '0.8rem', color: '#10b981', fontFamily: 'monospace' }}>{srcNode.label}</span>
-                          <span style={{ color: 'rgba(255,255,255,0.4)' }}>➔</span>
-                          <span style={{ background: 'rgba(96,165,250,0.2)', color: '#60a5fa', fontSize: '0.75rem', padding: '2px 6px', borderRadius: '4px' }}>
-                            pass {link.parameters.join(', ')}
-                          </span>
-                          <span style={{ color: 'rgba(255,255,255,0.4)' }}>➔</span>
-                          <span style={{ fontSize: '0.8rem', color: '#f59e0b', fontFamily: 'monospace' }}>{tgtNode.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
@@ -1230,17 +1035,14 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             <div style={{ position: 'relative' }}>
               {isTestCasesLoading ? (
                 <div className="glass-card" style={{ padding: '40px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
-                  <div className="spinner-small" style={{ borderTopColor: '#60a5fa' }} />
+                  <div className="spinner-small" style={{ borderTopColor: '#8b5cf6' }} />
                   <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }}>Loading test suite...</p>
                 </div>
               ) : testCasesError ? (
                 <div className="glass-card" style={{ padding: '30px', textAlign: 'center', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
                   <span style={{ fontSize: '2rem' }}>⚠️</span>
                   <h4 style={{ color: '#ef4444', margin: '8px 0' }}>Failed to Load Test Cases</h4>
-                  <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem', marginBottom: '16px' }}>
-                    {testCasesError instanceof Error ? testCasesError.message : 'The request timed out or connection was refused.'}
-                  </p>
-                  <button onClick={() => refetchAll()} className="btn-secondary" style={{ padding: '6px 16px', fontSize: '0.8rem' }}>
+                  <button onClick={() => refetchAll()} className="btn-secondary" style={{ padding: '6px 16px', fontSize: '0.8rem', marginTop: '12px' }}>
                     🔄 Try Again
                   </button>
                 </div>
@@ -1275,41 +1077,39 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
           {activeTab === 'sessions' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* Storage State Section */}
-              <div className="glass-card" style={{ padding: '20px' }}>
-                <h3>🔑 Active Storage & Session State</h3>
-                <p className="card-subtitle">Active credentials, cookies, and local storage variables preserved from Playwright runs.</p>
+              <div className="glass-card animate-slide-up" style={{ padding: '24px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>🔑 Preserved Auth Session State</h3>
+                <p className="card-subtitle" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  Active credentials, cookies, and local storage variables preserved from Playwright automation runs.
+                </p>
                 
                 {(() => {
                   let cookies: any[] = [];
-                  let origins: any[] = [];
                   try {
                     if (app?.storage_state) {
                       const parsed = JSON.parse(app.storage_state);
                       cookies = parsed.cookies || [];
-                      origins = parsed.origins || [];
                     }
                   } catch (err) {}
                   
                   return (
                     <div style={{ marginTop: '16px' }}>
-                      <h4 style={{ color: '#60a5fa', marginBottom: '8px' }}>🍪 Preserved Session Cookies</h4>
-                      <div style={{ overflowX: 'auto', marginBottom: '24px' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                      <h4 style={{ color: '#60a5fa', marginBottom: '8px', fontSize: '0.9rem' }}>🍪 Preserved Session Cookies</h4>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                           <thead>
                             <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
                               <th style={{ padding: '8px' }}>Name</th>
                               <th style={{ padding: '8px' }}>Domain</th>
                               <th style={{ padding: '8px' }}>Value</th>
                               <th style={{ padding: '8px' }}>Path</th>
-                              <th style={{ padding: '8px' }}>Expiry</th>
                             </tr>
                           </thead>
                           <tbody>
                             {cookies.length === 0 ? (
                               <tr>
-                                <td colSpan={5} style={{ padding: '12px', textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
-                                  No session cookies captured yet. Login has not been executed or session was cleared.
+                                <td colSpan={4} style={{ padding: '16px', textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
+                                  No session cookies captured yet.
                                 </td>
                               </tr>
                             ) : (
@@ -1317,45 +1117,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                                 <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                                   <td style={{ padding: '8px', fontWeight: 'bold' }}>{c.name}</td>
                                   <td style={{ padding: '8px' }}>{c.domain}</td>
-                                  <td style={{ padding: '8px', fontFamily: 'monospace', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.value}</td>
+                                  <td style={{ padding: '8px', fontFamily: 'monospace', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.value}</td>
                                   <td style={{ padding: '8px' }}>{c.path}</td>
-                                  <td style={{ padding: '8px' }}>{c.expires ? new Date(c.expires * 1000).toLocaleDateString() : 'Session'}</td>
                                 </tr>
                               ))
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                      
-                      <h4 style={{ color: '#60a5fa', marginBottom: '8px' }}>📦 Local Storage Preserves</h4>
-                      <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                          <thead>
-                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
-                              <th style={{ padding: '8px' }}>Origin</th>
-                              <th style={{ padding: '8px' }}>Key</th>
-                              <th style={{ padding: '8px' }}>Value</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {origins.length === 0 ? (
-                              <tr>
-                                <td colSpan={3} style={{ padding: '12px', textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
-                                  No Local Storage records captured yet.
-                                </td>
-                              </tr>
-                            ) : (
-                              origins.flatMap((originObj: any) => {
-                                const localStorageItems = originObj.localStorage || [];
-                                if (localStorageItems.length === 0) return [];
-                                return localStorageItems.map((item: any, idx: number) => (
-                                  <tr key={`${originObj.origin}-${idx}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                    <td style={{ padding: '8px', color: 'rgba(255,255,255,0.5)' }}>{originObj.origin}</td>
-                                    <td style={{ padding: '8px', fontWeight: 'bold' }}>{item.name}</td>
-                                    <td style={{ padding: '8px', fontFamily: 'monospace', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.value}</td>
-                                  </tr>
-                                ));
-                              })
                             )}
                           </tbody>
                         </table>
@@ -1364,11 +1129,12 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                   );
                 })()}
               </div>
-              
-              {/* Agent Sessions list */}
-              <div className="glass-card" style={{ padding: '20px' }}>
-                <h3>🤖 Autonomous Agent Log Sessions</h3>
-                <p className="card-subtitle">Trace history of Browser-Use reasoning and goal planning runs.</p>
+
+              <div className="glass-card animate-slide-up" style={{ padding: '24px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>🤖 Autonomous Agent Log Sessions</h3>
+                <p className="card-subtitle" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  Trace history of Browser-Use reasoning and goal planning runs.
+                </p>
                 <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {agentSessions.length === 0 ? (
                     <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
@@ -1376,22 +1142,14 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                     </div>
                   ) : (
                     agentSessions.map((session) => (
-                      <div key={session.id} style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', padding: '12px', background: 'rgba(255,255,255,0.01)' }}>
+                      <div key={session.id} style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '14px', background: 'rgba(255,255,255,0.02)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                          <strong>{session.task_type.toUpperCase()} session ({session.llm_model})</strong>
-                          <span className={`badge-status status-${session.status}`} style={{
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            fontSize: '0.75rem',
-                            fontWeight: 'bold',
-                            background: session.status === 'completed' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
-                            color: session.status === 'completed' ? '#22c55e' : '#ef4444'
-                          }}>{session.status}</span>
+                          <strong>{session.task_type.toUpperCase()} ({session.llm_model})</strong>
+                          <span className={`badge-status ${session.status === 'completed' ? 'badge-status-passed' : 'badge-status-failed'}`}>
+                            {session.status}
+                          </span>
                         </div>
                         <p style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'rgba(255,255,255,0.85)' }}>{session.result_summary}</p>
-                        <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)' }}>
-                          Duration: {session.duration_seconds?.toFixed(1)}s | Tokens: {session.tokens_used} | Executed: {new Date(session.created_at).toLocaleString()}
-                        </div>
                       </div>
                     ))
                   )}
@@ -1406,7 +1164,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         </div>
       </div>
 
-      {/* Active Playwright run overlay/side drawer */}
       {activeTestRunId && (
         <div className="results-panel-drawer">
           <div className="results-panel-drawer-overlay" onClick={() => setActiveTestRunId(null)}></div>

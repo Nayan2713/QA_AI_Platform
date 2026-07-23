@@ -110,21 +110,106 @@ export const Dashboard: React.FC = () => {
     });
   };
 
+  // Calculate high-level summary metrics across registered applications
+  const totalApps = applications.length;
+  const totalPages = applications.reduce((acc, app) => acc + (app.page_count || 0), 0);
+  const totalTests = applications.reduce((acc, app) => acc + (app.test_case_count || 0), 0);
+  const totalBugs = applications.reduce((acc, app) => acc + (app.bug_count || 0), 0);
+
   return (
-    <div className="dashboard-container">
+    <div className="dashboard-container animate-slide-up">
+      {/* Header section */}
       <header className="dashboard-header">
         <div>
-          <h2>🚀 Application Testing Hub</h2>
-          <p className="subtitle-text">Monitor discovery, execute test plans, and resolve identified defects</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h2 style={{ fontSize: '1.75rem', fontWeight: 700, letterSpacing: '-0.5px' }}>
+              ⚡ QA Testing Control Hub
+            </h2>
+          </div>
+          <p className="subtitle-text" style={{ marginTop: '4px' }}>
+            Autonomous multi-agent site discovery, AI test suite generation, and real-time defect verification
+          </p>
         </div>
         <button 
           onClick={() => setShowAddForm(true)} 
           className="btn-primary btn-add-app"
           disabled={showAddForm}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '12px 20px',
+            borderRadius: '10px',
+            fontWeight: 600,
+            boxShadow: '0 4px 14px rgba(139, 92, 246, 0.4)',
+            transition: 'all 0.2s ease'
+          }}
         >
-          ➕ Register Application
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          Register Application
         </button>
       </header>
+
+      {/* Summary KPI stat cards */}
+      {applications.length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '16px',
+          marginBottom: '28px'
+        }}>
+          <div className="glass-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{
+              width: '46px', height: '46px', borderRadius: '12px',
+              background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem'
+            }}>🌐</div>
+            <div>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Active Environments</span>
+              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#fff' }}>{totalApps}</h3>
+            </div>
+          </div>
+
+          <div className="glass-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{
+              width: '46px', height: '46px', borderRadius: '12px',
+              background: 'rgba(6, 182, 212, 0.15)', border: '1px solid rgba(6, 182, 212, 0.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem'
+            }}>📄</div>
+            <div>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Pages Discovered</span>
+              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#fff' }}>{totalPages}</h3>
+            </div>
+          </div>
+
+          <div className="glass-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{
+              width: '46px', height: '46px', borderRadius: '12px',
+              background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem'
+            }}>🧪</div>
+            <div>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Generated Tests</span>
+              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#fff' }}>{totalTests}</h3>
+            </div>
+          </div>
+
+          <div className="glass-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{
+              width: '46px', height: '46px', borderRadius: '12px',
+              background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem'
+            }}>🐛</div>
+            <div>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Defects Identified</span>
+              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: totalBugs > 0 ? '#ef4444' : '#34d399' }}>{totalBugs}</h3>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <div className="error-alert">{error}</div>}
 
@@ -139,151 +224,175 @@ export const Dashboard: React.FC = () => {
 
       {isLoading ? (
         <div className="applications-grid">
-          <style>{`
-            @keyframes shimmer {
-              0% { background-position: -200% 0; }
-              100% { background-position: 200% 0; }
-            }
-            .skeleton-card {
-              min-height: 180px;
-              background: rgba(255, 255, 255, 0.02);
-              border: 1px solid rgba(255, 255, 255, 0.05);
-              border-radius: 12px;
-              padding: 20px;
-              display: flex;
-              flex-direction: column;
-              gap: 16px;
-            }
-            .skeleton-shimmer {
-              background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.02) 75%);
-              background-size: 200% 100%;
-              animation: shimmer 1.5s infinite;
-              border-radius: 4px;
-            }
-          `}</style>
           {[1, 2, 3].map((i) => (
-            <div key={i} className="skeleton-card">
-              <div className="skeleton-shimmer" style={{ height: '24px', width: '70%' }} />
-              <div className="skeleton-shimmer" style={{ height: '16px', width: '40%' }} />
-              <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
-                <div className="skeleton-shimmer" style={{ height: '28px', width: '80px', borderRadius: '6px' }} />
-                <div className="skeleton-shimmer" style={{ height: '28px', width: '80px', borderRadius: '6px' }} />
+            <div key={i} className="glass-card" style={{ minHeight: '200px', display: 'flex', flexDirection: 'column', gap: '16px', padding: '24px' }}>
+              <div className="skeleton-shimmer" style={{ height: '24px', width: '65%' }} />
+              <div className="skeleton-shimmer" style={{ height: '14px', width: '45%' }} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', margin: '16px 0' }}>
+                <div className="skeleton-shimmer" style={{ height: '40px' }} />
+                <div className="skeleton-shimmer" style={{ height: '40px' }} />
+                <div className="skeleton-shimmer" style={{ height: '40px' }} />
+                <div className="skeleton-shimmer" style={{ height: '40px' }} />
               </div>
+              <div className="skeleton-shimmer" style={{ height: '32px', width: '100%', borderRadius: '8px', marginTop: 'auto' }} />
             </div>
           ))}
         </div>
       ) : applications.length === 0 ? (
-        <div className="glass-card empty-dashboard-card">
-          <div className="empty-icon">🌐</div>
-          <h3>Register Your First Application</h3>
-          <p>
-            Start scanning and testing websites. Give us any URL and we'll automatically discover pages, 
-            generate AI-driven tests, and search for bugs.
+        <div className="empty-state-card glass-card">
+          <svg className="empty-state-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#8b5cf6' }}>
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+          </svg>
+          <h3 className="empty-state-title">Register Your First Application</h3>
+          <p className="empty-state-desc">
+            Provide any web application URL. Our autonomous AI engine will crawl pages, inspect forms & API patterns, 
+            synthesize full end-to-end test suites, and detect defects automatically.
           </p>
-          <button onClick={() => setShowAddForm(true)} className="btn-primary btn-lg">
-            Get Started
+          <button onClick={() => setShowAddForm(true)} className="btn-primary btn-lg" style={{ marginTop: '8px', padding: '12px 28px' }}>
+            + Register New Web App
           </button>
         </div>
       ) : (
         <div className="applications-grid">
-          {applications.map((app) => (
-            <div 
-              key={app.id} 
-              className="glass-card application-card"
-              onClick={() => navigate(`/scans/${app.id}`)}
-              onMouseEnter={() => prefetchAppDetails(app.id)}
-              onFocus={() => prefetchAppDetails(app.id)}
-              style={{ cursor: 'pointer' }}
-            >
-              <div className="app-card-header">
-                <h4>{app.url}</h4>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span className={`status-dot status-${app.status.toLowerCase()}`}></span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteApp(app.id, app.url);
-                    }}
-                    title="Delete Application"
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#ff4d4d',
-                      cursor: 'pointer',
-                      fontSize: '1rem',
-                      padding: '2px 4px',
-                      borderRadius: '4px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    🗑️
-                  </button>
+          {applications.map((app) => {
+            const isDiscovering = app.status === 'DISCOVERING';
+            const isFailed = app.status === 'FAILED';
+            return (
+              <div 
+                key={app.id} 
+                className="glass-card application-card"
+                onClick={() => navigate(`/scans/${app.id}`)}
+                onMouseEnter={() => prefetchAppDetails(app.id)}
+                onFocus={() => prefetchAppDetails(app.id)}
+                style={{ 
+                  cursor: 'pointer',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  ...(isDiscovering ? { animation: 'pulseGlow 2.5s infinite' } : {})
+                }}
+              >
+                <div className="app-card-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+                    <h4 style={{
+                      fontSize: '1.05rem',
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}>
+                      {app.url}
+                    </h4>
+                  </div>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span 
+                      className={`live-pulse-dot ${isDiscovering ? 'running' : isFailed ? 'failed' : ''}`}
+                      title={`Status: ${app.status}`}
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteApp(app.id, app.url);
+                      }}
+                      title="Delete Application"
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                        color: '#ef4444',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <p className="app-card-url">Base: {app.base_url}</p>
-              
-              <div className="app-card-metrics">
-                <div className="metric">
-                  <span className="metric-lbl">Pages</span>
-                  <span className="metric-val">{app.page_count}</span>
+
+                <p className="app-card-url" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                  {app.base_url}
+                </p>
+                
+                {/* Metrics Breakdown Grid */}
+                <div className="app-card-metrics" style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(4, 1fr)',
+                  gap: '8px',
+                  background: 'rgba(11, 8, 22, 0.4)',
+                  padding: '12px',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(255, 255, 255, 0.04)',
+                  marginBottom: '16px'
+                }}>
+                  <div className="metric" style={{ textAlign: 'center' }}>
+                    <span className="metric-lbl" style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)' }}>Pages</span>
+                    <span className="metric-val" style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>{app.page_count}</span>
+                  </div>
+                  <div className="metric" style={{ textAlign: 'center' }}>
+                    <span className="metric-lbl" style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)' }}>APIs</span>
+                    <span className="metric-val" style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>{app.api_count}</span>
+                  </div>
+                  <div className="metric" style={{ textAlign: 'center' }}>
+                    <span className="metric-lbl" style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)' }}>Tests</span>
+                    <span className="metric-val" style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>{app.test_case_count}</span>
+                  </div>
+                  <div className="metric bug-metric" style={{ textAlign: 'center' }}>
+                    <span className="metric-lbl" style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)' }}>Bugs</span>
+                    <span className="metric-val" style={{ fontSize: '1.1rem', fontWeight: 700, color: app.bug_count > 0 ? '#ef4444' : '#34d399' }}>{app.bug_count}</span>
+                  </div>
                 </div>
-                <div className="metric">
-                  <span className="metric-lbl">APIs</span>
-                  <span className="metric-val">{app.api_count}</span>
-                </div>
-                <div className="metric">
-                  <span className="metric-lbl">Tests</span>
-                  <span className="metric-val">{app.test_case_count}</span>
-                </div>
-                <div className="metric bug-metric">
-                  <span className="metric-lbl">Bugs</span>
-                  <span className="metric-val">{app.bug_count}</span>
-                </div>
-              </div>
-              
-              <div className="app-card-footer">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span className="app-card-status">Status: <strong>{app.status}</strong></span>
-                  {(() => {
-                    const ind = app.industry ? app.industry.trim() : "";
-                    if (!ind || ind === "General") {
+                
+                {/* Footer status & industry tags */}
+                <div className="app-card-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className={`badge-status ${isDiscovering ? 'badge-status-running' : isFailed ? 'badge-status-failed' : 'badge-status-passed'}`}>
+                      {app.status}
+                    </span>
+                    
+                    {(() => {
+                      const ind = app.industry ? app.industry.trim() : "";
+                      if (!ind || ind === "General") {
+                        return (
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                            backgroundColor: 'rgba(148, 163, 184, 0.12)',
+                            color: '#94a3b8',
+                            border: '1px solid rgba(148, 163, 184, 0.25)',
+                          }}>
+                            General
+                          </span>
+                        );
+                      }
                       return (
-                        <span className="industry-badge industry-general" style={{
-                          padding: '2px 6px',
+                        <span style={{
+                          padding: '2px 8px',
                           borderRadius: '12px',
                           fontSize: '0.7rem',
                           fontWeight: 600,
-                          backgroundColor: 'rgba(148, 163, 184, 0.15)',
-                          color: '#94a3b8',
-                          border: '1px solid rgba(148, 163, 184, 0.3)',
-                          display: 'inline-block'
+                          backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                          color: '#c084fc',
+                          border: '1px solid rgba(139, 92, 246, 0.3)',
                         }}>
-                          General
+                          {ind}
                         </span>
                       );
-                    }
-                    return (
-                      <span className="industry-badge" style={{
-                        padding: '2px 6px',
-                        borderRadius: '12px',
-                        fontSize: '0.7rem',
-                        fontWeight: 600,
-                        backgroundColor: 'rgba(99, 102, 241, 0.15)',
-                        color: '#a5b4fc',
-                        border: '1px solid rgba(99, 102, 241, 0.3)',
-                        display: 'inline-block'
-                      }}>
-                        {ind}
-                      </span>
-                    );
-                  })()}
+                    })()}
+                  </div>
+
+                  <span className="btn-view-details" style={{ fontSize: '0.85rem', color: '#a5b4fc', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    Inspect & Run →
+                  </span>
                 </div>
-                <span className="btn-view-details">Configure →</span>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

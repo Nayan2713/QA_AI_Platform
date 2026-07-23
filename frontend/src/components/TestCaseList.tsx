@@ -87,7 +87,6 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     }
   }, [activeTaskId]);
 
-  // Live ticking timer for elapsed duration
   useEffect(() => {
     if (!showSuiteProgress || !suiteRunStartTime) {
       setElapsedSeconds(0);
@@ -103,157 +102,18 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     return () => clearInterval(intervalId);
   }, [showSuiteProgress, suiteRunStartTime, suiteRuns]);
 
-  // Polling suite runs statuses
-  useEffect(() => {
-    if (!showSuiteProgress || suiteRuns.length === 0) return;
-
-    const hasUnfinished = suiteRuns.some(r => r.status === 'PENDING' || r.status === 'RUNNING');
-    if (!hasUnfinished) return;
-
-    let isMounted = true;
-    let pollCount = 0;
-    const MAX_POLLS = 300; // Stop polling after 10 minutes (300 * 2 sec)
-
-    const intervalId = setInterval(async () => {
-      if (!isMounted || pollCount >= MAX_POLLS) {
-        clearInterval(intervalId);
-        return;
-      }
-      pollCount++;
-
-      try {
-        let updatedRuns = [...suiteRuns];
-        if (suiteRuns.length === 1) {
-          const runId = suiteRuns[0].id;
-          if (runId > 0) {
-            const res = await api.get<{ status: string }>(`test-runs/${runId}/status/`);
-            if (!isMounted) return;
-            updatedRuns = [{ ...suiteRuns[0], status: res.data.status }];
-          }
-        } else {
-          const validIds = suiteRuns.map(r => r.id).filter(id => id > 0);
-          if (validIds.length > 0) {
-            const ids = validIds.join(',');
-            const res = await api.get('test-runs/', { params: { ids } });
-            if (!isMounted) return;
-            const latestRuns = res.data;
-            updatedRuns = suiteRuns.map(r => {
-              const match = latestRuns.find((lr: any) => lr.id === r.id);
-              return match ? { ...r, status: match.status } : r;
-            });
-          }
-        }
-
-        const hasChanges = updatedRuns.some((r, i) => r.status !== suiteRuns[i].status);
-        if (hasChanges) {
-          setSuiteRuns(updatedRuns);
-          const stillUnfinished = updatedRuns.some(r => r.status === 'PENDING' || r.status === 'RUNNING');
-          if (!stillUnfinished) {
-            onRefreshTests();
-          }
-        }
-      } catch (err) {
-        console.error('Error polling suite runs:', err);
-        clearInterval(intervalId);
-      }
-    }, 2000);
-
-    return () => {
-      isMounted = false;
-      clearInterval(intervalId);
-    };
-  }, [showSuiteProgress, suiteRuns]);
-
-  const formatDuration = (secs: number) => {
-    const mins = Math.floor(secs / 60);
-    const remainingSecs = Math.floor(secs % 60);
-    return `${mins.toString().padStart(2, '0')}:${remainingSecs.toString().padStart(2, '0')}`;
-  };
-
-  const handleGenerateTests = async () => {
-    setGenerating(true);
-    setError('');
-    setSuccessMsg('');
-    try {
-      const res = await api.post('test-cases/generate/', { app_id: appId, model_choice: selectedModel });
-      setSuccessMsg('Test suite generation started! Polling database...');
-      if (res.data.task_id && onTaskTriggered) {
-        onTaskTriggered(res.data.task_id);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setError('Failed to trigger AI test case generation.');
-      setGenerating(false);
-    }
-  };
-
-  const handleStopGeneration = async () => {
-    try {
-      await api.post(`applications/${appId}/stop-all/`);
-      setGenerating(false);
-      setSuccessMsg('All tasks stopped by user.');
-      onRefreshTests();
-    } catch (err) {
-      console.error('Failed to stop tasks:', err);
-      setError('Failed to stop the tasks.');
-    }
-  };
-
-  const handleRunTest = async (testCaseId: number) => {
-    // Optimistic UI updates
-    setExecutingTestCaseId(testCaseId);
-    setError('');
-    setSuccessMsg('Triggering test run...');
-    const tc = testCases.find(t => t.id === testCaseId);
-    const tempRunId = Date.now();
-    setSuiteRuns([{
-      id: tempRunId,
-      testCaseId: testCaseId,
-      title: tc?.title || `Test Case #${testCaseId}`,
-      status: 'PENDING'
-    }]);
-    setSuiteRunStartTime(Date.now());
-    setShowSuiteProgress(true);
-
-    try {
-      const response = await api.post('test-runs/execute/', { test_case_id: testCaseId, model_choice: selectedModel });
-      setSuccessMsg(`Test run execution started successfully.`);
-      if (response.data.test_run_id) {
-        onTestExecuted(response.data.test_run_id, response.data.task_id);
-        setSuiteRuns([{
-          id: response.data.test_run_id,
-          testCaseId: testCaseId,
-          title: tc?.title || `Test Case #${testCaseId}`,
-          status: 'PENDING'
-        }]);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setError('Failed to execute test run.');
-      // Rollback on error
-      setShowSuiteProgress(false);
-      setSuiteRuns([]);
-    } finally {
-      setExecutingTestCaseId(null);
-    }
-  };
-
   const handleValidateTest = async (testCaseId: number) => {
     setValidatingIds(prev => ({ ...prev, [testCaseId]: true }));
     setError('');
     setSuccessMsg('');
     try {
-      const res = await api.post(`test-cases/${testCaseId}/validate_test/`);
-      setValidationResults(prev => ({ ...prev, [testCaseId]: res.data }));
-      if (res.data.validation_status === 'VERIFIED') {
-        setSuccessMsg('Test case verified successfully! All selectors match elements on the page.');
-      } else {
-        setError('Verification failed: Some selectors do not exist in the page structure. Click Auto-Fix to repair.');
-      }
+      const response = await api.post(`test-cases/${testCaseId}/validate_test/`);
+      setValidationResults(prev => ({ ...prev, [testCaseId]: response.data }));
+      setSuccessMsg(`Validation completed: ${response.data.status}`);
       onRefreshTests();
     } catch (err: any) {
       console.error(err);
-      setError('Failed to validate test case elements.');
+      setError('Failed to validate test case selector integrity.');
     } finally {
       setValidatingIds(prev => ({ ...prev, [testCaseId]: false }));
     }
@@ -264,14 +124,8 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     setError('');
     setSuccessMsg('');
     try {
-      const res = await api.post(`test-cases/${testCaseId}/auto_fix/`);
-      setValidationResults(prev => ({ ...prev, [testCaseId]: res.data }));
-      const fixedCount = res.data.corrections_made || 0;
-      if (res.data.validation_status === 'VERIFIED') {
-        setSuccessMsg(`Auto-fix completed! Corrected ${fixedCount} selectors. Test is now verified and executable.`);
-      } else {
-        setSuccessMsg(`Auto-fix made ${fixedCount} adjustments, but test case still needs review.`);
-      }
+      const response = await api.post(`test-cases/${testCaseId}/auto_fix/`);
+      setSuccessMsg(`Auto-fix applied! Repaired ${response.data.fixed_count || 0} selector(s).`);
       onRefreshTests();
     } catch (err: any) {
       console.error(err);
@@ -283,17 +137,17 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
 
   const handleRunAllTests = async () => {
     if (testCases.length === 0) return;
-    // Optimistic UI updates
     setExecutingAll(true);
     setError('');
-    setSuccessMsg(`Queueing execution for all ${testCases.length} tests...`);
-    const tempRuns = testCases.map(tc => ({
-      id: Math.random() * -1000,
-      testCaseId: tc.id!,
+    setSuccessMsg('');
+    
+    const initialRuns = testCases.map(tc => ({
+      id: Date.now() + tc.id,
+      testCaseId: tc.id,
       title: tc.title,
-      status: 'PENDING' as const
+      status: 'PENDING'
     }));
-    setSuiteRuns(tempRuns);
+    setSuiteRuns(initialRuns);
     setSuiteRunStartTime(Date.now());
     setShowSuiteProgress(true);
 
@@ -315,11 +169,10 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       if (runs.length > 0) {
         onTestExecuted(runs[0].id, runs[0].task_id);
       }
-      setSuccessMsg(`Successfully queued all ${testCases.length} tests for execution.`);
+      setSuccessMsg(`Queued all ${testCases.length} tests for execution.`);
     } catch (err: any) {
       console.error(err);
       setError('Failed to run all test cases.');
-      // Rollback on error
       setShowSuiteProgress(false);
       setSuiteRuns([]);
     } finally {
@@ -349,120 +202,118 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     }
   };
 
-  const getValidationBadge = (status: string) => {
-    switch (status) {
-      case 'VERIFIED':
-        return <span className="badge-validation verified" style={{
-          backgroundColor: 'rgba(34, 197, 94, 0.15)',
-          color: '#22c55e',
-          border: '1px solid rgba(34, 197, 94, 0.3)',
-          padding: '2px 8px',
-          borderRadius: '4px',
-          fontSize: '0.8rem',
-          fontWeight: '600'
-        }}>✓ Verified</span>;
-      case 'BROKEN':
-        return <span className="badge-validation broken" style={{
-          backgroundColor: 'rgba(239, 68, 68, 0.15)',
-          color: '#ef4444',
-          border: '1px solid rgba(239, 68, 68, 0.3)',
-          padding: '2px 8px',
-          borderRadius: '4px',
-          fontSize: '0.8rem',
-          fontWeight: '600'
-        }}>⚠️ Broken Selectors</span>;
-      default:
-        return <span className="badge-validation draft" style={{
-          backgroundColor: 'rgba(113, 128, 150, 0.15)',
-          color: '#a0aec0',
-          border: '1px solid rgba(113, 128, 150, 0.3)',
-          padding: '2px 8px',
-          borderRadius: '4px',
-          fontSize: '0.8rem',
-          fontWeight: '600'
-        }}>Draft (Unverified)</span>;
+  const handleGenerateTests = async () => {
+    setGenerating(true);
+    setError('');
+    setSuccessMsg('');
+    try {
+      const res = await api.post('test-cases/generate/', { app_id: appId, model_choice: selectedModel });
+      setSuccessMsg('AI Test suite generation started...');
+      if (res.data.task_id && onTaskTriggered) {
+        onTaskTriggered(res.data.task_id);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError('Failed to trigger AI test case generation.');
+      setGenerating(false);
+    }
+  };
+
+  const handleStopGeneration = async () => {
+    try {
+      await api.post(`applications/${appId}/stop-all/`);
+      setGenerating(false);
+      setSuccessMsg('All tasks stopped.');
+      onRefreshTests();
+    } catch (err) {
+      console.error('Failed to stop tasks:', err);
+      setError('Failed to stop the tasks.');
+    }
+  };
+
+  const handleRunTest = async (testCaseId: number) => {
+    setExecutingTestCaseId(testCaseId);
+    setError('');
+    const tc = testCases.find(t => t.id === testCaseId);
+    const tempRunId = Date.now();
+    setSuiteRuns([{
+      id: tempRunId,
+      testCaseId: testCaseId,
+      title: tc?.title || `Test Case #${testCaseId}`,
+      status: 'PENDING'
+    }]);
+    setSuiteRunStartTime(Date.now());
+    setShowSuiteProgress(true);
+
+    try {
+      const response = await api.post('test-runs/execute/', { test_case_id: testCaseId, model_choice: selectedModel });
+      setSuccessMsg(`Test run execution started.`);
+      if (response.data.task_id && onTaskTriggered) {
+        onTaskTriggered(response.data.task_id);
+      }
+      onTestExecuted(response.data.test_run_id, response.data.task_id);
+    } catch (err: any) {
+      console.error(err);
+      setError('Failed to execute test run.');
+      setShowSuiteProgress(false);
+    } finally {
+      setExecutingTestCaseId(null);
+    }
+  };
+
+  const getStepActionClass = (action: string) => {
+    switch (action.toLowerCase()) {
+      case 'navigate': return 'step-action-navigate';
+      case 'click': return 'step-action-click';
+      case 'fill': return 'step-action-fill';
+      case 'wait': return 'step-action-wait';
+      case 'assert': return 'step-action-assert';
+      default: return 'step-action-badge';
     }
   };
 
   return (
-    <div className="glass-card test-cases-card">
-      <div className="card-header tests-header">
+    <div className="glass-card test-cases-card animate-slide-up" style={{ padding: '24px' }}>
+      {/* Tier 1 Header: Title & AI Actions */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h3 style={{ margin: 0 }}>📋 AI-Generated Test Suite</h3>
-            {testCases.length > 0 && !generating && !activeTaskId && (
-              <span className="badge-status status-success" style={{
-                fontSize: '0.8rem',
-                padding: '2px 8px',
-                borderRadius: '4px',
-                fontWeight: '600',
-                backgroundColor: 'rgba(34, 197, 94, 0.15)',
-                color: '#22c55e',
-                border: '1px solid rgba(34, 197, 94, 0.3)'
-              }}>
-                Generation Finished
-              </span>
-            )}
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>📋 AI-Generated Test Suite</h3>
+            <span style={{
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              padding: '3px 10px',
+              borderRadius: '20px',
+              backgroundColor: 'rgba(139, 92, 246, 0.15)',
+              color: '#c084fc',
+              border: '1px solid rgba(139, 92, 246, 0.3)'
+            }}>
+              {testCases.length} Scenarios
+            </span>
           </div>
-          <p className="card-subtitle">Complete test plans constructed from discovered page structures</p>
+          <p className="card-subtitle" style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+            Automated test scenarios synthesized from discovered page forms, buttons, and user journeys
+          </p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button 
-            onClick={handleAddManual} 
-            className="btn-secondary"
-            style={{
-              backgroundColor: 'rgba(59, 130, 246, 0.1)',
-              color: '#3b82f6',
-              border: '1px solid rgba(59, 130, 246, 0.3)',
-              padding: '10px 16px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            ➕ Add Manual Test
-          </button>
-          {testCases.length > 0 && (
-            <button 
-              onClick={handleRunAllTests} 
-              disabled={executingAll || !!activeTaskId} 
-              className="btn-secondary btn-run-all"
-              style={{
-                backgroundColor: '#10b981',
-                color: '#ffffff',
-                border: 'none',
-                padding: '10px 16px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontWeight: '600',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}
-            >
-              {executingAll ? 'Starting Runs...' : '▶ Run All Tests'}
-            </button>
-          )}
-          
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <select 
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
             disabled={generating || !!activeTaskId}
             style={{
-              backgroundColor: '#1e293b',
+              backgroundColor: 'rgba(11, 8, 22, 0.6)',
               color: '#ffffff',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              padding: '10px 14px',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              padding: '9px 12px',
               borderRadius: '8px',
               cursor: 'pointer',
-              fontWeight: '600',
-              outline: 'none',
+              fontWeight: 600,
+              fontSize: '0.82rem',
+              outline: 'none'
             }}
           >
-            <option value="auto">Auto-Select LLM</option>
+            <option value="auto">Auto-Select LLM Router</option>
             <option value="ollama_qwen">Ollama / Qwen (Local)</option>
             <option value="ollama_groq">Ollama / Groq (Local)</option>
             <option value="openai">ChatGPT / OpenAI (Cloud)</option>
@@ -471,431 +322,364 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
           <button 
             onClick={handleGenerateTests} 
             disabled={generating || !!activeTaskId} 
-            className="btn-primary btn-generate"
+            className="btn-primary"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '9px 16px',
+              borderRadius: '8px',
+              fontWeight: 600,
+              fontSize: '0.85rem'
+            }}
           >
             {generating ? (
-              <div className="loader-container-inline">
+              <>
                 <div className="spinner-small"></div>
                 <span>Generating Suite...</span>
-              </div>
+              </>
             ) : (
               '✨ Generate Tests with AI'
             )}
           </button>
 
-          {(generating || activeTaskId) && (
+          {testCases.length > 0 && (
             <button 
-              onClick={handleStopGeneration} 
-              className="btn-danger btn-stop"
+              onClick={handleRunAllTests} 
+              disabled={executingAll || !!activeTaskId} 
               style={{
-                backgroundColor: '#ef4444',
+                backgroundColor: '#10b981',
                 color: '#ffffff',
                 border: 'none',
-                padding: '10px 16px',
+                padding: '9px 16px',
                 borderRadius: '8px',
                 cursor: 'pointer',
-                fontWeight: '600',
+                fontWeight: 600,
+                fontSize: '0.85rem',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px'
               }}
             >
-              🛑 Stop Generation
+              {executingAll ? 'Executing Batch...' : '▶ Run All Tests'}
+            </button>
+          )}
+
+          {(generating || activeTaskId) && (
+            <button 
+              onClick={handleStopGeneration} 
+              style={{
+                backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                color: '#ff8888',
+                border: '1px solid rgba(239, 68, 68, 0.4)',
+                padding: '9px 14px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '0.82rem'
+              }}
+            >
+              🛑 Stop
             </button>
           )}
         </div>
       </div>
 
-      {error && <div className="error-alert">{error}</div>}
-      {successMsg && <div className="success-alert">{successMsg}</div>}
-
-      {/* Filter Row */}
-      {testCases.length > 0 && (
-        <div className="test-cases-filter-row" style={{
-          display: 'flex',
-          gap: '8px',
-          padding: '0 20px 16px 20px',
-          alignItems: 'center',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-          marginBottom: '16px'
-        }}>
-          <span style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.6)', marginRight: '8px', fontWeight: 600 }}>Filter Category:</span>
+      {/* Tier 2 Header: Category Filter & Manual Action */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingTop: '14px',
+        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+        marginBottom: '20px',
+        flexWrap: 'wrap',
+        gap: '12px'
+      }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600, marginRight: '4px' }}>CATEGORY:</span>
           {(['All', 'Generic', 'Industry Flow', 'Access Control'] as const).map((cat) => (
             <button
               key={cat}
               onClick={() => setCategoryFilter(cat)}
               style={{
-                backgroundColor: categoryFilter === cat ? '#3b82f6' : 'rgba(255,255,255,0.05)',
-                color: '#ffffff',
-                border: '1px solid rgba(255,255,255,0.1)',
-                padding: '6px 12px',
-                borderRadius: '6px',
+                backgroundColor: categoryFilter === cat ? '#3b82f6' : 'rgba(255, 255, 255, 0.04)',
+                color: categoryFilter === cat ? '#fff' : 'var(--text-muted)',
+                border: `1px solid ${categoryFilter === cat ? '#3b82f6' : 'rgba(255, 255, 255, 0.08)'}`,
+                padding: '5px 12px',
+                borderRadius: '20px',
                 cursor: 'pointer',
-                fontSize: '0.8rem',
-                fontWeight: '600',
-                transition: 'all 0.2s',
-                outline: 'none'
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                transition: 'all 0.2s'
               }}
             >
               {cat}
             </button>
           ))}
         </div>
-      )}
 
-      {(() => {
-        const completedCount = suiteRuns.filter(r => r.status === 'COMPLETED' || r.status === 'FAILED').length;
-        const remainingCount = suiteRuns.length - completedCount;
-        const totalCount = suiteRuns.length;
-        const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+        <button 
+          onClick={handleAddManual} 
+          style={{
+            backgroundColor: 'rgba(59, 130, 246, 0.12)',
+            color: '#60a5fa',
+            border: '1px solid rgba(59, 130, 246, 0.3)',
+            padding: '6px 14px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: '0.8rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}
+        >
+          ➕ Add Manual Test
+        </button>
+      </div>
 
-        let estRemainingSeconds = 0;
-        if (remainingCount > 0) {
-          // Assume a base duration of 45 seconds per test case
-          const baseSecsPerTest = 45;
-          estRemainingSeconds = Math.max(remainingCount * 5, (totalCount * baseSecsPerTest) - elapsedSeconds);
-        }
+      {error && <div className="error-alert">{error}</div>}
+      {successMsg && <div className="success-alert">{successMsg}</div>}
 
-        return showSuiteProgress && suiteRuns.length > 0 ? (
-          <div className="suite-progress-panel" style={{
-            background: 'rgba(30, 41, 59, 0.4)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '12px',
-            padding: '20px',
-            margin: '0 20px 20px 20px',
-            backdropFilter: 'blur(8px)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', color: '#60a5fa' }}>
-                ⚡ AI Test Execution Status
-              </h4>
-              <button 
-                onClick={() => setShowSuiteProgress(false)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'rgba(255,255,255,0.4)',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem'
-                }}
-              >
-                ✕ Close Tracker
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginBottom: '16px' }}>
-              <div style={{ flex: 1, minWidth: '200px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px', color: 'rgba(255,255,255,0.7)' }}>
-                  <span>Overall Progress</span>
-                  <span>{completedCount} / {totalCount} Completed ({pct}%)</span>
-                </div>
-                <div style={{ height: '8px', background: 'rgba(255,255,255,0.08)', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{
-                    width: `${pct}%`,
-                    height: '100%',
-                    background: 'linear-gradient(90deg, #3b82f6 0%, #10b981 100%)',
-                    borderRadius: '4px',
-                    transition: 'width 0.5s ease-out'
-                  }} />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>Elapsed Time</div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#f59e0b', fontFamily: 'monospace' }}>
-                    {formatDuration(elapsedSeconds)}
-                  </div>
-                </div>
-                
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>Est. Remaining</div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: remainingCount > 0 ? '#10b981' : 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
-                    {remainingCount > 0 ? formatDuration(estRemainingSeconds) : 'Finished'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="suite-runs-grid" style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', 
-              gap: '8px',
-              maxHeight: '120px',
-              overflowY: 'auto',
-              paddingRight: '6px'
-            }}>
-              {suiteRuns.map((run) => {
-                let badgeColor = '#94a3b8';
-                let badgeBg = 'rgba(148, 163, 184, 0.15)';
-                let statusText = 'Pending';
-                
-                if (run.status === 'RUNNING') {
-                  badgeColor = '#3b82f6';
-                  badgeBg = 'rgba(59, 130, 246, 0.15)';
-                  statusText = 'Running';
-                } else if (run.status === 'COMPLETED') {
-                  badgeColor = '#10b981';
-                  badgeBg = 'rgba(16, 185, 129, 0.15)';
-                  statusText = 'Passed';
-                } else if (run.status === 'FAILED') {
-                  badgeColor = '#ef4444';
-                  badgeBg = 'rgba(239, 68, 68, 0.15)';
-                  statusText = 'Failed';
-                }
-
-                return (
-                  <div key={run.id} style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'space-between', 
-                    padding: '6px 10px', 
-                    background: 'rgba(255,255,255,0.02)', 
-                    border: '1px solid rgba(255,255,255,0.05)',
-                    borderRadius: '6px',
-                    fontSize: '0.8rem'
-                  }}>
-                    <span style={{ 
-                      whiteSpace: 'nowrap', 
-                      overflow: 'hidden', 
-                      textOverflow: 'ellipsis', 
-                      maxWidth: '130px',
-                      color: 'rgba(255,255,255,0.8)'
-                    }} title={run.title}>
-                      {run.title}
-                    </span>
-                    <span style={{
-                      color: badgeColor,
-                      background: badgeBg,
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      fontSize: '0.75rem',
-                      fontWeight: '600'
-                    }}>
-                      {statusText}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null;
-      })()}
-
+      {/* Test Cases Cards List */}
       {testCases.length === 0 ? (
-        <div className="empty-state">
-          <p>No test cases generated yet. Click "Generate Tests with AI" to create them.</p>
+        <div className="empty-state-card">
+          <svg className="empty-state-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#8b5cf6' }}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          <h4 className="empty-state-title">No Test Scenarios Generated Yet</h4>
+          <p className="empty-state-desc">
+            Click "Generate Tests with AI" above to synthesize complete test suites using discovered site structures.
+          </p>
+          <button onClick={handleGenerateTests} className="btn-primary" style={{ padding: '8px 20px' }}>
+            ✨ Generate Tests with AI
+          </button>
         </div>
       ) : (
-        <div className="test-cases-table-container">
-          <div className="test-cases-list">
-            {(() => {
-              const filtered = testCases.filter(tc => {
-                if (categoryFilter === 'All') return true;
-                return getTestCategory(tc) === categoryFilter;
-              });
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {(() => {
+            const filtered = testCases.filter(tc => {
+              if (categoryFilter === 'All') return true;
+              return getTestCategory(tc) === categoryFilter;
+            });
 
-              if (filtered.length === 0) {
-                return (
-                  <div className="empty-state" style={{ padding: '40px 20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', gridColumn: 'span 2', width: '100%' }}>
-                    No test cases match the selected filter "{categoryFilter}".
-                  </div>
-                );
-              }
+            if (filtered.length === 0) {
+              return (
+                <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  No test scenarios match the selected category filter "{categoryFilter}".
+                </div>
+              );
+            }
 
-              return filtered.map((tc) => {
-                const tcValResults = validationResults[tc.id];
-                const category = getTestCategory(tc);
-                return (
-                  <div key={tc.id} className="test-case-item">
-                    <div className="test-case-main-info">
-                      <div className="test-case-title-row" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <h5 style={{ margin: 0 }}>{tc.title}</h5>
-                        {category === 'Access Control' && (
-                          <span className="badge-validation access-control" style={{
-                            backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                            color: '#ef4444',
-                            border: '1px solid rgba(239, 68, 68, 0.3)',
-                            padding: '2px 8px',
-                            borderRadius: '4px',
-                            fontSize: '0.75rem',
-                            fontWeight: '600'
-                          }}>
-                            Access Control
-                          </span>
-                        )}
-                        {category === 'Industry Flow' && (
-                          <span className="badge-validation industry-flow" style={{
-                            backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                            color: '#60a5fa',
-                            border: '1px solid rgba(59, 130, 246, 0.3)',
-                            padding: '2px 8px',
-                            borderRadius: '4px',
-                            fontSize: '0.75rem',
-                            fontWeight: '600'
-                          }}>
-                            Industry Flow
-                          </span>
-                        )}
-                        <span className={`badge-ai ${tc.ai_generated ? 'badge-ai-model' : 'badge-ai-fallback'}`}>
-                          {tc.ai_generated 
-                            ? `🤖 AI Generated (${tc.model_used || 'Local LLM'})` 
-                            : tc.model_used === 'Manual' || !tc.model_used
-                              ? '✍️ Manual Test'
-                              : `📋 Fallback Template (${tc.model_used})`}
+            return filtered.map((tc) => {
+              const tcValResults = validationResults[tc.id];
+              const category = getTestCategory(tc);
+              const isVerified = tc.validation_status === 'VERIFIED';
+              const isBroken = tc.validation_status === 'BROKEN';
+
+              return (
+                <div 
+                  key={tc.id} 
+                  style={{
+                    background: 'rgba(11, 8, 22, 0.45)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '16px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {/* Card Header Top Row: Title, Badges & Action Toolbar */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#fff' }}>{tc.title}</h4>
+                      
+                      {category === 'Access Control' && (
+                        <span style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                          Access Control
                         </span>
-                        {getValidationBadge(tc.validation_status)}
-                      </div>
-                    
-                    <div className="test-steps-block" style={{ marginTop: '16px' }}>
-                      <h6>Steps:</h6>
-                      <ol className="steps-list">
-                        {tc.steps.map((step, idx) => {
-                          const stepDetails = tcValResults?.steps?.find((s: any) => s.step_index === idx);
-                          const isInvalid = stepDetails && !stepDetails.valid;
-                          
-                          return (
-                            <li key={idx} className="step-list-item" style={{ 
-                              color: isInvalid ? '#ff4d4d' : 'inherit',
-                              textDecoration: isInvalid ? 'line-through' : 'none'
-                            }}>
-                              <span className="step-action" style={{
-                                backgroundColor: isInvalid ? 'rgba(255, 77, 77, 0.15)' : 'rgba(255, 255, 255, 0.08)',
-                                border: isInvalid ? '1px solid rgba(255, 77, 77, 0.4)' : '1px solid rgba(255, 255, 255, 0.15)'
-                              }}>{step.action.toUpperCase()}</span>
-                              {step.action === 'navigate' && (
-                                <> to <code className="step-code">{step.target}</code></>
-                              )}
-                              {step.action === 'fill' && (
-                                <> field <code className="step-code">{step.selector}</code> with <code className="step-code">"{step.value}"</code></>
-                              )}
-                              {step.action === 'click' && (
-                                <> element <code className="step-code">{step.selector}</code></>
-                              )}
-                              {step.action === 'wait' && (
-                                <> for <code className="step-code">{step.value} ms</code></>
-                              )}
-                              {step.action === 'assert' && (
-                                <> element <code className="step-code">{step.selector || 'body'}</code> contains text <code className="step-code">"{step.value}"</code></>
-                              )}
-                              {step.action === 'hover' && (
-                                <> hover over element <code className="step-code">{step.selector}</code></>
-                              )}
-                              {step.action === 'scroll' && (
-                                <> scroll {step.selector ? <>element <code className="step-code">{step.selector}</code> into view</> : <>page down by <code className="step-code">{step.value}px</code></>}</>
-                              )}
-                              {step.action === 'select' && (
-                                <> select option <code className="step-code">"{step.value}"</code> in element <code className="step-code">{step.selector}</code></>
-                              )}
-                              {step.action === 'screenshot' && (
-                                <> capture page screenshot {step.value && <>labeled <code className="step-code">"{step.value}"</code></>}</>
-                              )}
-                              
-                              {isInvalid && (
-                                <span className="step-error-msg" style={{ marginLeft: '10px', fontSize: '0.85rem', color: '#ff6666' }}>
-                                  ({stepDetails.reason})
-                                </span>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ol>
+                      )}
+                      {category === 'Industry Flow' && (
+                        <span style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                          Industry Flow
+                        </span>
+                      )}
+
+                      <span className="model-badge model-gpt">
+                        🤖 {tc.ai_generated ? (tc.model_used || 'AI Generated') : 'Manual'}
+                      </span>
+
+                      <span style={{
+                        padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600,
+                        backgroundColor: isVerified ? 'rgba(16, 185, 129, 0.15)' : isBroken ? 'rgba(239, 68, 68, 0.15)' : 'rgba(156, 163, 175, 0.12)',
+                        color: isVerified ? '#34d399' : isBroken ? '#f87171' : '#9ca3af',
+                        border: `1px solid ${isVerified ? 'rgba(16, 185, 129, 0.3)' : isBroken ? 'rgba(239, 68, 68, 0.3)' : 'rgba(156, 163, 175, 0.25)'}`
+                      }}>
+                        {isVerified ? '✓ Verified' : isBroken ? '⚠️ Broken' : 'Draft (Unverified)'}
+                      </span>
                     </div>
 
-                    <div className="expected-results-block" style={{ marginTop: '12px' }}>
-                      <strong>Expected Outcome:</strong> {tc.expected_result}
-                    </div>
-                  </div>
-
-                  <div className="test-case-actions" style={{ display: 'flex', flexDirection: 'column', gap: '8px', justifyContent: 'center' }}>
-                    <button 
-                      onClick={() => handleRunTest(tc.id)} 
-                      disabled={executingTestCaseId === tc.id || !!activeTaskId}
-                      className="btn-run-test"
-                      style={{ width: '150px' }}
-                    >
-                      {executingTestCaseId === tc.id ? 'Running...' : '▶ Run Test'}
-                    </button>
-                    
-                    <button 
-                      onClick={() => handleValidateTest(tc.id)} 
-                      disabled={validatingIds[tc.id] || fixingIds[tc.id] || !!activeTaskId}
-                      className="btn-secondary"
-                      style={{ 
-                        width: '150px',
-                        padding: '6px 12px',
-                        fontSize: '0.85rem',
-                        backgroundColor: '#4a5568',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      {validatingIds[tc.id] ? 'Verifying...' : '🔍 Validate'}
-                    </button>
-
-                    {tc.validation_status !== 'VERIFIED' && (
+                    {/* Sleek Horizontal Action Toolbar */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <button 
-                        onClick={() => handleAutoFixTest(tc.id)} 
-                        disabled={validatingIds[tc.id] || fixingIds[tc.id] || !!activeTaskId}
-                        className="btn-secondary"
-                        style={{ 
-                          width: '150px',
-                          padding: '6px 12px',
-                          fontSize: '0.85rem',
-                          backgroundColor: '#718096',
-                          color: 'white',
+                        onClick={() => handleRunTest(tc.id)} 
+                        disabled={executingTestCaseId === tc.id || !!activeTaskId}
+                        style={{
+                          backgroundColor: '#10b981',
+                          color: '#fff',
                           border: 'none',
+                          padding: '6px 14px',
+                          borderRadius: '6px',
+                          fontWeight: 600,
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {executingTestCaseId === tc.id ? 'Running...' : '▶ Run'}
+                      </button>
+                      
+                      <button 
+                        onClick={() => handleValidateTest(tc.id)} 
+                        disabled={validatingIds[tc.id] || fixingIds[tc.id] || !!activeTaskId}
+                        style={{ 
+                          padding: '6px 12px',
+                          fontSize: '0.78rem',
+                          backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                          color: '#d1d5db',
+                          border: '1px solid rgba(255, 255, 255, 0.12)',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontWeight: 600
+                        }}
+                      >
+                        {validatingIds[tc.id] ? 'Verifying...' : '🔍 Validate'}
+                      </button>
+
+                      {!isVerified && (
+                        <button 
+                          onClick={() => handleAutoFixTest(tc.id)} 
+                          disabled={validatingIds[tc.id] || fixingIds[tc.id] || !!activeTaskId}
+                          style={{ 
+                            padding: '6px 12px',
+                            fontSize: '0.78rem',
+                            backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                            color: '#c084fc',
+                            border: '1px solid rgba(139, 92, 246, 0.3)',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            fontWeight: 600
+                          }}
+                        >
+                          {fixingIds[tc.id] ? 'Fixing...' : '🪄 Auto-Fix'}
+                        </button>
+                      )}
+                      
+                      <button 
+                        onClick={() => handleEdit(tc)} 
+                        disabled={!!activeTaskId}
+                        style={{ 
+                          padding: '6px 10px',
+                          fontSize: '0.78rem',
+                          backgroundColor: 'transparent',
+                          color: '#a5b4fc',
+                          border: '1px solid rgba(165, 180, 252, 0.25)',
                           borderRadius: '6px',
                           cursor: 'pointer'
                         }}
                       >
-                        {fixingIds[tc.id] ? 'Fixing...' : '🔧 Auto-Fix'}
+                        ✏️ Edit
                       </button>
-                    )}
-                    
-                    <button 
-                      onClick={() => handleEdit(tc)} 
-                      disabled={!!activeTaskId}
-                      className="btn-secondary"
-                      style={{ 
-                        width: '150px',
-                        padding: '6px 12px',
-                        fontSize: '0.85rem',
-                        backgroundColor: 'transparent',
-                        color: '#60a5fa',
-                        border: '1px solid rgba(96, 165, 250, 0.3)',
-                        borderRadius: '6px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      ✏️ Edit
-                    </button>
 
-                    <button 
-                      onClick={() => handleDelete(tc.id)} 
-                      disabled={!!activeTaskId}
-                      className="btn-secondary"
-                      style={{ 
-                        width: '150px',
-                        padding: '6px 12px',
-                        fontSize: '0.85rem',
-                        backgroundColor: 'transparent',
-                        color: '#ef4444',
-                        border: '1px solid rgba(239, 68, 68, 0.3)',
-                        borderRadius: '6px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      🗑️ Delete
-                    </button>
+                      <button 
+                        onClick={() => handleDelete(tc.id)} 
+                        disabled={!!activeTaskId}
+                        style={{ 
+                          padding: '6px 10px',
+                          fontSize: '0.78rem',
+                          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                          color: '#ef4444',
+                          border: '1px solid rgba(239, 68, 68, 0.25)',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Step Timeline List */}
+                  <div style={{
+                    background: 'rgba(0, 0, 0, 0.3)',
+                    borderRadius: '8px',
+                    padding: '14px 16px',
+                    border: '1px solid rgba(255, 255, 255, 0.04)'
+                  }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px' }}>
+                      STEPS ({tc.steps.length}):
+                    </span>
+                    <ol style={{ listStyle: 'none', padding: 0, margin: '10px 0 0 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {tc.steps.map((step, idx) => {
+                        const stepDetails = tcValResults?.steps?.find((s: any) => s.step_index === idx);
+                        const isInvalid = stepDetails && !stepDetails.valid;
+                        
+                        return (
+                          <li key={idx} style={{ 
+                            fontSize: '0.82rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            color: isInvalid ? '#ff4d4d' : '#e5e7eb'
+                          }}>
+                            <span style={{
+                              width: '20px', height: '20px', borderRadius: '50%',
+                              backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                              fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            }}>
+                              {idx + 1}
+                            </span>
+
+                            <span className={`step-action-badge ${getStepActionClass(step.action)}`}>
+                              {step.action.toUpperCase()}
+                            </span>
+
+                            <span style={{ flex: 1 }}>
+                              {step.action === 'navigate' && <> to <code className="step-code">{step.target}</code></>}
+                              {step.action === 'fill' && <> field <code className="step-code">{step.selector}</code> with <code className="step-code">"{step.value}"</code></>}
+                              {step.action === 'click' && <> element <code className="step-code">{step.selector}</code></>}
+                              {step.action === 'wait' && <> for <code className="step-code">{step.value} ms</code></>}
+                              {step.action === 'assert' && <> element <code className="step-code">{step.selector || 'body'}</code> contains text <code className="step-code">"{step.value}"</code></>}
+                            </span>
+
+                            {isInvalid && (
+                              <span style={{ fontSize: '0.78rem', color: '#ff6666' }}>
+                                ({stepDetails.reason})
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    <strong style={{ color: '#d1d5db' }}>Expected Outcome:</strong> {tc.expected_result}
                   </div>
                 </div>
               );
-            })
+            });
           })()}
-          </div>
         </div>
       )}
 
