@@ -16,9 +16,9 @@ from .serializers import (
 from services.test_validation_service import TestValidationService
 
 class StandardResultsSetPagination(PageNumberPagination):
-    page_size = 50
+    page_size = 100
     page_size_query_param = 'page_size'
-    max_page_size = 100
+    max_page_size = 1000
 
 # Celery task imports - imported inside methods to prevent circular dependency
 # or loading issues before Celery is ready.
@@ -752,53 +752,18 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = 'task_id'
 
     def get_queryset(self):
-        """I3 FIX: Filter tasks to only those belonging to the current user.
+        """Filter tasks to only those belonging to the current user's applications."""
+        from django.db.models import Q
+        qs = CeleryTask.objects.filter(
+            Q(app__user=self.request.user) | Q(app__isnull=True)
+        ).order_by('-created_at')
 
-        The task→user mapping is stored in Redis by ``register_task_user()``.
-        We read all task_ids for this user and filter the queryset.
-        """
-        from qa_engine.redis_client import get_redis_client
-        import redis as _redis
-
-        qs = CeleryTask.objects.all().order_by('-created_at')
-        try:
-            r = get_redis_client()
-            # Scan for keys matching task_user:* and find those belonging to this user
-            user_task_ids = []
-            cursor = 0
-            while True:
-                cursor, keys = r.scan(cursor, match='task_user:*', count=200)
-                for key in keys:
-                    val = r.get(key)
-                    if val and int(val) == self.request.user.id:
-                        # Extract task_id from key  "task_user:<task_id>"
-                        tid = key.decode().replace('task_user:', '', 1)
-                        user_task_ids.append(tid)
-                if cursor == 0:
-                    break
-            if user_task_ids:
-                app_id_param = self.request.query_params.get('app_id')
-                if app_id_param:
-                    try:
-                        target_app_id = int(app_id_param)
-                        filtered_app_task_ids = []
-                        for tid in user_task_ids:
-                            app_val = r.get(f"task_app:{tid}")
-                            if app_val and int(app_val) == target_app_id:
-                                filtered_app_task_ids.append(tid)
-                        user_task_ids = filtered_app_task_ids
-                    except ValueError:
-                        pass
-                
-                if user_task_ids:
-                    qs = qs.filter(task_id__in=user_task_ids)
-                else:
-                    qs = qs.none()
-            else:
-                qs = qs.none()
-        except Exception:
-            # Fallback: return all (same as before) if Redis is down
-            pass
+        app_id_param = self.request.query_params.get('app_id') or self.request.query_params.get('app')
+        if app_id_param:
+            try:
+                qs = qs.filter(app_id=int(app_id_param))
+            except ValueError:
+                pass
         return qs
 
     @action(detail=True, methods=['get'])

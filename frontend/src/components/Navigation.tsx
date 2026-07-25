@@ -11,7 +11,6 @@ export const Navigation: React.FC<NavigationProps> = ({
   onLogout 
 }) => {
   const location = useLocation();
-  const currentView = location.pathname === '/bugs' ? 'bugs' : 'dashboard';
 
   return (
     <nav className="glass-nav">
@@ -25,15 +24,9 @@ export const Navigation: React.FC<NavigationProps> = ({
           <div className="nav-menu">
             <Link 
               to="/dashboard" 
-              className={`nav-link ${currentView === 'dashboard' ? 'active' : ''}`}
+              className={`nav-link ${location.pathname === '/dashboard' ? 'active' : ''}`}
             >
               🖥️ Dashboard
-            </Link>
-            <Link 
-              to="/bugs" 
-              className={`nav-link ${currentView === 'bugs' ? 'active' : ''}`}
-            >
-              🐞 All Bugs
             </Link>
             
             <div className="nav-divider"></div>

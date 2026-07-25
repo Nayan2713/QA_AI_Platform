@@ -1,19 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import api from '../lib/api';
-import { PageDetail } from '../lib/types';
+import { PageDetail, CeleryTask } from '../lib/types';
 
 interface DiscoveryStatusProps {
   appId: number;
   appStatus: string;
   discoverySource?: string;
   onDiscoveryComplete: () => void;
+  currentTask?: CeleryTask | null;
 }
 
 export const DiscoveryStatus: React.FC<DiscoveryStatusProps> = ({
   appId,
   appStatus,
   discoverySource,
-  onDiscoveryComplete
+  onDiscoveryComplete,
+  currentTask
 }) => {
   const [pages, setPages] = useState<PageDetail[]>([]);
   const [loading, setLoading] = useState(false);
@@ -105,6 +107,25 @@ export const DiscoveryStatus: React.FC<DiscoveryStatusProps> = ({
           )}
         </div>
       </div>
+
+      {currentTask?.result?.status_text && (
+        <div style={{
+          marginTop: '14px',
+          padding: '10px 14px',
+          background: 'rgba(6, 182, 212, 0.12)',
+          border: '1px solid rgba(6, 182, 212, 0.3)',
+          borderRadius: '8px',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.84rem',
+          color: '#22d3ee',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px'
+        }}>
+          <span className="live-pulse-dot running" />
+          <span>{currentTask.result.status_text}</span>
+        </div>
+      )}
 
       <div className="discovery-stats">
         <div className="stat-box">

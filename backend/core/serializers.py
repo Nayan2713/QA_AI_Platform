@@ -61,23 +61,10 @@ class ApplicationSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         url = attrs.get('url')
         if url:
-            from django.db.models import Q
             # Normalize URL by removing trailing slash
             normalized_url = url.rstrip('/')
             parsed = urlparse(normalized_url)
             attrs['base_url'] = f"{parsed.scheme}://{parsed.netloc}"
-            
-            # Check if this user has already registered this URL (handling trailing slashes too)
-            request = self.context.get('request')
-            if request and request.user:
-                user = request.user
-                exists = Application.objects.filter(user=user).filter(
-                    Q(url=normalized_url) | Q(url=normalized_url + '/')
-                )
-                if self.instance:
-                    exists = exists.exclude(id=self.instance.id)
-                if exists.exists():
-                    raise serializers.ValidationError({"url": "You have already registered this application URL."})
 
         # Validate that login credentials are provided if login_url is specified
         login_url = attrs.get('login_url', getattr(self.instance, 'login_url', None))

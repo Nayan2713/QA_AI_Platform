@@ -162,16 +162,24 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     if (testCases.length === 0) setIsTestCasesLoading(true);
     setTestCasesError(null);
 
-    const fetchTestCases = async () => {
+    const fetchTestCases = async (retryCount = 0) => {
       try {
-        const res = await api.get(`test-cases/?app=${appId}`, { signal, timeout: 15000 });
+        const res = await api.get(`test-cases/?app=${appId}&page_size=1000`, { signal, timeout: 45000 });
         const rawData = res.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
         if (active) {
           setTestCases(data);
+          setTestCasesError(null);
         }
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
+          if (retryCount < 1) {
+            console.warn('Retrying test cases fetch after lag...');
+            setTimeout(() => {
+              if (active) fetchTestCases(retryCount + 1);
+            }, 1000);
+            return;
+          }
           console.error('Failed to fetch test cases:', err);
           setTestCasesError(err);
         }
@@ -352,6 +360,36 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       eventSource.close();
     };
   }, [appId, refetchAllDebounced]);
+
+  // Auto-restore active task on page load / refresh
+  useEffect(() => {
+    let isMounted = true;
+
+    const autoRestoreActiveTask = async () => {
+      try {
+        const res = await api.get(`tasks/?app=${appId}&page_size=10`);
+        const rawData = res.data;
+        const taskList: CeleryTask[] = Array.isArray(rawData) ? rawData : (rawData.results || []);
+
+        const activeOrLatest = taskList.find(
+          t => t.status === 'pending' || t.status === 'progress' || t.status === 'running'
+        ) || (app?.status === 'DISCOVERING' ? taskList[0] : null);
+
+        if (activeOrLatest && isMounted) {
+          setActiveTaskId(activeOrLatest.task_id);
+          setCurrentTask(activeOrLatest);
+        }
+      } catch (err) {
+        console.warn('Failed to auto-restore active task on page refresh:', err);
+      }
+    };
+
+    autoRestoreActiveTask();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [appId, app?.status]);
 
   // Backup polling for Celery tasks using real-time celery-status endpoint
   useEffect(() => {
@@ -904,6 +942,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               appStatus={app.status} 
               discoverySource={app.discovery_source}
               onDiscoveryComplete={handleDiscoveryComplete}
+              currentTask={currentTask}
             />
           )}
 

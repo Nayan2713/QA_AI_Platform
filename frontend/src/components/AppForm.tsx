@@ -17,6 +17,45 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const extractErrorMessage = (err: any): string => {
+    const respData = err.response?.data;
+    if (!respData) return err.message || 'Failed to add application';
+
+    // Handle wrapped custom renderer data structure
+    const innerData = respData.data || respData;
+    const detailObj = innerData.detail || innerData;
+
+    if (typeof detailObj === 'string') return detailObj;
+
+    if (typeof detailObj === 'object' && detailObj !== null) {
+      if (detailObj.url) {
+        return Array.isArray(detailObj.url) ? detailObj.url[0] : String(detailObj.url);
+      }
+      if (detailObj.non_field_errors) {
+        return Array.isArray(detailObj.non_field_errors) ? detailObj.non_field_errors[0] : String(detailObj.non_field_errors);
+      }
+      if (detailObj.username) {
+        return Array.isArray(detailObj.username) ? detailObj.username[0] : String(detailObj.username);
+      }
+      if (detailObj.password) {
+        return Array.isArray(detailObj.password) ? detailObj.password[0] : String(detailObj.password);
+      }
+
+      const firstKey = Object.keys(detailObj)[0];
+      if (firstKey) {
+        const val = detailObj[firstKey];
+        if (Array.isArray(val)) return `${firstKey}: ${val[0]}`;
+        if (typeof val === 'string') return `${firstKey}: ${val}`;
+        if (typeof val === 'object' && val !== null) {
+          const subKey = Object.keys(val)[0];
+          if (subKey && Array.isArray(val[subKey])) return val[subKey][0];
+        }
+      }
+    }
+
+    return 'Failed to add application. Please check the provided URL.';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url) {
@@ -45,25 +84,8 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
       setUseLlmInCrawl(false);
     } catch (err: any) {
       console.error(err);
-      const backendError = err.response?.data;
-      let errorMsg = 'Failed to add application';
-      if (backendError) {
-        if (backendError.url) {
-          errorMsg = backendError.url[0];
-        } else if (backendError.username) {
-          errorMsg = backendError.username[0];
-        } else if (backendError.password) {
-          errorMsg = backendError.password[0];
-        } else if (backendError.detail) {
-          errorMsg = backendError.detail;
-        } else if (typeof backendError === 'string') {
-          errorMsg = backendError;
-        } else {
-          errorMsg = JSON.stringify(backendError);
-        }
-      }
+      const errorMsg = extractErrorMessage(err);
       setError(errorMsg);
-      alert(`⚠️ Registration Error:\n\n${errorMsg}`);
     } finally {
       setLoading(false);
     }

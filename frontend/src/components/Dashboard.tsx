@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
@@ -213,13 +214,19 @@ export const Dashboard: React.FC = () => {
 
       {error && <div className="error-alert">{error}</div>}
 
-      {showAddForm && (
-        <div className="add-app-overlay">
+      {showAddForm && createPortal(
+        <div 
+          className="add-app-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAddForm(false);
+          }}
+        >
           <AppForm 
             onAppCreated={handleAppCreated} 
             onCancel={() => setShowAddForm(false)} 
           />
-        </div>
+        </div>,
+        document.body
       )}
 
       {isLoading ? (
