@@ -770,12 +770,17 @@ def run_full_quality_check(self, application_id):
     """
     Runs complete quality check pipeline for an application.
     OPTIMIZED: direct DB calls instead of thread-per-operation.
+    CANCELLATION: check_cancelled() is called between every pipeline step.
     """
+    from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
+
+    task_id = self.request.id or "dummy_task_id"
+    task_record = None
+
     try:
         # OPTIMIZED: fetch all related data upfront in minimal queries
         app = Application.objects.get(id=application_id)
 
-        task_id = self.request.id or "dummy_task_id"
         task_record = CeleryTask.objects.filter(task_id=task_id).first()
 
         def update_progress(progress, status_text):
@@ -793,6 +798,7 @@ def run_full_quality_check(self, application_id):
                 )
 
         update_progress(10, "Initializing quality check pipeline...")
+        check_cancelled(task_id)
 
         # OPTIMIZED: fetch in three targeted queries instead of threaded lambdas
         test_cases = list(TestCase.objects.filter(app=app))
@@ -814,30 +820,38 @@ def run_full_quality_check(self, application_id):
 
         # 1. Validate test relevance
         update_progress(20, f"Step 1/5: Checking relevance for {len(test_cases)} tests...")
+        check_cancelled(task_id)
         first_page_url = pages[0].url if pages else ''
         for test in test_cases[:10]:
+            check_cancelled(task_id)
             validate_test_relevance(test.id, first_page_url)
             results['tests_checked'] += 1
 
         # 2. Analyze coverage
         update_progress(45, "Step 2/5: Analyzing test coverage...")
+        check_cancelled(task_id)
         analyze_coverage(application_id)
         results['coverage_analyzed'] = True
 
         # 3. Validate bugs
         update_progress(65, f"Step 3/5: Checking false positives for {len(bugs)} bugs...")
+        check_cancelled(task_id)
         for bug in bugs[:20]:
+            check_cancelled(task_id)
             validate_bug_accuracy(bug.id)
             results['bugs_validated'] += 1
 
         # 4. Detect flakiness
         update_progress(80, f"Step 4/5: Detecting stability/flakiness for {len(test_cases)} tests...")
+        check_cancelled(task_id)
         for test in test_cases[:10]:
+            check_cancelled(task_id)
             detect_flakiness(test.id, 5)
             results['flakiness_checked'] += 1
 
         # 5. Calculate overall metrics
         update_progress(95, "Step 5/5: Computing overall quality scores and grade...")
+        check_cancelled(task_id)
         calculate_quality_metrics(application_id)
         results['metrics_calculated'] = True
 
@@ -864,13 +878,36 @@ def run_full_quality_check(self, application_id):
                 completed_at=timezone.now()
             )
 
+        clear_stop_flag(task_id)
         results['completed_at'] = timezone.now().isoformat()
         results['success'] = True
         return results
-        
+
+    except TaskCancelled:
+        logger.info(f"Quality check task {task_id} cancelled by user.")
+        try:
+            clear_stop_flag(task_id)
+            if task_record:
+                task_record.status = 'failed'
+                task_record.error = 'Stopped by user.'
+                task_record.completed_at = timezone.now()
+                task_record.save()
+            else:
+                CeleryTask.objects.filter(task_id=task_id).update(
+                    status='failed',
+                    error='Stopped by user.',
+                    completed_at=timezone.now()
+                )
+        except Exception:
+            pass
+        return {
+            'application_id': application_id,
+            'error': 'Stopped by user.',
+            'success': False
+        }
+
     except Exception as e:
         logger.error(f"✗ Error running quality check: {str(e)}")
-        task_id = self.request.id or "dummy_task_id"
         try:
             if task_record:
                 task_record.status = 'failed'

@@ -208,19 +208,28 @@ def save_api_endpoints(app, api_logs):
 # Async / thread helpers
 # ---------------------------------------------------------------------------
 
-def run_async(coro):
+def run_async(coro, task_id=None):
     """
     Runs an async coroutine in a fresh thread with its own event loop.
     Prevents "Cannot run event loop while another loop is running" errors
     that occur when Playwright's sync API is already using a loop.
+
+    CANCELLATION FIX: When task_id is provided, this function polls the Redis
+    stop flag every 0.5 s while blocked on thread.join(). If a stop flag is
+    detected, it schedules cancellation of all running asyncio tasks on the
+    coroutine's loop so the thread exits in ≤1 second rather than waiting
+    for the full async crawl to finish (which could be 20+ seconds blocked
+    on a single page.goto timeout).
     """
     res = []
     err = []
+    loop_holder = []
 
     def target():
         from django.db import connection
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        loop_holder.append(loop)
         try:
             val = loop.run_until_complete(coro)
             res.append((val,))
@@ -230,9 +239,28 @@ def run_async(coro):
             loop.close()
             connection.close()
 
-    thread = threading.Thread(target=target)
+    thread = threading.Thread(target=target, daemon=True)
     thread.start()
-    thread.join()
+
+    if task_id:
+        # Poll every 0.5 s so the Celery thread doesn't block indefinitely
+        from tasks.cancellation import is_cancelled, TaskCancelled
+        while thread.is_alive():
+            thread.join(timeout=0.5)
+            if thread.is_alive() and is_cancelled(task_id):
+                # Cancel all pending tasks on the inner event loop
+                if loop_holder:
+                    loop = loop_holder[0]
+                    try:
+                        loop.call_soon_threadsafe(
+                            lambda: [t.cancel() for t in asyncio.all_tasks(loop)]
+                        )
+                    except Exception:
+                        pass
+                thread.join(timeout=5)  # give coroutine up to 5 s to clean up
+                raise TaskCancelled(f"Task {task_id} cancelled during async crawl.")
+    else:
+        thread.join()
 
     if err:
         raise err[0]
@@ -433,7 +461,7 @@ def start_discovery(self, app_id, model_choice=None):
                 storage_state=storage_state_data,
                 on_progress=on_crawler_progress,
                 task_id=task_id
-            ))
+            ), task_id=task_id)
             check_cancelled(task_id)
             pages_data = result.get("pages", [])
             login_successful = result.get("login_successful")

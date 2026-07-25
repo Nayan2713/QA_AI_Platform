@@ -823,6 +823,14 @@ class BrowserDiscoveryService:
                         if is_cancelled(task_id):
                             logger.info(f"Worker {worker_id} detected task cancellation. Stopping crawl.")
                             to_visit_queue.task_done()
+                            # Drain remaining queue items so other workers
+                            # exit their asyncio.wait_for() immediately
+                            while not to_visit_queue.empty():
+                                try:
+                                    to_visit_queue.get_nowait()
+                                    to_visit_queue.task_done()
+                                except Exception:
+                                    break
                             break
 
                     # FIX 4: atomic check-and-mark inside the lock
@@ -846,7 +854,7 @@ class BrowserDiscoveryService:
                             pass
 
                     try:
-                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
+                        await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=8000)
                         self._check_stop(task_id)
                         await worker_page.wait_for_timeout(800)
 
@@ -1124,7 +1132,7 @@ class BrowserDiscoveryService:
 
                                         # Navigate back so we can click other menu items
                                         try:
-                                            await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
+                                            await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=8000)
                                             self._check_stop(task_id)
                                             await worker_page.wait_for_timeout(500)
                                         except Exception as nav_err:
