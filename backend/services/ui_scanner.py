@@ -1,5 +1,6 @@
 import os
 import uuid
+import base64
 import logging
 from urllib.parse import urlparse
 from django.conf import settings
@@ -9,28 +10,25 @@ logger = logging.getLogger(__name__)
 
 def save_ui_screenshot(page, selector=None, prefix="ui_bug"):
     """
-    Captures a screenshot of the page or a specific DOM element and saves it to MEDIA_ROOT/bugs.
-    Returns the relative path suitable for Bug.screenshot ImageField.
+    Captures a screenshot of the page or a specific DOM element in memory and returns a base64 encoded string suitable for Bug.screenshot.
     """
     try:
-        filename = f"{prefix}_{uuid.uuid4().hex[:12]}.png"
-        media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
-        os.makedirs(media_path, exist_ok=True)
-        full_path = os.path.join(media_path, filename)
-
+        ss_bytes = None
         if selector:
             try:
                 element = page.locator(selector).first
                 if element and element.is_visible():
-                    element.screenshot(path=full_path, timeout=3000)
+                    ss_bytes = element.screenshot(timeout=3000)
                 else:
-                    page.screenshot(path=full_path, full_page=False)
+                    ss_bytes = page.screenshot(full_page=False)
             except Exception:
-                page.screenshot(path=full_path, full_page=False)
+                ss_bytes = page.screenshot(full_page=False)
         else:
-            page.screenshot(path=full_path, full_page=False)
+            ss_bytes = page.screenshot(full_page=False)
 
-        return f"bugs/{filename}"
+        if ss_bytes:
+            return base64.b64encode(ss_bytes).decode('utf-8')
+        return None
     except Exception as e:
         logger.error(f"Failed to capture UI bug screenshot: {e}")
         return None
@@ -77,20 +75,24 @@ def run_ui_scan(application: Application, max_pages: int = 5):
             page_errors = []
             failed_assets = []
 
-            context = browser.new_context(
-                viewport={"width": 1280, "height": 800},
-                ignore_https_errors=True,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) QA-Platform-UI-Scanner/1.0"
-            )
-            
-            # Load stored auth session state if available
+            context_kwargs = {
+                "viewport": {"width": 1280, "height": 800},
+                "ignore_https_errors": True,
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) QA-Platform-UI-Scanner/1.0"
+            }
+
+            # Issue 5: Use Playwright's native browser.new_context(storage_state=state_obj)
             if application.storage_state:
                 try:
                     import json
-                    state_obj = json.loads(application.storage_state)
-                    context.add_cookies(state_obj.get('cookies', []))
+                    if isinstance(application.storage_state, dict):
+                        context_kwargs["storage_state"] = application.storage_state
+                    elif isinstance(application.storage_state, str):
+                        context_kwargs["storage_state"] = json.loads(application.storage_state)
                 except Exception as err:
                     logger.warning(f"Could not load session storage for UI scan: {err}")
+
+            context = browser.new_context(**context_kwargs)
 
             page = context.new_page()
 

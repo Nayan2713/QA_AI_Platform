@@ -24,6 +24,11 @@ class RegisterSerializer(serializers.ModelSerializer):
             email=validated_data["email"],
             password=validated_data["password"]
         )
+        from core.models import TeamMember
+        TeamMember.objects.filter(email__iexact=user.email, status='pending').update(
+            member_user=user,
+            status='active'
+        )
         return user
 
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer

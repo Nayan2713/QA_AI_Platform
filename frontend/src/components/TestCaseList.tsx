@@ -462,7 +462,25 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       </div>
 
       {error && <div className="error-alert">{error}</div>}
-      {successMsg && <div className="success-alert">{successMsg}</div>}
+      {successMsg && (
+        <div className="success-alert" style={{
+          backgroundColor: 'rgba(16, 185, 129, 0.18)',
+          color: '#6ee7b7',
+          border: '1px solid rgba(16, 185, 129, 0.4)',
+          padding: '12px 18px',
+          borderRadius: '10px',
+          marginBottom: '20px',
+          fontSize: '0.92rem',
+          fontWeight: '600',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          boxShadow: '0 4px 20px rgba(16, 185, 129, 0.15)'
+        }}>
+          <span style={{ fontSize: '1.2rem' }}>🎉</span>
+          <span>{successMsg}</span>
+        </div>
+      )}
 
       {/* Test Cases Cards List */}
       {testCases.length === 0 ? (
@@ -722,9 +740,9 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
         <BulkUploadModal
           appId={appId}
           onClose={() => setShowBulkModal(false)}
-          onSuccess={() => {
+          onSuccess={(msg) => {
             setShowBulkModal(false);
-            setSuccessMsg('Bulk test cases imported successfully.');
+            setSuccessMsg(msg || '🎉 Bulk test cases imported successfully! Your test cases are ready below in the Test Suite.');
             onRefreshTests();
           }}
         />

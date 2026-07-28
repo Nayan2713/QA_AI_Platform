@@ -16,10 +16,57 @@ from .serializers import (
 from services.test_validation_service import TestValidationService
 
 
+from rest_framework.exceptions import PermissionDenied
+
+
 def get_user_and_team_user_ids(user):
     from .models import TeamMember
+    if user and user.is_authenticated and getattr(user, 'email', None):
+        TeamMember.objects.filter(email__iexact=user.email, member_user__isnull=True).update(
+            member_user=user,
+            status='active'
+        )
     owned_ids = TeamMember.objects.filter(member_user=user, status='active').values_list('owner_id', flat=True)
     return [user.id] + list(owned_ids)
+
+
+def get_team_role(user, owner):
+    """
+    Returns the role of `user` relative to resource `owner`:
+    - 'owner': if user.id == owner.id
+    - 'admin' | 'member' | 'viewer': from active TeamMember record
+    - None: if no active team relationship exists
+    """
+    if not user or not user.is_authenticated:
+        return None
+    owner_id = owner.id if hasattr(owner, 'id') else owner
+    if user.id == owner_id:
+        return 'owner'
+    from .models import TeamMember
+    tm = TeamMember.objects.filter(owner_id=owner_id, member_user=user, status='active').first()
+    if tm:
+        return tm.role
+    return None
+
+
+def check_team_permission(user, owner, action):
+    """
+    Checks if `user` has permission to perform `action` on a resource owned by `owner`.
+    Raises PermissionDenied if forbidden.
+    - 'owner' or 'admin': full access (read, create, update, delete)
+    - 'member': read, create, update allowed. Delete (destroy) forbidden.
+    - 'viewer': read-only. Create, update, delete forbidden.
+    """
+    role = get_team_role(user, owner)
+    if not role:
+        raise PermissionDenied("You do not have access to this resource.")
+
+    if action in ['destroy', 'delete']:
+        if role not in ['owner', 'admin']:
+            raise PermissionDenied("Only resource owners and team admins can delete resources.")
+    elif action in ['create', 'update', 'partial_update', 'perform_create', 'perform_update', 'bulk_upload', 'report_ui_bug', 'generate', 'generate_single', 'validate_test', 'auto_fix']:
+        if role not in ['owner', 'admin', 'member']:
+            raise PermissionDenied("Viewers have read-only access.")
 
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 100
@@ -57,6 +104,14 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+    def perform_update(self, serializer):
+        check_team_permission(self.request.user, serializer.instance.user, 'update')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        check_team_permission(self.request.user, instance.user, 'destroy')
+        instance.delete()
 
     # Helper query order
     def get_queryset(self):
@@ -346,13 +401,23 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         return ctx
 
     def perform_create(self, serializer):
-        # Set ai_generated to False by default for manual creation
+        app = serializer.validated_data.get('app')
+        if app:
+            check_team_permission(self.request.user, app.user, 'create')
         ai_generated = self.request.data.get('ai_generated', False)
-        # Ensure it is a boolean
         ai_generated = str(ai_generated).lower() in ['true', '1', 't', 'y', 'yes']
         serializer.save(ai_generated=ai_generated)
 
+    def perform_update(self, serializer):
+        check_team_permission(self.request.user, serializer.instance.app.user, 'update')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        check_team_permission(self.request.user, instance.app.user, 'destroy')
+        instance.delete()
+
     @action(detail=False, methods=['post'], url_path='bulk_upload')
+
     def bulk_upload(self, request):
         app_id = request.data.get('app_id')
         if not app_id:
@@ -366,6 +431,8 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         is_preview = str(request.data.get('preview', 'false')).lower() in ['true', '1', 't', 'yes']
         test_cases_data = request.data.get('test_cases')
 
+        # Direct JSON payload (already-parsed test cases) — this path is
+        # already fast (no file parsing), stays synchronous.
         if test_cases_data and isinstance(test_cases_data, list):
             objs_to_create = []
             for item in test_cases_data:
@@ -387,52 +454,42 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 "test_cases": TestCaseSerializer(created, many=True).data
             }, status=status.HTTP_201_CREATED)
 
+        # File upload path (CSV/XLSX/PDF) — this is the slow one. Hand it
+        # off to Celery instead of parsing inline on the request thread.
         file_obj = request.FILES.get('file')
         if not file_obj:
             return Response({"error": "No file provided. Upload a .csv, .xlsx, .xls, or .pdf file."}, status=status.HTTP_400_BAD_REQUEST)
 
+        ext = file_obj.name.lower().split('.')[-1]
+        if ext not in ['csv', 'xlsx', 'xls', 'pdf']:
+            return Response({"error": f"Unsupported file format '.{ext}'. Supported formats: .csv, .xlsx, .xls, .pdf"}, status=status.HTTP_400_BAD_REQUEST)
+
         model_choice = request.data.get('model_choice', 'auto')
+        file_bytes = file_obj.read()
 
-        from services.bulk_test_case_service import BulkTestCaseService
-        try:
-            result = BulkTestCaseService.process_bulk_file(file_obj, file_obj.name, app, model_choice=model_choice)
-        except ValueError as ve:
-            return Response({"error": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({"error": f"Failed to parse file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        import uuid
+        task_id = str(uuid.uuid4())
+        CeleryTask.objects.create(
+            app=app,
+            task_id=task_id,
+            task_type='bulk_upload',
+            status='pending',
+            progress=0
+        )
 
-        if is_preview:
-            return Response({
-                "status": "preview",
-                "filename": file_obj.name,
-                "columns": result.get("columns", []),
-                "format_type": result.get("format_type", ""),
-                "count": result.get("count", 0),
-                "test_cases": result.get("test_cases", [])
-            }, status=status.HTTP_200_OK)
-
-        objs_to_create = []
-        for item in result.get("test_cases", []):
-            objs_to_create.append(TestCase(
-                app=app,
-                title=str(item.get('title', 'Imported Test Case'))[:255],
-                category=item.get('category', 'Generic') if item.get('category') in ['Generic', 'Industry Flow', 'Access Control'] else 'Generic',
-                expected_result=str(item.get('expected_result', 'Verification successful')),
-                steps=item.get('steps', []),
-                ai_generated=False,
-                generation_context=item.get('generation_context', {})
-            ))
-        created = TestCase.objects.bulk_create(objs_to_create)
+        from tasks.bulk_upload import process_bulk_upload
+        process_bulk_upload.apply_async(
+            args=[app.id, file_bytes, file_obj.name, model_choice, is_preview],
+            task_id=task_id
+        )
 
         return Response({
-            "status": "success",
-            "message": f"Successfully imported {len(created)} test cases from {file_obj.name}.",
-            "created_count": len(created),
-            "columns": result.get("columns", []),
-            "format_type": result.get("format_type", ""),
-            "test_cases": TestCaseSerializer(created, many=True).data
-        }, status=status.HTTP_201_CREATED)
-
+            "status": "pending",
+            "task_id": task_id,
+            "message": "File received — processing in the background."
+        }, status=status.HTTP_202_ACCEPTED)
+    
+    
     @action(detail=False, methods=['post'])
     def generate(self, request):
         app_id = request.data.get('app_id')
@@ -735,6 +792,24 @@ class BugViewSet(viewsets.ModelViewSet):
             return BugDetailSerializer
         return BugSerializer
 
+    def perform_create(self, serializer):
+        app = serializer.validated_data.get('application') or (serializer.validated_data.get('test_run').test_case.app if serializer.validated_data.get('test_run') else None)
+        if app:
+            check_team_permission(self.request.user, app.user, 'create')
+        serializer.save()
+
+    def perform_update(self, serializer):
+        app = serializer.instance.application or (serializer.instance.test_run.test_case.app if serializer.instance.test_run else None)
+        if app:
+            check_team_permission(self.request.user, app.user, 'update')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        app = instance.application or (instance.test_run.test_case.app if instance.test_run else None)
+        if app:
+            check_team_permission(self.request.user, app.user, 'destroy')
+        instance.delete()
+
     @action(detail=False, methods=['post'], url_path='report-ui-bug')
     def report_ui_bug(self, request):
         app_id = request.data.get('app_id') or request.data.get('application')
@@ -748,10 +823,14 @@ class BugViewSet(viewsets.ModelViewSet):
         if not app_id or not title:
             return Response({"error": "app_id and title are required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Issue 3: Use team user IDs scoping instead of single user check
         try:
-            app = Application.objects.get(id=app_id, user=request.user)
+            app = Application.objects.get(id=app_id, user_id__in=get_user_and_team_user_ids(request.user))
         except Application.DoesNotExist:
             return Response({"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Issue 2: Enforce team role permission
+        check_team_permission(request.user, app.user, 'report_ui_bug')
 
         bug = Bug.objects.create(
             application=app,
@@ -909,6 +988,16 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Filter tasks to only those belonging to the current user's applications."""
         from django.db.models import Q
+        from django.utils import timezone
+        import datetime
+
+        # Auto-clean stale pending/progress tasks older than 30 minutes
+        thirty_mins_ago = timezone.now() - datetime.timedelta(minutes=30)
+        CeleryTask.objects.filter(
+            status__in=['pending', 'progress'],
+            created_at__lt=thirty_mins_ago
+        ).update(status='failed', error='Task timed out.')
+
         qs = CeleryTask.objects.filter(
             Q(app__user=self.request.user) | Q(app__isnull=True)
         ).order_by('-created_at')
@@ -921,8 +1010,22 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
                 pass
         return qs
 
+    def get_object(self):
+        queryset = self.filter_queryset(self.get_queryset())
+        val = self.kwargs.get('task_id') or self.kwargs.get('pk')
+        if val:
+            if str(val).isdigit():
+                obj = queryset.filter(id=int(val)).first()
+                if obj:
+                    return obj
+            obj = queryset.filter(task_id=str(val)).first()
+            if obj:
+                return obj
+        from rest_framework.exceptions import NotFound
+        raise NotFound(f"Task with ID {val} not found.")
+
     @action(detail=True, methods=['get'])
-    def status(self, request, task_id=None):
+    def status(self, request, task_id=None, pk=None):
         task = self.get_object()
         return Response({
             "task_id": task.task_id,
@@ -934,13 +1037,14 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
         })
 
     @action(detail=True, methods=['get'], url_path='celery-status')
-    def celery_status(self, request, task_id=None):
+    def celery_status(self, request, task_id=None, pk=None):
         """
         Get the real-time Celery task status using AsyncResult safely.
         """
+        tid = task_id or request.parser_context.get('kwargs', {}).get('pk')
         from celery.result import AsyncResult
         try:
-            result = AsyncResult(task_id)
+            result = AsyncResult(tid)
             task_state = result.state
             res_val = result.result if task_state == 'SUCCESS' else None
             err_val = str(result.result) if task_state == 'FAILURE' else None
@@ -950,7 +1054,7 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
             err_val = f"Broker unavailable: {e}"
 
         response_data = {
-            "task_id": task_id,
+            "task_id": tid,
             "status": task_state,
             "result": res_val,
             "error": err_val
@@ -959,43 +1063,30 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(response_data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
-    def stop(self, request, task_id=None):
+    def stop(self, request, task_id=None, pk=None):
         task = self.get_object()
+        target_task_id = task.task_id
         
         # 1. Set cooperative stop flag (for thread workers on Windows & Unix)
         from tasks.cancellation import set_stop_flag
-        set_stop_flag(task.task_id)
+        set_stop_flag(target_task_id)
 
-        # 2. Revoke the Celery task (SIGTERM is cross-platform, SIGKILL is POSIX-only)
+        # 2. Revoke the Celery task (SIGTERM is cross-platform)
         from qa_engine.celery import app as celery_app
         try:
-            celery_app.control.revoke(task.task_id, terminate=True, signal='SIGTERM')
-        except Exception:
-            pass
+            celery_app.control.revoke(target_task_id, terminate=True, signal='SIGTERM')
+        except Exception as e:
+            logger.warning(f"Failed to revoke celery task {target_task_id}: {e}")
         
         # 3. Update status in database
         task.status = 'failed'
         task.error = "Task stopped by user."
         task.save()
         
-        # 3. Handle Application status revert if needed
-        if task.task_type == 'discovery':
-            # B4 FIX: Only revert the specific application that this task was
-            # running for, instead of blindly updating ALL applications.
-            from tasks.discovery import start_discovery
-            from core.models import Application
-            # The task args contain [app_id] — look it up via Celery inspect
-            # or fall back to matching the most recent DISCOVERING app for this user.
-            try:
-                from qa_engine.redis_client import get_redis_client
-                r = get_redis_client()
-                user_id = r.get(f"task_user:{task.task_id}")
-                if user_id:
-                    Application.objects.filter(
-                        user_id=int(user_id), status='DISCOVERING'
-                    ).update(status='IDLE')
-            except Exception:
-                pass
+        # 4. Handle Application status revert if needed
+        if task.app:
+            task.app.status = 'IDLE'
+            task.app.save(update_fields=['status'])
             
         return Response({
             "status": "success",
@@ -1076,6 +1167,7 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         email = serializer.validated_data.get('email', '').strip().lower()
         role = serializer.validated_data.get('role', 'member')
+        password = (self.request.data.get('password') or '').strip()
 
         if not email:
             raise serializers.ValidationError({"email": "Email address is required."})
@@ -1083,27 +1175,41 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
         if TeamMember.objects.filter(owner=self.request.user, email__iexact=email).exists():
             raise serializers.ValidationError({"email": "This user is already a member of your team."})
 
-        # Match existing User by email or create new User for the team member
         member_user = User.objects.filter(email__iexact=email).first()
-        if not member_user:
-            username_prefix = email.split('@')[0]
-            base_username = username_prefix
-            counter = 1
-            while User.objects.filter(username=base_username).exists():
-                base_username = f"{username_prefix}_{counter}"
-                counter += 1
-            
-            member_user = User.objects.create_user(
-                username=base_username,
-                email=email,
-                password=User.objects.make_random_password()
-            )
+
+        if password:
+            if member_user:
+                member_user.set_password(password)
+                member_user.save()
+            else:
+                username_base = email.split('@')[0]
+                username = username_base
+                cnt = 1
+                while User.objects.filter(username=username).exists():
+                    username = f"{username_base}_{cnt}"
+                    cnt += 1
+
+                member_user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password
+                )
+
+        status_val = 'active' if member_user else 'pending'
 
         serializer.save(
             owner=self.request.user,
             member_user=member_user,
             email=email,
             role=role,
-            status='active'
+            status=status_val
         )
+
+    def perform_update(self, serializer):
+        check_team_permission(self.request.user, serializer.instance.owner, 'update')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        check_team_permission(self.request.user, instance.owner, 'destroy')
+        instance.delete()
 

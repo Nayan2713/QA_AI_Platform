@@ -30,9 +30,13 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
+    if (axios.isCancel(error) || error?.name === 'CanceledError' || error?.message === 'canceled') {
+      return Promise.reject(error);
+    }
+
     const originalRequest = error.config;
 
-    // Log the API error globally
+    // Log real API errors globally
     if (error.response) {
       const errorData = error.response.data;
       const status = error.response.status;
@@ -45,7 +49,11 @@ api.interceptors.response.use(
       console.error(`[API Error] Network/Request Error:`, error.message);
     }
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    const isAuthEndpoint = originalRequest?.url?.includes('auth/login') ||
+                           originalRequest?.url?.includes('auth/register') ||
+                           originalRequest?.url?.includes('auth/refresh');
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       originalRequest._retry = true;
       const refreshToken = localStorage.getItem('refresh_token');
 
@@ -57,21 +65,23 @@ api.interceptors.response.use(
           });
           // Handle both wrapped and unwrapped format
           const newAccess = res.data.data?.access || res.data.access;
-          localStorage.setItem('access_token', newAccess);
-          originalRequest.headers.Authorization = `Bearer ${newAccess}`;
-          return api(originalRequest);
+          if (newAccess) {
+            localStorage.setItem('access_token', newAccess);
+            originalRequest.headers.Authorization = `Bearer ${newAccess}`;
+            return api(originalRequest);
+          }
         } catch {
-          // Refresh failed — clear storage and redirect to login
+          // Refresh failed — clear storage cleanly without forcing location.reload
           localStorage.removeItem('access_token');
           localStorage.removeItem('refresh_token');
           localStorage.removeItem('username');
-          window.location.reload();
+          window.dispatchEvent(new Event('auth:logout'));
         }
       } else {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
         localStorage.removeItem('username');
-        window.location.reload();
+        window.dispatchEvent(new Event('auth:logout'));
       }
     }
 

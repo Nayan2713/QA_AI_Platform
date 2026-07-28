@@ -113,6 +113,10 @@ def detect_bugs(test_run_id):
         logger.error(f"TestRun with ID {test_run_id} does not exist.")
         return {"error": f"TestRun with ID {test_run_id} not found."}
 
+    if test_run.status == 'FAILED' and (test_run.metadata or {}).get('stopped_by_user'):
+        logger.info(f"Skipping bug detection for user-cancelled TestRun ID {test_run_id}")
+        return {"status": "SKIPPED_CANCELLED", "bugs_found": 0}
+
     # Fetch failed results
     failed_results = TestResult.objects.filter(test_run=test_run, status='FAILED')
     

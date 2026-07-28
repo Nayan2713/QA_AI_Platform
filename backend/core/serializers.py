@@ -50,6 +50,11 @@ class RegisterSerializer(serializers.ModelSerializer):
             email=validated_data['email'],
             password=validated_data['password']
         )
+        if user.email:
+            TeamMember.objects.filter(email__iexact=user.email, member_user__isnull=True).update(
+                member_user=user,
+                status='active'
+            )
         return user
 
 

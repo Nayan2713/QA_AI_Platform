@@ -15,8 +15,9 @@ export const Dashboard: React.FC = () => {
   const { data: applications = [], isLoading, refetch } = useQuery({
     queryKey: ['applications'],
     queryFn: async () => {
-      const response = await api.get<Application[]>('applications/');
-      return response.data;
+      const response = await api.get('applications/');
+      const rawData = response.data as any;
+      return Array.isArray(rawData) ? rawData : (rawData?.results || []);
     }
   });
 

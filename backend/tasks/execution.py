@@ -790,6 +790,10 @@ def run_quality_analysis(test_run_id, api_logs=None):
             logger.error(f"TestRun {test_run_id} does not exist in run_quality_analysis.")
             return
 
+        if test_run.status == 'FAILED' and (test_run.metadata or {}).get('stopped_by_user'):
+            logger.info(f"Skipping quality analysis for user-cancelled TestRun ID {test_run_id}")
+            return
+
         test_case = test_run.test_case
         app = test_case.app
 
@@ -866,8 +870,9 @@ def run_quality_analysis(test_run_id, api_logs=None):
             logger.error(f"Quality analyzer error for TestRun ID {test_run_id}: {qe}")
             
         finally:
-            # Bug detection runs after the quality checks are finished
-            from tasks.bug_detection import detect_bugs
-            detect_bugs.apply_async(args=[test_run_id], queue='quality')
+            # Bug detection runs after the quality checks are finished (unless cancelled)
+            if test_run and not (test_run.status == 'FAILED' and (test_run.metadata or {}).get('stopped_by_user')):
+                from tasks.bug_detection import detect_bugs
+                detect_bugs.apply_async(args=[test_run_id], queue='quality')
 
     run_in_thread(analyze)

@@ -1,11 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../lib/api';
 
 interface BulkUploadModalProps {
   appId: number;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (msg?: string) => void;
 }
 
 interface ParsedTestCase {
@@ -24,6 +24,7 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
+  const [parseWarning, setParseWarning] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
   // Preview data
@@ -33,6 +34,78 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
   const [hasPreviewed, setHasPreviewed] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pollIntervalRef = useRef<any>(null);
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, []);
+
+  const startPolling = (taskId: string) => {
+    stopPolling();
+
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await api.get(`tasks/${taskId}/celery-status/`);
+        const data = res.data;
+        const taskStatus = (data.status || '').toUpperCase();
+
+        if (taskStatus === 'SUCCESS') {
+          stopPolling();
+          const payload = data.result || {};
+
+          if (payload.error) {
+            setError(payload.error);
+            setLoading(false);
+            return;
+          }
+
+          if (payload.status === 'preview' || payload.test_cases) {
+            setColumns(payload.columns || []);
+            setFormatType(payload.format_type || '');
+            setParseWarning(payload.parse_warning || '');
+            const casesWithSelect = (payload.test_cases || []).map((tc: any) => ({
+              ...tc,
+              selected: true
+            }));
+            setParsedCases(casesWithSelect);
+            setHasPreviewed(true);
+            setLoading(false);
+
+            if (casesWithSelect.length === 0) {
+              setError('No test cases could be parsed from the file.');
+            }
+          } else if (payload.status === 'success') {
+            setParseWarning(payload.parse_warning || '');
+            const countStr = payload.created_count !== undefined ? `${payload.created_count} ` : '';
+            const msg = `Successfully imported ${countStr}test cases! Your test cases are ready below in the Test Suite.`;
+            setSuccessMsg(msg);
+            setLoading(false);
+            setTimeout(() => {
+              onSuccess(msg);
+              onClose();
+            }, 1200);
+          } else {
+            setLoading(false);
+          }
+        } else if (taskStatus === 'FAILURE') {
+          stopPolling();
+          setError(data.error || data.result?.error || 'Failed to process file in background.');
+          setLoading(false);
+        }
+      } catch (err: any) {
+        console.error('Error polling task status:', err);
+      }
+    }, 1500);
+  };
 
   const handleFileSelect = (file: File) => {
     const ext = file.name.toLowerCase().split('.').pop();
@@ -42,6 +115,7 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
       return;
     }
     setError('');
+    setParseWarning('');
     setSelectedFile(file);
     setHasPreviewed(false);
     setParsedCases([]);
@@ -74,6 +148,7 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
 
     setLoading(true);
     setError('');
+    setParseWarning('');
     const formData = new FormData();
     formData.append('app_id', String(appId));
     formData.append('file', selectedFile);
@@ -86,22 +161,27 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
       });
 
       const data = res.data;
-      setColumns(data.columns || []);
-      setFormatType(data.format_type || '');
-      const casesWithSelect = (data.test_cases || []).map((tc: any) => ({
-        ...tc,
-        selected: true
-      }));
-      setParsedCases(casesWithSelect);
-      setHasPreviewed(true);
+      if (data.task_id) {
+        startPolling(data.task_id);
+      } else {
+        setColumns(data.columns || []);
+        setFormatType(data.format_type || '');
+        setParseWarning(data.parse_warning || '');
+        const casesWithSelect = (data.test_cases || []).map((tc: any) => ({
+          ...tc,
+          selected: true
+        }));
+        setParsedCases(casesWithSelect);
+        setHasPreviewed(true);
+        setLoading(false);
 
-      if (casesWithSelect.length === 0) {
-        setError('No test cases could be parsed from the file.');
+        if (casesWithSelect.length === 0) {
+          setError('No test cases could be parsed from the file.');
+        }
       }
     } catch (err: any) {
       console.error(err);
       setError(err.response?.data?.error || 'Failed to parse file. Please check file format.');
-    } finally {
       setLoading(false);
     }
   };
@@ -129,9 +209,11 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
         test_cases: selectedCases
       });
 
-      setSuccessMsg(`Successfully imported ${res.data.created_count || selectedCases.length} test cases!`);
+      const count = res.data.created_count || selectedCases.length;
+      const msg = `Successfully imported ${count} test cases! Your test cases are ready below in the Test Suite.`;
+      setSuccessMsg(msg);
       setTimeout(() => {
-        onSuccess();
+        onSuccess(msg);
         onClose();
       }, 1200);
     } catch (err: any) {
@@ -146,6 +228,7 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
     if (!selectedFile) return;
     setLoading(true);
     setError('');
+    setParseWarning('');
     const formData = new FormData();
     formData.append('app_id', String(appId));
     formData.append('file', selectedFile);
@@ -157,15 +240,22 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      setSuccessMsg(`Successfully imported ${res.data.created_count} test cases!`);
-      setTimeout(() => {
-        onSuccess();
-        onClose();
-      }, 1200);
+      const data = res.data;
+      if (data.task_id) {
+        startPolling(data.task_id);
+      } else {
+        const count = data.created_count || 0;
+        const msg = `Successfully imported ${count} test cases! Your test cases are ready below in the Test Suite.`;
+        setSuccessMsg(msg);
+        setLoading(false);
+        setTimeout(() => {
+          onSuccess(msg);
+          onClose();
+        }, 1200);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.response?.data?.error || 'Failed to import test cases.');
-    } finally {
       setLoading(false);
     }
   };
@@ -209,7 +299,10 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
             </p>
           </div>
           <button
-            onClick={onClose}
+            onClick={() => {
+              stopPolling();
+              onClose();
+            }}
             style={{
               background: 'transparent',
               border: 'none',
@@ -234,6 +327,21 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
             fontSize: '0.85rem'
           }}>
             ⚠️ {error}
+          </div>
+        )}
+
+        {parseWarning && (
+          <div style={{
+            backgroundColor: 'rgba(234, 179, 8, 0.15)',
+            color: '#fde047',
+            border: '1px solid rgba(234, 179, 8, 0.3)',
+            padding: '12px 14px',
+            borderRadius: '8px',
+            marginBottom: '16px',
+            fontSize: '0.85rem',
+            lineHeight: 1.5
+          }}>
+            ⚠️ {parseWarning}
           </div>
         )}
 
@@ -432,7 +540,10 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({ appId, onClose
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '10px' }}>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              stopPolling();
+              onClose();
+            }}
             style={{
               backgroundColor: 'rgba(255, 255, 255, 0.05)',
               color: '#cbd5e1',

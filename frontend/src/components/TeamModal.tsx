@@ -16,6 +16,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [newEmail, setNewEmail] = useState<string>('');
+  const [newPassword, setNewPassword] = useState<string>('');
   const [newRole, setNewRole] = useState<string>('member');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -54,11 +55,17 @@ export const TeamModal: React.FC<TeamModalProps> = ({
     try {
       const res = await api.post('team/', {
         email: newEmail.trim(),
-        role: newRole
+        role: newRole,
+        password: newPassword.trim() || undefined
       });
 
-      setSuccessMsg(`Successfully added ${res.data.email} to your team!`);
+      const message = newPassword.trim() 
+        ? `Successfully added ${res.data.email}! Account created with assigned password.`
+        : `Successfully invited ${res.data.email} to your team!`;
+
+      setSuccessMsg(message);
       setNewEmail('');
+      setNewPassword('');
       fetchMembers();
     } catch (err: any) {
       console.error('Failed to add team member:', err);
@@ -111,7 +118,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
         border: '1px solid rgba(255, 255, 255, 0.15)',
         borderRadius: '20px',
         padding: '32px',
-        maxWidth: '680px',
+        maxWidth: '720px',
         width: '100%',
         boxShadow: '0 25px 60px rgba(0,0,0,0.6)',
         color: '#fff',
@@ -176,21 +183,35 @@ export const TeamModal: React.FC<TeamModalProps> = ({
             ➕ Invite / Add New Team Member
           </h4>
           
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 130px auto', gap: '12px', alignItems: 'center' }}>
             <input
               type="email"
               required
-              placeholder="Enter member's email (e.g. alex@company.com)"
+              placeholder="Email address (e.g. alex@co.com)"
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
               style={{
-                flex: '1 1 240px',
                 background: 'rgba(30, 41, 59, 0.9)',
                 border: '1px solid rgba(255, 255, 255, 0.2)',
                 borderRadius: '8px',
                 padding: '10px 14px',
                 color: '#fff',
-                fontSize: '0.9rem'
+                fontSize: '0.85rem'
+              }}
+            />
+
+            <input
+              type="password"
+              placeholder="Initial password (optional)"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              style={{
+                background: 'rgba(30, 41, 59, 0.9)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#fff',
+                fontSize: '0.85rem'
               }}
             />
 
@@ -198,13 +219,12 @@ export const TeamModal: React.FC<TeamModalProps> = ({
               value={newRole}
               onChange={(e) => setNewRole(e.target.value)}
               style={{
-                width: '130px',
                 background: 'rgba(30, 41, 59, 0.9)',
                 border: '1px solid rgba(255, 255, 255, 0.2)',
                 borderRadius: '8px',
                 padding: '10px 12px',
                 color: '#fff',
-                fontSize: '0.9rem'
+                fontSize: '0.85rem'
               }}
             >
               <option value="admin">👑 Admin</option>
@@ -219,14 +239,15 @@ export const TeamModal: React.FC<TeamModalProps> = ({
                 background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
                 color: '#fff',
                 border: 'none',
-                padding: '10px 20px',
+                padding: '10px 18px',
                 borderRadius: '8px',
                 fontWeight: 700,
                 cursor: 'pointer',
-                fontSize: '0.9rem'
+                fontSize: '0.85rem',
+                whiteSpace: 'nowrap'
               }}
             >
-              {isSubmitting ? 'Inviting...' : 'Add Member'}
+              {isSubmitting ? 'Adding...' : 'Add Member'}
             </button>
           </div>
         </form>
@@ -297,9 +318,22 @@ export const TeamModal: React.FC<TeamModalProps> = ({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <span style={{ fontSize: '1.3rem' }}>👤</span>
                     <div>
-                      <span style={{ fontWeight: 600, fontSize: '0.95rem', color: '#f8fafc', display: 'block' }}>
-                        {member.member_username || member.email}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.95rem', color: '#f8fafc' }}>
+                          {member.member_username || member.email}
+                        </span>
+                        <span style={{
+                          fontSize: '0.7rem',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontWeight: 600,
+                          backgroundColor: member.status === 'active' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(234, 179, 8, 0.15)',
+                          color: member.status === 'active' ? '#4ade80' : '#fde047',
+                          border: member.status === 'active' ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(234, 179, 8, 0.3)'
+                        }}>
+                          {member.status === 'active' ? 'Active' : 'Pending Invite'}
+                        </span>
+                      </div>
                       <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>{member.email}</span>
                     </div>
                   </div>

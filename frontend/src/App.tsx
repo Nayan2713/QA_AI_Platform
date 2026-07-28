@@ -55,7 +55,7 @@ function App() {
   const [authSuccess, setAuthSuccess] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
-  // Check auth on startup
+  // Check auth on startup & listen for auth:logout event
   useEffect(() => {
     const storedToken = localStorage.getItem('access_token');
     const storedUser = localStorage.getItem('username');
@@ -63,7 +63,18 @@ function App() {
       setToken(storedToken);
       setUsername(storedUser);
     }
-  }, []);
+
+    const handleAuthLogout = () => {
+      queryClient.clear();
+      setToken(null);
+      setUsername('');
+    };
+
+    window.addEventListener('auth:logout', handleAuthLogout);
+    return () => {
+      window.removeEventListener('auth:logout', handleAuthLogout);
+    };
+  }, [queryClient]);
 
   const handleRunTestCaseFromGlobal = async (testCaseId: number) => {
     try {
@@ -87,7 +98,12 @@ function App() {
     localStorage.removeItem('username');
     setToken(null);
     setUsername('');
-    navigate('/dashboard');
+    setAuthEmail('');
+    setAuthPassword('');
+    setAuthUsername('');
+    setAuthError('');
+    setAuthSuccess('');
+    window.location.href = '/dashboard';
   };
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -127,8 +143,8 @@ function App() {
         setAuthEmail('');
         setAuthPassword('');
         
-        // Navigate to dashboard
-        navigate('/dashboard');
+        // Perform clean navigation to dashboard
+        window.location.href = '/dashboard';
       } else {
         // Register
         await api.post<{ access: string; refresh: string; user: User }>('auth/register/', {

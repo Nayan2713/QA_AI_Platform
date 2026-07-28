@@ -24,9 +24,11 @@ class BulkTestCaseService:
         ext = filename.lower().split('.')[-1]
         
         if ext == 'csv':
-            return BulkTestCaseService._parse_csv(file_obj)
+            c, r, f = BulkTestCaseService._parse_csv(file_obj)
+            return c, r, f, False
         elif ext in ['xlsx', 'xls']:
-            return BulkTestCaseService._parse_excel(file_obj)
+            c, r, f = BulkTestCaseService._parse_excel(file_obj)
+            return c, r, f, False
         elif ext in ['pdf']:
             return BulkTestCaseService._parse_pdf(file_obj)
         else:
@@ -118,26 +120,47 @@ class BulkTestCaseService:
         return columns, rows, 'excel'
 
     @staticmethod
-    def _parse_pdf(file_obj) -> Tuple[List[str], List[Dict[str, Any]], str]:
+
+    def _parse_pdf(file_obj) -> Tuple[List[str], List[Dict[str, Any]], str, bool]:
         import pdfplumber
         raw_bytes = file_obj.read()
+
+        MAX_PAGES = 30  # hard cap so a huge PDF can't hang the request
 
         tables_found = []
         all_text = ""
         columns = ["Title", "Steps", "Expected Result", "Category"]
+        truncated = False
 
         try:
             with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
-                for page in pdf.pages:
+                total_pages = len(pdf.pages)
+                if total_pages > MAX_PAGES:
+                    truncated = True
+
+                for page in pdf.pages[:MAX_PAGES]:
+                    # Try default line-geometry detection first (for bordered/grid tables)
                     page_tables = page.extract_tables()
+                    if not page_tables:
+                        # Fallback to whitespace text alignment strategy (for borderless tables)
+                        page_tables = page.extract_tables(table_settings={
+                            "vertical_strategy": "text",
+                            "horizontal_strategy": "text",
+                        })
                     if page_tables:
                         for tbl in page_tables:
                             if tbl and len(tbl) > 1:
                                 tables_found.append(tbl)
-                    
-                    txt = page.extract_text()
-                    if txt:
-                        all_text += txt + "\n"
+
+                # Only pay for full-text extraction if table extraction
+                # didn't already give us usable rows — this used to run
+                # unconditionally on every page even when Strategy 1
+                # (tables) already succeeded below.
+                if not tables_found:
+                    for page in pdf.pages[:MAX_PAGES]:
+                        txt = page.extract_text()
+                        if txt:
+                            all_text += txt + "\n"
         except Exception as e:
             logger.warning(f"pdfplumber extraction warning: {e}")
 
@@ -171,16 +194,18 @@ class BulkTestCaseService:
                         rows.append(row_dict)
 
             if len(rows) > 0:
-                return columns, rows, 'pdf'
+                return columns, rows, 'pdf', truncated
 
         # Strategy 2: Fast Text Layout Line & Pattern Extraction
+        # (unchanged from here down — only runs if tables_found was empty,
+        # in which case all_text was already populated above)
         if all_text.strip():
             lines = [l.strip() for l in all_text.splitlines() if l.strip()]
             current_case = {}
             for line in lines:
                 is_new_case = False
                 title_match = re.search(r'^(?:test\s*case\s*(?:title|name|id)?|tc[-_]?\d+|scenario\s*\d*|feature|requirement|use\s*case|verify|check|validate|\d+[\.:])\s*[:\-\s]+(.*)', line, re.IGNORECASE)
-                
+
                 if title_match:
                     is_new_case = True
                     extracted_title = title_match.group(1).strip() or line
@@ -229,8 +254,7 @@ class BulkTestCaseService:
                             "Category": "Generic"
                         })
 
-        return columns, rows, 'pdf'
-
+        return columns, rows, 'pdf', truncated
     @staticmethod
     def _get_row_value(row: Dict[str, Any], candidates: List[str]) -> str:
         """
@@ -251,13 +275,18 @@ class BulkTestCaseService:
     def process_bulk_file(file_obj, filename: str, app, model_choice: str = 'auto') -> Dict[str, Any]:
         """
         Parses bulk file and generates structured test case dictionaries.
-        Returns a dict containing column info, count, and candidate test cases.
-        INSTANT FAST-PATH: Native parser runs first in <0.1s!
+        Returns a dict containing column info, count, candidate test cases, and truncation status.
         """
-        columns, rows, format_type = BulkTestCaseService.parse_file(file_obj, filename)
+        columns, rows, format_type, truncated = BulkTestCaseService.parse_file(file_obj, filename)
         
+        parse_warning = None
         # Only fallback if native table parser extracted zero rows
         if not rows:
+            parse_warning = (
+                f"Could not extract structured test cases from '{filename}' — "
+                "generated test cases from your application's discovered pages instead. "
+                "If this PDF should contain test case content, confirm the PDF has selectable/copyable text (not a scanned image)."
+            )
             from core.models import Page, APIEndpoint
             pages = list(Page.objects.filter(app=app))
             apis = list(APIEndpoint.objects.filter(application=app))
@@ -363,6 +392,8 @@ class BulkTestCaseService:
             "columns": columns,
             "count": len(test_cases),
             "format_type": format_type,
+            "truncated": truncated,
+            "parse_warning": parse_warning,
             "test_cases": test_cases
         }
 
