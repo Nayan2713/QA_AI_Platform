@@ -21,13 +21,19 @@ from rest_framework.exceptions import PermissionDenied
 
 def get_user_and_team_user_ids(user):
     from .models import TeamMember
-    if user and user.is_authenticated and getattr(user, 'email', None):
+    from django.db.models import Q
+    if not user or not user.is_authenticated:
+        return []
+    if getattr(user, 'email', None):
         TeamMember.objects.filter(email__iexact=user.email, member_user__isnull=True).update(
             member_user=user,
             status='active'
         )
-    owned_ids = TeamMember.objects.filter(member_user=user, status='active').values_list('owner_id', flat=True)
-    return [user.id] + list(owned_ids)
+    owned_ids = TeamMember.objects.filter(
+        Q(member_user=user) | Q(email__iexact=getattr(user, 'email', '')),
+        status='active'
+    ).values_list('owner_id', flat=True)
+    return list(set([user.id] + list(owned_ids)))
 
 
 def get_team_role(user, owner):
@@ -43,7 +49,12 @@ def get_team_role(user, owner):
     if user.id == owner_id:
         return 'owner'
     from .models import TeamMember
-    tm = TeamMember.objects.filter(owner_id=owner_id, member_user=user, status='active').first()
+    from django.db.models import Q
+    tm = TeamMember.objects.filter(
+        Q(member_user=user) | Q(email__iexact=getattr(user, 'email', '')),
+        owner_id=owner_id,
+        status='active'
+    ).first()
     if tm:
         return tm.role
     return None
@@ -423,8 +434,10 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         if not app_id:
             return Response({"error": "app_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        user_ids = get_user_and_team_user_ids(request.user)
         try:
-            app = Application.objects.get(id=app_id, user=request.user)
+            app = Application.objects.get(id=app_id, user_id__in=user_ids)
+            check_team_permission(request.user, app.user, 'bulk_upload')
         except Application.DoesNotExist:
             return Response({"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -636,8 +649,10 @@ class TestRunViewSet(viewsets.ModelViewSet):
         if not test_case_id:
             return Response({"error": "test_case_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
+        user_ids = get_user_and_team_user_ids(request.user)
         try:
-            test_case = TestCase.objects.get(id=test_case_id, app__user=request.user)
+            test_case = TestCase.objects.get(id=test_case_id, app__user_id__in=user_ids)
+            check_team_permission(request.user, test_case.app.user, 'create')
         except TestCase.DoesNotExist:
             return Response({"error": "Test case not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -679,10 +694,12 @@ class TestRunViewSet(viewsets.ModelViewSet):
         if not test_case_ids:
             return Response({"error": "test_case_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
         
+        user_ids = get_user_and_team_user_ids(request.user)
         runs = []
         for tc_id in test_case_ids:
             try:
-                test_case = TestCase.objects.get(id=tc_id, app__user=request.user)
+                test_case = TestCase.objects.get(id=tc_id, app__user_id__in=user_ids)
+                check_team_permission(request.user, test_case.app.user, 'create')
                 test_run = TestRun.objects.create(
                     test_case=test_case,
                     status='PENDING'

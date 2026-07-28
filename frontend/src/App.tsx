@@ -55,7 +55,9 @@ function App() {
   const [authSuccess, setAuthSuccess] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
-  // Check auth on startup & listen for auth:logout event
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+
+  // Check auth on startup & listen for auth:logout and auth:permission_denied events
   useEffect(() => {
     const storedToken = localStorage.getItem('access_token');
     const storedUser = localStorage.getItem('username');
@@ -70,9 +72,20 @@ function App() {
       setUsername('');
     };
 
+    const handlePermissionDenied = (e: any) => {
+      const msg = e.detail?.message || 'Permission Denied: You do not have access for this action.';
+      setPermissionError(msg);
+      setTimeout(() => {
+        setPermissionError(null);
+      }, 5000);
+    };
+
     window.addEventListener('auth:logout', handleAuthLogout);
+    window.addEventListener('auth:permission_denied', handlePermissionDenied as EventListener);
+
     return () => {
       window.removeEventListener('auth:logout', handleAuthLogout);
+      window.removeEventListener('auth:permission_denied', handlePermissionDenied as EventListener);
     };
   }, [queryClient]);
 
@@ -314,6 +327,53 @@ function App() {
       <footer className="app-footer">
         <p>© 2026 QA Engineer MVP. Built with Django, Playwright, Ollama, and React.</p>
       </footer>
+
+      {/* Permission Denied UI Popup Notification */}
+      {permissionError && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          zIndex: 99999,
+          background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.95) 0%, rgba(185, 28, 28, 0.95) 100%)',
+          color: '#fff',
+          padding: '16px 20px',
+          borderRadius: '14px',
+          boxShadow: '0 10px 30px rgba(239, 68, 68, 0.4)',
+          border: '1px solid rgba(255, 255, 255, 0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '14px',
+          maxWidth: '420px',
+          backdropFilter: 'blur(8px)'
+        }}>
+          <span style={{ fontSize: '1.6rem' }}>🔒</span>
+          <div style={{ flex: 1 }}>
+            <strong style={{ display: 'block', fontSize: '0.95rem', marginBottom: '2px', color: '#fff' }}>
+              Permission Restricted
+            </strong>
+            <span style={{ fontSize: '0.82rem', opacity: 0.95, color: '#fee2e2', lineHeight: '1.3' }}>
+              {permissionError}
+            </span>
+          </div>
+          <button 
+            onClick={() => setPermissionError(null)}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: 'none',
+              color: '#fff',
+              width: '26px',
+              height: '26px',
+              borderRadius: '50%',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '0.85rem'
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }

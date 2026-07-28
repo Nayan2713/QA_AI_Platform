@@ -40,6 +40,12 @@ api.interceptors.response.use(
     if (error.response) {
       const errorData = error.response.data;
       const status = error.response.status;
+
+      if (status === 403) {
+        const msg = errorData?.detail || errorData?.error || (typeof errorData === 'string' ? errorData : 'Permission Denied: You do not have permission for this action.');
+        window.dispatchEvent(new CustomEvent('auth:permission_denied', { detail: { message: msg } }));
+      }
+
       if (errorData && typeof errorData === 'object' && 'status_code' in errorData) {
         console.error(`[API Error] ${originalRequest?.method?.toUpperCase()} ${originalRequest?.url} - Status: ${errorData.status_code}`, errorData);
       } else {
