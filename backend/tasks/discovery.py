@@ -566,6 +566,13 @@ def start_discovery(self, app_id, model_choice=None):
                 except Exception as sec_err:
                     logger.error(f"Failed running domain security scan: {sec_err}")
 
+                # Run automated UI & visual defect scan
+                try:
+                    from services.ui_scanner import run_ui_scan
+                    run_ui_scan(app)
+                except Exception as ui_err:
+                    logger.error(f"Failed running automated UI scan: {ui_err}")
+
                 # Finalize app status
                 app.status = 'DISCOVERED'
                 if app.login_url:

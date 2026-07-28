@@ -3,13 +3,32 @@ from django.contrib.auth.models import User
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from urllib.parse import urlparse
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember
 
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ('id', 'username', 'email')
+
+
+class TeamMemberSerializer(serializers.ModelSerializer):
+    owner_username = serializers.SerializerMethodField(read_only=True)
+    member_username = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = TeamMember
+        fields = (
+            'id', 'owner', 'owner_username', 'member_user', 'member_username',
+            'email', 'role', 'status', 'created_at'
+        )
+        read_only_fields = ('id', 'owner', 'member_user', 'created_at')
+
+    def get_owner_username(self, obj):
+        return obj.owner.username if obj.owner else None
+
+    def get_member_username(self, obj):
+        return obj.member_user.username if obj.member_user else None
 
 
 class RegisterSerializer(serializers.ModelSerializer):

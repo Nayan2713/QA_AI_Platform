@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { TestCase } from '../lib/types';
 import { TestCaseFormModal } from './TestCaseFormModal';
+import { BulkUploadModal } from './BulkUploadModal';
 
 const getTestCategory = (tc: TestCase): 'Access Control' | 'Industry Flow' | 'Generic' => {
   if (tc.category) {
@@ -70,8 +71,9 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   const [selectedModel, setSelectedModel] = useState('auto');
   const [categoryFilter, setCategoryFilter] = useState<'All' | 'Generic' | 'Industry Flow' | 'Access Control'>('All');
 
-  // Manual Test Case Management
+  // Manual & Bulk Test Case Management
   const [showModal, setShowModal] = useState(false);
+  const [showBulkModal, setShowBulkModal] = useState(false);
   const [editingTestCase, setEditingTestCase] = useState<TestCase | null>(null);
 
   // Suite Progress Tracking State
@@ -419,24 +421,44 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
           ))}
         </div>
 
-        <button 
-          onClick={handleAddManual} 
-          style={{
-            backgroundColor: 'rgba(59, 130, 246, 0.12)',
-            color: '#60a5fa',
-            border: '1px solid rgba(59, 130, 246, 0.3)',
-            padding: '6px 14px',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: 600,
-            fontSize: '0.8rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}
-        >
-          ➕ Add Manual Test
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button 
+            onClick={() => setShowBulkModal(true)} 
+            style={{
+              backgroundColor: 'rgba(16, 185, 129, 0.12)',
+              color: '#34d399',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              padding: '6px 14px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.8rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            📁 Bulk Upload
+          </button>
+          <button 
+            onClick={handleAddManual} 
+            style={{
+              backgroundColor: 'rgba(59, 130, 246, 0.12)',
+              color: '#60a5fa',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              padding: '6px 14px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.8rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            ➕ Add Manual Test
+          </button>
+        </div>
       </div>
 
       {error && <div className="error-alert">{error}</div>}
@@ -691,6 +713,18 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
           onSuccess={() => {
             setShowModal(false);
             setSuccessMsg(`Test case ${editingTestCase ? 'updated' : 'created'} successfully.`);
+            onRefreshTests();
+          }}
+        />
+      )}
+
+      {showBulkModal && (
+        <BulkUploadModal
+          appId={appId}
+          onClose={() => setShowBulkModal(false)}
+          onSuccess={() => {
+            setShowBulkModal(false);
+            setSuccessMsg('Bulk test cases imported successfully.');
             onRefreshTests();
           }}
         />

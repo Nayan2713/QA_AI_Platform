@@ -19,6 +19,22 @@ _pool: redis.ConnectionPool | None = None
 _async_pool: aioredis.ConnectionPool | None = None
 
 
+def _resolve_url(url: str) -> str:
+    """If url specifies an unresolvable hostname (e.g. 'redis' outside Docker), fallback to 127.0.0.1."""
+    import socket
+    try:
+        parsed = urlparse(url)
+        if parsed.hostname:
+            try:
+                socket.getaddrinfo(parsed.hostname, parsed.port or 6379)
+            except socket.gaierror:
+                new_netloc = parsed.netloc.replace(parsed.hostname, '127.0.0.1', 1)
+                url = urlunparse((parsed.scheme, new_netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+    except Exception:
+        pass
+    return url
+
+
 def get_redis_client(url: str | None = None) -> redis.Redis:
     """Return a Redis client using RESP2 protocol if supported.
 
@@ -32,7 +48,8 @@ def get_redis_client(url: str | None = None) -> redis.Redis:
     opening a new TCP socket on every event.
     """
     global _pool
-    target_url = url or getattr(settings, "CELERY_BROKER_URL", "redis://localhost:6379/0")
+    raw_url = url or getattr(settings, "CELERY_BROKER_URL", "redis://localhost:6379/0")
+    target_url = _resolve_url(raw_url)
 
     # Check redis-py version
     try:
@@ -69,7 +86,8 @@ def get_async_redis_client(url: str | None = None) -> aioredis.Redis:
     A module-level async connection pool is reused across calls.
     """
     global _async_pool
-    target_url = url or getattr(settings, "CELERY_BROKER_URL", "redis://localhost:6379/0")
+    raw_url = url or getattr(settings, "CELERY_BROKER_URL", "redis://localhost:6379/0")
+    target_url = _resolve_url(raw_url)
 
     # Check redis-py version
     try:

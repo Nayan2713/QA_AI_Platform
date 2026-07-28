@@ -6,14 +6,20 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember
 from .serializers import (
     RegisterSerializer, UserSerializer, ApplicationSerializer, ApplicationListSerializer,
     PageSerializer, TestCaseSerializer, TestCaseListSerializer, TestRunSerializer, TestRunListSerializer,
     TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer,
-    APIEndpointSerializer, AgentSessionSerializer
+    APIEndpointSerializer, AgentSessionSerializer, TeamMemberSerializer
 )
 from services.test_validation_service import TestValidationService
+
+
+def get_user_and_team_user_ids(user):
+    from .models import TeamMember
+    owned_ids = TeamMember.objects.filter(member_user=user, status='active').values_list('owner_id', flat=True)
+    return [user.id] + list(owned_ids)
 
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 100
@@ -54,7 +60,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
     # Helper query order
     def get_queryset(self):
-        return Application.objects.filter(user=self.request.user).order_by('-created_at')
+        user_ids = get_user_and_team_user_ids(self.request.user)
+        return Application.objects.filter(user_id__in=user_ids).order_by('-created_at')
 
     @action(detail=True, methods=['post'])
     def discover(self, request, pk=None):
@@ -293,6 +300,26 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             "message": f"Stop signal sent to {len(stopped_task_ids)} task(s) for this application."
         })
 
+    @action(detail=True, methods=['post'], url_path='scan-ui-bugs')
+    def scan_ui_bugs(self, request, pk=None):
+        app = self.get_object()
+        import uuid
+        task_id = str(uuid.uuid4())
+        CeleryTask.objects.create(
+            app=app,
+            task_id=task_id,
+            task_type='ui_scan',
+            status='pending',
+            progress=0
+        )
+        from tasks.bug_detection import scan_ui_bugs as scan_ui_bugs_task
+        scan_ui_bugs_task.apply_async(args=[app.id], task_id=task_id)
+        return Response({
+            "task_id": task_id,
+            "status": "pending",
+            "message": "Automated UI bug scan started."
+        }, status=status.HTTP_202_ACCEPTED)
+
 
 
 class TestCaseViewSet(viewsets.ModelViewSet):
@@ -301,7 +328,8 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        queryset = TestCase.objects.filter(app__user=self.request.user).select_related('app').order_by('-created_at')
+        user_ids = get_user_and_team_user_ids(self.request.user)
+        queryset = TestCase.objects.filter(app__user_id__in=user_ids).select_related('app').order_by('-created_at')
         app_id = self.request.query_params.get('app')
         if app_id:
             queryset = queryset.filter(app_id=app_id)
@@ -323,6 +351,87 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         # Ensure it is a boolean
         ai_generated = str(ai_generated).lower() in ['true', '1', 't', 'y', 'yes']
         serializer.save(ai_generated=ai_generated)
+
+    @action(detail=False, methods=['post'], url_path='bulk_upload')
+    def bulk_upload(self, request):
+        app_id = request.data.get('app_id')
+        if not app_id:
+            return Response({"error": "app_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            app = Application.objects.get(id=app_id, user=request.user)
+        except Application.DoesNotExist:
+            return Response({"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        is_preview = str(request.data.get('preview', 'false')).lower() in ['true', '1', 't', 'yes']
+        test_cases_data = request.data.get('test_cases')
+
+        if test_cases_data and isinstance(test_cases_data, list):
+            objs_to_create = []
+            for item in test_cases_data:
+                objs_to_create.append(TestCase(
+                    app=app,
+                    title=str(item.get('title', 'Imported Test Case'))[:255],
+                    category=item.get('category', 'Generic') if item.get('category') in ['Generic', 'Industry Flow', 'Access Control'] else 'Generic',
+                    expected_result=str(item.get('expected_result', 'Verification successful')),
+                    steps=item.get('steps', []),
+                    ai_generated=False,
+                    generation_context=item.get('generation_context', {})
+                ))
+            created = TestCase.objects.bulk_create(objs_to_create)
+
+            return Response({
+                "status": "success",
+                "message": f"Successfully created {len(created)} test cases.",
+                "created_count": len(created),
+                "test_cases": TestCaseSerializer(created, many=True).data
+            }, status=status.HTTP_201_CREATED)
+
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({"error": "No file provided. Upload a .csv, .xlsx, .xls, or .pdf file."}, status=status.HTTP_400_BAD_REQUEST)
+
+        model_choice = request.data.get('model_choice', 'auto')
+
+        from services.bulk_test_case_service import BulkTestCaseService
+        try:
+            result = BulkTestCaseService.process_bulk_file(file_obj, file_obj.name, app, model_choice=model_choice)
+        except ValueError as ve:
+            return Response({"error": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": f"Failed to parse file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if is_preview:
+            return Response({
+                "status": "preview",
+                "filename": file_obj.name,
+                "columns": result.get("columns", []),
+                "format_type": result.get("format_type", ""),
+                "count": result.get("count", 0),
+                "test_cases": result.get("test_cases", [])
+            }, status=status.HTTP_200_OK)
+
+        objs_to_create = []
+        for item in result.get("test_cases", []):
+            objs_to_create.append(TestCase(
+                app=app,
+                title=str(item.get('title', 'Imported Test Case'))[:255],
+                category=item.get('category', 'Generic') if item.get('category') in ['Generic', 'Industry Flow', 'Access Control'] else 'Generic',
+                expected_result=str(item.get('expected_result', 'Verification successful')),
+                steps=item.get('steps', []),
+                ai_generated=False,
+                generation_context=item.get('generation_context', {})
+            ))
+        created = TestCase.objects.bulk_create(objs_to_create)
+
+        return Response({
+            "status": "success",
+            "message": f"Successfully imported {len(created)} test cases from {file_obj.name}.",
+            "created_count": len(created),
+            "columns": result.get("columns", []),
+            "format_type": result.get("format_type", ""),
+            "test_cases": TestCaseSerializer(created, many=True).data
+        }, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'])
     def generate(self, request):
@@ -560,16 +669,17 @@ class TestRunViewSet(viewsets.ModelViewSet):
         })
 
 
-class BugViewSet(viewsets.ReadOnlyModelViewSet):
+class BugViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
+        user_ids = get_user_and_team_user_ids(self.request.user)
         from django.db.models import Q
         queryset = (
             Bug.objects.filter(
-                Q(test_run__test_case__app__user=self.request.user) |
-                Q(application__user=self.request.user)
+                Q(test_run__test_case__app__user_id__in=user_ids) |
+                Q(application__user_id__in=user_ids)
             )
             .select_related('application', 'test_run', 'test_run__test_case', 'test_run__test_case__app', 'api_endpoint')
             .order_by('-created_at')
@@ -580,6 +690,18 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
                 Q(test_run__test_case__app_id=app_id) |
                 Q(application_id=app_id)
             )
+        
+        bug_type = self.request.query_params.get('bug_type')
+        if bug_type:
+            if bug_type.lower() == 'ui':
+                queryset = queryset.filter(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual'])
+            else:
+                queryset = queryset.filter(bug_type=bug_type)
+
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+
         return queryset
 
     def list(self, request, *args, **kwargs):
@@ -594,7 +716,7 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
             # Deduplicate by the exact title so failures on different steps are kept separate,
             # but identical step failures across different test runs are still grouped.
             app_id = bug.application_id or (bug.test_run.test_case.app_id if bug.test_run and bug.test_run.test_case else None)
-            key = (app_id, bug.title, endpoint_id, bug.severity)
+            key = (app_id, bug.title, endpoint_id, bug.severity, bug.bug_type)
             
             if key not in seen:
                 seen.add(key)
@@ -612,6 +734,39 @@ class BugViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == 'retrieve':
             return BugDetailSerializer
         return BugSerializer
+
+    @action(detail=False, methods=['post'], url_path='report-ui-bug')
+    def report_ui_bug(self, request):
+        app_id = request.data.get('app_id') or request.data.get('application')
+        title = request.data.get('title')
+        description = request.data.get('description', '')
+        severity = request.data.get('severity', 'medium')
+        element_selector = request.data.get('element_selector', '')
+        screenshot = request.data.get('screenshot', '')
+        steps = request.data.get('steps_to_reproduce', [])
+
+        if not app_id or not title:
+            return Response({"error": "app_id and title are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            app = Application.objects.get(id=app_id, user=request.user)
+        except Application.DoesNotExist:
+            return Response({"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        bug = Bug.objects.create(
+            application=app,
+            title=title,
+            description=description,
+            severity=severity,
+            bug_type='ui',
+            element_selector=element_selector,
+            screenshot=screenshot if isinstance(screenshot, str) else None,
+            steps_to_reproduce=steps,
+            status='open'
+        )
+
+        serializer = self.get_serializer(bug)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class APIEndpointViewSet(viewsets.ModelViewSet):
@@ -781,22 +936,25 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['get'], url_path='celery-status')
     def celery_status(self, request, task_id=None):
         """
-        Get the real-time Celery task status using AsyncResult.
+        Get the real-time Celery task status using AsyncResult safely.
         """
         from celery.result import AsyncResult
-        result = AsyncResult(task_id)
-        
+        try:
+            result = AsyncResult(task_id)
+            task_state = result.state
+            res_val = result.result if task_state == 'SUCCESS' else None
+            err_val = str(result.result) if task_state == 'FAILURE' else None
+        except Exception as e:
+            task_state = 'PENDING'
+            res_val = None
+            err_val = f"Broker unavailable: {e}"
+
         response_data = {
             "task_id": task_id,
-            "status": result.state,  # PENDING, STARTED, SUCCESS, FAILURE, etc.
-            "result": None,
-            "error": None
+            "status": task_state,
+            "result": res_val,
+            "error": err_val
         }
-        
-        if result.state == 'SUCCESS':
-            response_data["result"] = result.result
-        elif result.state == 'FAILURE':
-            response_data["error"] = str(result.result)
             
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -902,4 +1060,50 @@ def health_check(request):
         
     http_status = status.HTTP_200_OK if health['status'] == 'healthy' else status.HTTP_503_SERVICE_UNAVAILABLE
     return Response(health, status=http_status)
+
+
+class TeamMemberViewSet(viewsets.ModelViewSet):
+    serializer_class = TeamMemberSerializer
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get_queryset(self):
+        from django.db.models import Q
+        user = self.request.user
+        return TeamMember.objects.filter(
+            Q(owner=user) | Q(member_user=user)
+        ).select_related('owner', 'member_user').order_by('-created_at')
+
+    def perform_create(self, serializer):
+        email = serializer.validated_data.get('email', '').strip().lower()
+        role = serializer.validated_data.get('role', 'member')
+
+        if not email:
+            raise serializers.ValidationError({"email": "Email address is required."})
+
+        if TeamMember.objects.filter(owner=self.request.user, email__iexact=email).exists():
+            raise serializers.ValidationError({"email": "This user is already a member of your team."})
+
+        # Match existing User by email or create new User for the team member
+        member_user = User.objects.filter(email__iexact=email).first()
+        if not member_user:
+            username_prefix = email.split('@')[0]
+            base_username = username_prefix
+            counter = 1
+            while User.objects.filter(username=base_username).exists():
+                base_username = f"{username_prefix}_{counter}"
+                counter += 1
+            
+            member_user = User.objects.create_user(
+                username=base_username,
+                email=email,
+                password=User.objects.make_random_password()
+            )
+
+        serializer.save(
+            owner=self.request.user,
+            member_user=member_user,
+            email=email,
+            role=role,
+            status='active'
+        )
 

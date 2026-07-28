@@ -8,6 +8,7 @@ from .views import (
     CeleryTaskViewSet,
     APIEndpointViewSet,
     AgentSessionViewSet,
+    TeamMemberViewSet,
     health_check,
 )
 from .events import RealTimeEventView
@@ -20,6 +21,7 @@ router.register(r'bugs', BugViewSet, basename='bug')
 router.register(r'tasks', CeleryTaskViewSet, basename='task')
 router.register(r'api-endpoints', APIEndpointViewSet, basename='apiendpoint')
 router.register(r'agent-sessions', AgentSessionViewSet, basename='agentsession')
+router.register(r'team', TeamMemberViewSet, basename='teammember')
 
 urlpatterns = [
     path('health/', health_check, name='health-check'),

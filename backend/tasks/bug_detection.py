@@ -378,3 +378,42 @@ def start_agentic_bug_detection(self, app_id):
                 clear_stop_flag(task_id)
         run_in_thread(handle_error)
         return {"status": "FAILED", "error": str(e)}
+
+
+@shared_task(bind=True)
+def scan_ui_bugs(self, app_id):
+    """
+    Celery task to run automated UI/visual defect scanner on an application.
+    """
+    from core.models import Application, CeleryTask
+    from services.ui_scanner import run_ui_scan
+    from tasks.cancellation import run_in_thread, clear_stop_flag
+    
+    logger.info(f"Starting UI bug scan task for application ID: {app_id}")
+    task_id = self.request.id
+    
+    def get_app():
+        return Application.objects.get(id=app_id)
+        
+    def update_task(status_str, bugs_count, err=None):
+        t = CeleryTask.objects.filter(task_id=task_id).first()
+        if t:
+            t.status = status_str
+            t.progress = 100 if status_str == 'success' else 0
+            if err:
+                t.error = str(err)
+            else:
+                t.result = {"bugs_found": bugs_count, "status_text": f"UI scan complete. Found {bugs_count} visual defects."}
+            t.save()
+            
+    try:
+        app = run_in_thread(get_app)
+        bugs = run_ui_scan(app)
+        run_in_thread(lambda: update_task('success', len(bugs)))
+        clear_stop_flag(task_id)
+        return {"status": "SUCCESS", "ui_bugs_found": len(bugs)}
+    except Exception as e:
+        logger.error(f"UI bug scan task failed: {e}")
+        run_in_thread(lambda: update_task('failed', 0, err=e))
+        clear_stop_flag(task_id)
+        return {"status": "FAILED", "error": str(e)}

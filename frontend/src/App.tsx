@@ -4,6 +4,7 @@ import api from './lib/api';
 import { User, Bug } from './lib/types';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigation } from './components/Navigation';
+import { TeamModal } from './components/TeamModal';
 import './App.css';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then(module => ({ default: module.Dashboard })));
@@ -243,11 +244,20 @@ function App() {
     );
   }
 
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+
   return (
     <div className="app-layout">
       <Navigation 
         username={username} 
         onLogout={handleLogout} 
+        onOpenTeamModal={() => setIsTeamModalOpen(true)}
+      />
+      
+      <TeamModal
+        isOpen={isTeamModalOpen}
+        onClose={() => setIsTeamModalOpen(false)}
+        currentUser={username}
       />
       
       <main className="main-content">

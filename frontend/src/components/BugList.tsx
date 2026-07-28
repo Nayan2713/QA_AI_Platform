@@ -31,7 +31,8 @@ export const BugList: React.FC<BugListProps> = ({
     return matchSeverity && matchType && matchStatus;
   });
 
-  const testCaseBugs = filteredBugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility');
+  const uiBugs = filteredBugs.filter(b => b.bug_type === 'ui' || b.bug_type === 'ui_issue' || b.bug_type === 'ui_bug' || b.bug_type === 'visual');
+  const testCaseBugs = filteredBugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual');
   const auditBugs = filteredBugs.filter(b => b.bug_type === 'security' || b.bug_type === 'accessibility');
 
   const renderBugItem = (bug: Bug) => {
@@ -419,7 +420,38 @@ export const BugList: React.FC<BugListProps> = ({
         </div>
       </div>
 
-      {filteredBugs.length === 0 ? (
+      {bugs.length === 0 && filterSeverity === 'all' && filterType === 'all' && filterStatus === 'all' ? (
+        <div className="bugs-table-container">
+          <div className="bugs-section" style={{ marginBottom: '32px' }}>
+            <h4 style={{ 
+              color: '#c084fc', 
+              margin: '0 0 16px 0', 
+              borderBottom: '1px solid rgba(192, 132, 252, 0.15)', 
+              paddingBottom: '8px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '8px', 
+              fontSize: '1.05rem', 
+              fontWeight: '600' 
+            }}>
+              🎨 UI & Visual Layout Defects (0)
+            </h4>
+            <div style={{
+              padding: '14px 18px',
+              background: 'rgba(192, 132, 252, 0.04)',
+              border: '1px dashed rgba(192, 132, 252, 0.2)',
+              borderRadius: '10px',
+              color: 'rgba(255, 255, 255, 0.6)',
+              fontSize: '0.85rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <span>✨</span> Zero UI & visual layout defects detected for this application.
+            </div>
+          </div>
+        </div>
+      ) : filteredBugs.length === 0 ? (
         <div className="empty-state">
           <div className="bug-free-icon">🛡️</div>
           <p>Zero bugs match the selected filters.</p>
@@ -446,9 +478,46 @@ export const BugList: React.FC<BugListProps> = ({
               </div>
             </div>
           )}
+
+          {(filterType === 'all' || filterType === 'ui') && (
+            <div className="bugs-section" style={{ marginBottom: '32px' }}>
+              <h4 style={{ 
+                color: '#c084fc', 
+                margin: '0 0 16px 0', 
+                borderBottom: '1px solid rgba(192, 132, 252, 0.15)', 
+                paddingBottom: '8px', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px', 
+                fontSize: '1.05rem', 
+                fontWeight: '600' 
+              }}>
+                🎨 UI & Visual Layout Defects ({uiBugs.length})
+              </h4>
+              {uiBugs.length > 0 ? (
+                <div className="bugs-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {uiBugs.map((bug) => renderBugItem(bug))}
+                </div>
+              ) : (
+                <div style={{
+                  padding: '14px 18px',
+                  background: 'rgba(192, 132, 252, 0.04)',
+                  border: '1px dashed rgba(192, 132, 252, 0.2)',
+                  borderRadius: '10px',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span>✨</span> Zero UI & visual layout defects detected for this application.
+                </div>
+              )}
+            </div>
+          )}
           
           {auditBugs.length > 0 && (
-            <div className="bugs-section" style={{ marginTop: testCaseBugs.length > 0 ? '32px' : '0' }}>
+            <div className="bugs-section" style={{ marginTop: (testCaseBugs.length > 0 || uiBugs.length > 0) ? '32px' : '0' }}>
               <h4 style={{ 
                 color: '#60a5fa', 
                 margin: '0 0 16px 0', 

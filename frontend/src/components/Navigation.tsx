@@ -4,11 +4,13 @@ import { Link, useLocation } from 'react-router-dom';
 interface NavigationProps {
   username?: string;
   onLogout: () => void;
+  onOpenTeamModal?: () => void;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ 
   username, 
-  onLogout 
+  onLogout,
+  onOpenTeamModal
 }) => {
   const location = useLocation();
 
@@ -28,6 +30,25 @@ export const Navigation: React.FC<NavigationProps> = ({
             >
               🖥️ Dashboard
             </Link>
+
+            {onOpenTeamModal && (
+              <button 
+                onClick={onOpenTeamModal}
+                className="nav-link"
+                style={{
+                  background: 'rgba(168, 85, 247, 0.15)',
+                  border: '1px solid rgba(168, 85, 247, 0.3)',
+                  color: '#c084fc',
+                  padding: '6px 14px',
+                  borderRadius: '8px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontSize: '0.85rem'
+                }}
+              >
+                👥 Team Access
+              </button>
+            )}
             
             <div className="nav-divider"></div>
             

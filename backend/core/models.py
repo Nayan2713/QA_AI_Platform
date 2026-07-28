@@ -378,6 +378,25 @@ class QualityMetrics(models.Model):
         app_url = self.application.url if self.application else 'N/A'
         return f"QualityMetrics for {app_url} — grade {self.grade}"
 
+class TeamMember(models.Model):
+    ROLE_CHOICES = (
+        ('admin', 'Admin'),
+        ('member', 'Member'),
+        ('viewer', 'Viewer'),
+    )
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='owned_team_members')
+    member_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='team_memberships', null=True, blank=True)
+    email = models.EmailField()
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='member')
+    status = models.CharField(max_length=20, default='active')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.email} ({self.role}) - Team of {self.owner.username}"
+
 # Import signals to register receivers
 from . import signals
 

@@ -117,6 +117,8 @@ celery -A qa_engine worker -l info -P solo
 # On Mac/Linux:
 celery -A qa_engine worker -l info -P threads --concurrency=2 -Q discovery,execution,quality,celery
 ```
+
+ 
 after clicking on stop the celery is still executing the task
 when i click stop on any action that is perform like discovery ,genearte tst case or bugs such that all the operation will be gonna stop not only some step will stop it will stop the whole process of where i click on stop
 

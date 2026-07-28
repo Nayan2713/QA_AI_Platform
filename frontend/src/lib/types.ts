@@ -139,13 +139,13 @@ export interface Bug {
   description: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
   api_endpoint: number | null;
-  test_case_steps: TestStep[];
-  test_run_results: TestResult[];
-  bug_type?: string;
+  test_case_steps?: TestStep[];
+  test_run_results?: TestResult[];
+  bug_type?: 'ui' | 'functional' | 'security' | 'accessibility' | string;
   steps_to_reproduce?: string[];
   screenshot?: string | null;
   element_selector?: string | null;
-  status?: 'open' | 'confirmed' | 'resolved';
+  status?: 'open' | 'confirmed' | 'resolved' | 'closed' | string;
   created_at: string;
 }
 
@@ -154,7 +154,7 @@ export interface CeleryTask {
   app?: number | null;
   task_id: string;
   task_type: string;
-  status: 'pending' | 'progress' | 'success' | 'failed';
+  status: 'pending' | 'progress' | 'success' | 'failed' | 'running' | string;
   progress: number;
   result: {
     status_text?: string;
@@ -184,5 +184,17 @@ export interface AgentSession {
   tokens_used: number;
   duration_seconds: number | null;
   result_summary: string | null;
+  created_at: string;
+}
+
+export interface TeamMember {
+  id: number;
+  owner: number;
+  owner_username?: string;
+  member_user?: number | null;
+  member_username?: string | null;
+  email: string;
+  role: 'admin' | 'member' | 'viewer' | string;
+  status: 'active' | 'invited' | string;
   created_at: string;
 }
