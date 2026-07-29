@@ -116,6 +116,9 @@ celery -A qa_engine worker -l info -P solo
 
 # On Mac/Linux:
 celery -A qa_engine worker -l info -P threads --concurrency=2 -Q discovery,execution,quality,celery
+
+python -m celery -A qa_engine worker -l info -P threads --concurrency=2 -Q discovery,execution,quality,celery
+
 ```
 
  

@@ -8,8 +8,9 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Avg
 from core.models import (
     TestValidation, CoverageReport, FlakinessReport, BugValidation,
-    QualityMetrics, Application, TestCase, Bug
+    QualityMetrics, Application, TestCase, Bug, CeleryTask
 )
+from core.signals import register_task_user, register_task_app
 from .serializers_quality import (
     TestValidationSerializer, CoverageReportSerializer,
     FlakinessReportSerializer, BugValidationSerializer, QualityMetricsSerializer
@@ -52,10 +53,24 @@ class TestValidationViewSet(viewsets.ReadOnlyModelViewSet):
             test_case = TestCase.objects.get(id=test_case_id, app__user=request.user)
             page = test_case.app.pages.first()
             page_url = page.url if page else ''
-            task = validate_test_relevance.apply_async(args=[test_case_id, page_url], queue='quality')
+            
+            import uuid
+            task_id = str(uuid.uuid4())
+            CeleryTask.objects.create(
+                app=test_case.app,
+                task_id=task_id,
+                task_type='quality_check',
+                status='pending',
+                progress=0,
+                result={"status_text": "Queued test validation..."}
+            )
+            register_task_user(task_id, request.user.id)
+            register_task_app(task_id, test_case.app.id)
+
+            task = validate_test_relevance.apply_async(args=[test_case_id, page_url], task_id=task_id, queue='quality')
             return Response({
                 'test_case_id': test_case_id,
-                'task_id': task.id,
+                'task_id': task_id,
                 'message': 'Test validation queued',
                 'status': 'success'
             }, status=status.HTTP_202_ACCEPTED)
@@ -92,10 +107,24 @@ class CoverageReportViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             app = Application.objects.get(id=app_id, user=request.user)
-            task = analyze_coverage.apply_async(args=[app_id], queue='quality')
+            
+            import uuid
+            task_id = str(uuid.uuid4())
+            CeleryTask.objects.create(
+                app=app,
+                task_id=task_id,
+                task_type='quality_check',
+                status='pending',
+                progress=0,
+                result={"status_text": "Queued coverage analysis..."}
+            )
+            register_task_user(task_id, request.user.id)
+            register_task_app(task_id, app.id)
+
+            task = analyze_coverage.apply_async(args=[app_id], task_id=task_id, queue='quality')
             return Response({
                 'application_id': app_id,
-                'task_id': task.id,
+                'task_id': task_id,
                 'application_name': app.url,
                 'message': 'Coverage analysis queued',
                 'status': 'success'
@@ -151,10 +180,24 @@ class FlakinessReportViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             test_case = TestCase.objects.get(id=test_id, app__user=request.user)
-            task = detect_flakiness.apply_async(args=[test_id, 5], queue='quality')
+            
+            import uuid
+            task_id = str(uuid.uuid4())
+            CeleryTask.objects.create(
+                app=test_case.app,
+                task_id=task_id,
+                task_type='quality_check',
+                status='pending',
+                progress=0,
+                result={"status_text": "Queued flakiness check..."}
+            )
+            register_task_user(task_id, request.user.id)
+            register_task_app(task_id, test_case.app.id)
+
+            task = detect_flakiness.apply_async(args=[test_id, 5], task_id=task_id, queue='quality')
             return Response({
                 'test_case_id': test_id,
-                'task_id': task.id,
+                'task_id': task_id,
                 'message': 'Flakiness check queued',
                 'status': 'success'
             }, status=status.HTTP_202_ACCEPTED)
@@ -218,10 +261,26 @@ class BugValidationViewSet(viewsets.ReadOnlyModelViewSet):
                     Q(application__user=request.user)
                 )
             )
-            task = validate_bug_accuracy.apply_async(args=[bug_id], queue='quality')
+            app = bug.application or (bug.test_run.test_case.app if bug.test_run else None)
+            
+            import uuid
+            task_id = str(uuid.uuid4())
+            if app:
+                CeleryTask.objects.create(
+                    app=app,
+                    task_id=task_id,
+                    task_type='quality_check',
+                    status='pending',
+                    progress=0,
+                    result={"status_text": "Queued bug validation..."}
+                )
+                register_task_user(task_id, request.user.id)
+                register_task_app(task_id, app.id)
+
+            task = validate_bug_accuracy.apply_async(args=[bug_id], task_id=task_id, queue='quality')
             return Response({
                 'bug_id': bug_id,
-                'task_id': task.id,
+                'task_id': task_id,
                 'message': 'Bug validation queued',
                 'status': 'success'
             }, status=status.HTTP_202_ACCEPTED)
@@ -289,10 +348,24 @@ class QualityMetricsViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             app = Application.objects.get(id=app_id, user=request.user)
-            task = calculate_quality_metrics.apply_async(args=[app_id], queue='quality')
+            
+            import uuid
+            task_id = str(uuid.uuid4())
+            CeleryTask.objects.create(
+                app=app,
+                task_id=task_id,
+                task_type='quality_check',
+                status='pending',
+                progress=0,
+                result={"status_text": "Queued quality metrics calculation..."}
+            )
+            register_task_user(task_id, request.user.id)
+            register_task_app(task_id, app.id)
+
+            task = calculate_quality_metrics.apply_async(args=[app_id], task_id=task_id, queue='quality')
             return Response({
                 'application_id': app_id,
-                'task_id': task.id,
+                'task_id': task_id,
                 'message': 'Quality metrics calculation queued',
                 'status': 'success'
             }, status=status.HTTP_202_ACCEPTED)

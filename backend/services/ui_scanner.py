@@ -27,14 +27,21 @@ def save_ui_screenshot(page, selector=None, prefix="ui_bug"):
             ss_bytes = page.screenshot(full_page=False)
 
         if ss_bytes:
-            return base64.b64encode(ss_bytes).decode('utf-8')
+            import time
+            media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
+            os.makedirs(media_path, exist_ok=True)
+            filename = f"{prefix}_{int(time.time() * 1000)}.png"
+            filepath = os.path.join(media_path, filename)
+            with open(filepath, 'wb') as f:
+                f.write(ss_bytes)
+            return f"bugs/{filename}"
         return None
     except Exception as e:
         logger.error(f"Failed to capture UI bug screenshot: {e}")
         return None
 
 
-def run_ui_scan(application: Application, max_pages: int = 5):
+def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = None):
     """
     Runs automated UI defect and visual issue detection on the application pages using Playwright.
     Detects:
@@ -47,6 +54,7 @@ def run_ui_scan(application: Application, max_pages: int = 5):
     logger.info(f"Starting automated UI scan for Application ID {application.id} ({application.url})")
 
     from playwright.sync_api import sync_playwright
+    from tasks.cancellation import check_cancelled
 
     # Delete previous auto-scanned UI bugs for this app to avoid duplication
     Bug.objects.filter(application=application, bug_type='ui', test_run__isnull=True).delete()
@@ -70,6 +78,8 @@ def run_ui_scan(application: Application, max_pages: int = 5):
         )
 
         for target_url in target_urls:
+            if task_id:
+                check_cancelled(task_id)
             logger.info(f"Scanning UI defects on: {target_url}")
             page_bugs_created = 0
             page_errors = []

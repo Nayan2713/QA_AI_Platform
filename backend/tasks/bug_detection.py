@@ -384,6 +384,10 @@ def start_agentic_bug_detection(self, app_id):
         return {"status": "FAILED", "error": str(e)}
 
 
+def run_in_thread(func, *args, **kwargs):
+    return func(*args, **kwargs)
+
+
 @shared_task(bind=True)
 def scan_ui_bugs(self, app_id):
     """
@@ -391,10 +395,10 @@ def scan_ui_bugs(self, app_id):
     """
     from core.models import Application, CeleryTask
     from services.ui_scanner import run_ui_scan
-    from tasks.cancellation import run_in_thread, clear_stop_flag
+    from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
     
     logger.info(f"Starting UI bug scan task for application ID: {app_id}")
-    task_id = self.request.id
+    task_id = self.request.id or "dummy_task_id"
     
     def get_app():
         return Application.objects.get(id=app_id)
@@ -411,11 +415,18 @@ def scan_ui_bugs(self, app_id):
             t.save()
             
     try:
+        check_cancelled(task_id)
         app = run_in_thread(get_app)
-        bugs = run_ui_scan(app)
+        bugs = run_ui_scan(app, task_id=task_id)
+        check_cancelled(task_id)
         run_in_thread(lambda: update_task('success', len(bugs)))
         clear_stop_flag(task_id)
         return {"status": "SUCCESS", "ui_bugs_found": len(bugs)}
+    except TaskCancelled:
+        logger.info(f"UI bug scan task {task_id} cancelled by user.")
+        run_in_thread(lambda: update_task('failed', 0, err='Stopped by user.'))
+        clear_stop_flag(task_id)
+        return {"status": "CANCELLED", "message": "UI bug scan stopped by user."}
     except Exception as e:
         logger.error(f"UI bug scan task failed: {e}")
         run_in_thread(lambda: update_task('failed', 0, err=e))

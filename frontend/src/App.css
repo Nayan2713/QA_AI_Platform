@@ -240,6 +240,27 @@ code, pre {
   box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
 }
 
+/* Global Select & Option Dark Theme Contrast Fix */
+select, select.form-input {
+  background-color: #120e24 !important;
+  color: #f3f4f6 !important;
+  border: 1px solid var(--border-glass);
+}
+
+select option {
+  background-color: #161127 !important;
+  color: #f3f4f6 !important;
+  padding: 10px 14px;
+}
+
+select option:hover,
+select option:focus,
+select option:active,
+select option:checked {
+  background-color: #8b5cf6 !important;
+  color: #ffffff !important;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -122,15 +122,15 @@ export const AppForm: React.FC<AppFormProps> = ({ onAppCreated, onCancel }) => {
             value={industry}
             onChange={(e) => setIndustry(e.target.value)}
             className="form-input"
-            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text)' }}
+            style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-glass)', background: '#120e24', color: '#f3f4f6', cursor: 'pointer' }}
           >
-            <option value="">Auto-Detect (AI)</option>
-            <option value="E-commerce">E-Commerce</option>
-            <option value="FinTech">FinTech / Banking</option>
-            <option value="Healthcare">Healthcare</option>
-            <option value="SaaS">SaaS / B2B</option>
-            <option value="Recruitment">HR / Recruitment</option>
-            <option value="Real Estate">Real Estate</option>
+            <option value="" style={{ background: '#161127', color: '#f3f4f6' }}>Auto-Detect (AI)</option>
+            <option value="E-commerce" style={{ background: '#161127', color: '#f3f4f6' }}>E-Commerce</option>
+            <option value="FinTech" style={{ background: '#161127', color: '#f3f4f6' }}>FinTech / Banking</option>
+            <option value="Healthcare" style={{ background: '#161127', color: '#f3f4f6' }}>Healthcare</option>
+            <option value="SaaS" style={{ background: '#161127', color: '#f3f4f6' }}>SaaS / B2B</option>
+            <option value="Recruitment" style={{ background: '#161127', color: '#f3f4f6' }}>HR / Recruitment</option>
+            <option value="Real Estate" style={{ background: '#161127', color: '#f3f4f6' }}>Real Estate</option>
           </select>
           <span className="input-tip">Guides the AI to prioritize specific workflows (e.g. Shopping Cart for E-Commerce).</span>
         </div>
