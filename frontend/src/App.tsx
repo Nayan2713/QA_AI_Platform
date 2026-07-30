@@ -61,10 +61,18 @@ function App() {
   });
 
   const seenNotifsRef = useRef<Set<number>>(new Set());
+  const isInitialMountRef = useRef<boolean>(true);
 
-  // Polling Toast & Sound Fallback: Triggers toasts & audio alerts even if SSE stream is blocked by production proxy/SSL
+  // Polling Toast & Sound Fallback: Triggers toasts & audio alerts ONLY for new notifications arriving during active session
   useEffect(() => {
     if (!notifications || notifications.length === 0) return;
+
+    if (isInitialMountRef.current) {
+      // Seed pre-existing notifications on initial page mount/refresh so F5 doesn't re-toast past notifications
+      notifications.forEach((n) => seenNotifsRef.current.add(n.id));
+      isInitialMountRef.current = false;
+      return;
+    }
 
     notifications.forEach((n) => {
       if (!n.is_read && !seenNotifsRef.current.has(n.id)) {
