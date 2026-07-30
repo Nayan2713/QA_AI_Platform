@@ -181,7 +181,7 @@ services:
       - static_volume:/app/static:ro
       - media_volume:/app/media:ro
     ports:
-      - "8080:80"
+      - "80:80"
     networks:
       - app_network
     depends_on:
