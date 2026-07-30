@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import api from './lib/api';
 import { User, Bug } from './lib/types';
@@ -59,6 +59,45 @@ function App() {
     enabled: !!token,
     refetchInterval: 10000,
   });
+
+  const seenNotifsRef = useRef<Set<number>>(new Set());
+
+  // Polling Toast & Sound Fallback: Triggers toasts & audio alerts even if SSE stream is blocked by production proxy/SSL
+  useEffect(() => {
+    if (!notifications || notifications.length === 0) return;
+
+    notifications.forEach((n) => {
+      if (!n.is_read && !seenNotifsRef.current.has(n.id)) {
+        seenNotifsRef.current.add(n.id);
+
+        const newToast: ToastItem = {
+          id: `toast-${n.id}`,
+          title: n.title,
+          message: n.message,
+          level: n.level || 'info',
+        };
+
+        setToasts(prev => {
+          if (prev.some(t => t.id === newToast.id)) return prev;
+          return [newToast, ...prev.slice(0, 4)];
+        });
+
+        playNotificationSound(n.level || 'info');
+
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification(n.title, { body: n.message });
+          } catch (err) {
+            console.warn('Desktop notification dispatch failed:', err);
+          }
+        }
+
+        setTimeout(() => {
+          handleDismissToast(newToast.id);
+        }, 5000);
+      }
+    });
+  }, [notifications]);
 
   // Global SSE listener for real-time task completion notifications.
   // Reconnects with a fresh token whenever the stored access token changes

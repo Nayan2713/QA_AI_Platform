@@ -1,20 +1,21 @@
 import json
 import logging
-import time
-import redis
+import asyncio
+import warnings
+import redis.asyncio as aioredis
 from django.http import StreamingHttpResponse
 from django.views import View
-from django.conf import settings
 from rest_framework_simplejwt.tokens import AccessToken
-from django.contrib.auth.models import User
+
+warnings.filterwarnings('ignore', message='.*StreamingHttpResponse.*')
 
 logger = logging.getLogger(__name__)
 
 class RealTimeEventView(View):
-    def _error_generator(self, message):
+    async def _error_generator(self, message):
         yield f"data: {json.dumps({'type': 'auth_error', 'message': message})}\n\n"
 
-    def get(self, request, *args, **kwargs):
+    async def get(self, request, *args, **kwargs):
         token_str = request.GET.get('token')
         if not token_str:
             return StreamingHttpResponse(
@@ -22,7 +23,7 @@ class RealTimeEventView(View):
                 status=200,
                 content_type='text/event-stream'
             )
-            
+
         try:
             # Cryptographically validate Simple-JWT token
             access_token = AccessToken(token_str)
@@ -35,53 +36,55 @@ class RealTimeEventView(View):
                 content_type='text/event-stream'
             )
 
-        def event_generator():
-            from qa_engine.redis_client import get_redis_client
-            r = get_redis_client()
+        async def event_generator():
+            from qa_engine.redis_client import get_async_redis_client
+            r = get_async_redis_client()
             pubsub = r.pubsub()
-            pubsub.subscribe('qa_platform_events')
-            
+            await pubsub.subscribe('qa_platform_events')
+
             # Send initial connection status
             yield f"data: {json.dumps({'type': 'connected', 'user_id': user_id})}\n\n"
-            
-            last_heartbeat = time.time()
+
+            loop = asyncio.get_event_loop()
+            last_heartbeat = loop.time()
             try:
                 while True:
                     try:
                         # Non-blocking check for new messages with 1s timeout
-                        message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                         if message:
-                            payload_str = message['data'].decode('utf-8')
+                            raw = message['data']
+                            payload_str = raw.decode('utf-8') if isinstance(raw, bytes) else raw
                             payload = json.loads(payload_str)
-                            
+
                             # Deliver event only if it belongs to this user
                             event_user_id = payload.get('user_id')
                             if event_user_id is None or int(event_user_id) == user_id:
                                 yield f"data: {payload_str}\n\n"
-                        
+
                         # Send periodic keep-alive heartbeat every 5 seconds to prevent connection drops and detect disconnects
-                        now = time.time()
+                        now = loop.time()
                         if now - last_heartbeat > 5:
                             yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
                             last_heartbeat = now
-                            
-                    except (redis.ConnectionError, redis.TimeoutError) as conn_err:
+
+                    except (aioredis.ConnectionError, aioredis.TimeoutError) as conn_err:
                         logger.warning(f"SSE Redis connection issue: {conn_err}. Reconnecting...")
-                        time.sleep(1)
+                        await asyncio.sleep(1)
                         pubsub = r.pubsub()
-                        pubsub.subscribe('qa_platform_events')
+                        await pubsub.subscribe('qa_platform_events')
                     except (BrokenPipeError, ConnectionResetError) as write_err:
                         logger.info(f"SSE client disconnected: {write_err}")
                         break
                     except Exception as loop_err:
                         logger.error(f"Error in SSE loop: {loop_err}")
-                        time.sleep(1)
+                        await asyncio.sleep(1)
             except GeneratorExit:
                 logger.info(f"SSE stream generator exit for user {user_id}")
             finally:
                 try:
-                    pubsub.unsubscribe('qa_platform_events')
-                    pubsub.close()
+                    await pubsub.unsubscribe('qa_platform_events')
+                    await pubsub.close()
                 except Exception:
                     pass
 

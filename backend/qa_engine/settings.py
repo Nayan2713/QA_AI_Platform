@@ -1,7 +1,10 @@
 import os
+import warnings
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
+
+warnings.filterwarnings('ignore', message='.*StreamingHttpResponse.*')
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=BASE_DIR / '.env')
