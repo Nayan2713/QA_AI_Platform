@@ -304,67 +304,59 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     };
   }, [appId, refreshTrigger]);
 
-  // Real-time SSE Event listener with Toast Feedback
+  // Real-time instant event listener via global broadcast
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (!token) return;
+    const handleSseEvent = (e: any) => {
+      const payload = e.detail;
+      if (!payload) return;
+      const { type, data } = payload;
 
-    const apiBase = (import.meta as any).env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin + '/api/' : 'http://127.0.0.1:8000/api/');
-    let sseBase = apiBase.replace('/api/', '/api/events/');
-    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-      sseBase = 'http://127.0.0.1:8000/api/events/';
-    }
-    const sseUrl = `${sseBase}?token=${encodeURIComponent(token)}`;
-    const eventSource = new EventSource(sseUrl);
+      if (data && data.app_id && parseInt(data.app_id) !== appId) {
+        return;
+      }
 
-    let errCount = 0;
-    eventSource.onerror = () => {
-      errCount++;
-      if (errCount > 5) {
-        console.warn('SSE connection retry limit reached on AppDetail. Closing EventSource.');
-        eventSource.close();
+      switch (type) {
+        case 'bug_created':
+          addToast('error', '🐞 Defect Identified', data?.title || 'A new bug was captured during execution.');
+          refetchAll();
+          break;
+        case 'application_updated':
+          if (data?.status === 'DISCOVERED' || data?.status === 'FAILED') {
+            setDiscovering(false);
+            addToast(data.status === 'DISCOVERED' ? 'success' : 'error', 'Discovery Complete', `App status is now ${data.status}`);
+          }
+          refetchAll();
+          break;
+        case 'page_created':
+        case 'apiendpoint_created':
+        case 'bug_updated':
+        case 'testrun_updated':
+        case 'celerytask_updated':
+        case 'notification_created':
+          refetchAll();
+          break;
+        default:
+          refetchAll();
+          break;
       }
     };
 
-    eventSource.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        const { type, data } = payload;
-
-        if (data && data.app_id && data.app_id !== appId) {
-          return;
-        }
-
-        switch (type) {
-          case 'bug_created':
-            addToast('error', '🐞 Defect Identified', data.title || 'A new bug was captured during test execution.');
-            refetchAllDebounced();
-            break;
-          case 'application_updated':
-            if (data.status === 'DISCOVERED' || data.status === 'FAILED') {
-              setDiscovering(false);
-              addToast(data.status === 'DISCOVERED' ? 'success' : 'error', 'Discovery Complete', `App status is now ${data.status}`);
-              refetchAllDebounced();
-            }
-            break;
-          case 'page_created':
-          case 'apiendpoint_created':
-          case 'bug_updated':
-          case 'testrun_updated':
-            refetchAllDebounced();
-            break;
-          default:
-            break;
-        }
-      } catch (err) {
-        console.error('Failed to parse SSE event message:', err);
-      }
-    };
-
+    window.addEventListener('qa_platform:sse_event', handleSseEvent);
     return () => {
-      eventSource.close();
+      window.removeEventListener('qa_platform:sse_event', handleSseEvent);
     };
-  }, [appId, refetchAllDebounced]);
+  }, [appId, refetchAll]);
+
+  // Active Scan Live Polling: Updates counts (Pages, APIs, Bugs) every 2s while scanning/discovering
+  useEffect(() => {
+    if (!discovering && app?.status !== 'DISCOVERING' && !activeTaskId) return;
+
+    const interval = setInterval(() => {
+      refetchAll();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [discovering, app?.status, activeTaskId, refetchAll]);
 
   // Auto-restore active task on page load / refresh
   useEffect(() => {

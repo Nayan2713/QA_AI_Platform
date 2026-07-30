@@ -18,67 +18,36 @@ export const Dashboard: React.FC = () => {
       const response = await api.get('applications/');
       const rawData = response.data as any;
       return Array.isArray(rawData) ? rawData : (rawData?.results || []);
-    }
+    },
+    refetchInterval: 3000, // Live status polling every 3s for instant blinking indicator & count updates
   });
 
-  const refetchTimeoutRef = React.useRef<any>(null);
-  const refetchDebounced = React.useCallback(() => {
-    if (refetchTimeoutRef.current) {
-      clearTimeout(refetchTimeoutRef.current);
-    }
-    refetchTimeoutRef.current = setTimeout(() => {
-      refetch();
-    }, 1500);
-  }, [refetch]);
-
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (!token) return;
-
-    const apiBase = (import.meta as any).env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin + '/api/' : 'http://127.0.0.1:8000/api/');
-    let sseBase = apiBase.replace('/api/', '/api/events/');
-    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-      sseBase = 'http://127.0.0.1:8000/api/events/';
-    }
-    const sseUrl = `${sseBase}?token=${encodeURIComponent(token)}`;
-
-    const eventSource = new EventSource(sseUrl);
-
-    let errCount = 0;
-    eventSource.onerror = () => {
-      errCount++;
-      if (errCount > 5) {
-        console.warn('SSE connection retry limit reached on Dashboard. Closing EventSource.');
-        eventSource.close();
+    const handleSseEvent = (e: any) => {
+      const payload = e.detail;
+      if (!payload) return;
+      const { type } = payload;
+      if (
+        type.startsWith('application_') ||
+        type.startsWith('bug_') ||
+        type.startsWith('celerytask_') ||
+        type.startsWith('page_') ||
+        type === 'notification_created'
+      ) {
+        refetch();
+        queryClient.invalidateQueries({ queryKey: ['applications'] });
       }
     };
 
-    eventSource.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        const { type } = payload;
-        
-        if (
-          type.startsWith('application_') ||
-          type.startsWith('bug_')
-        ) {
-          refetchDebounced();
-        }
-      } catch (err) {
-        console.error('Failed to parse SSE event on dashboard:', err);
-      }
-    };
-
+    window.addEventListener('qa_platform:sse_event', handleSseEvent);
     return () => {
-      eventSource.close();
-      if (refetchTimeoutRef.current) {
-        clearTimeout(refetchTimeoutRef.current);
-      }
+      window.removeEventListener('qa_platform:sse_event', handleSseEvent);
     };
-  }, [refetchDebounced]);
+  }, [refetch, queryClient]);
 
   const handleAppCreated = (newApp: Application) => {
     queryClient.invalidateQueries({ queryKey: ['applications'] });
+    refetch();
     setShowAddForm(false);
     navigate(`/scans/${newApp.id}`); // Auto-navigate to scans detail page
   };

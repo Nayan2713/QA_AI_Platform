@@ -150,6 +150,12 @@ function App() {
             return;
           }
 
+          // Global instant cache invalidation and window event broadcast
+          queryClient.invalidateQueries();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('qa_platform:sse_event', { detail: data }));
+          }
+
           if (data.type === 'notification_created' && data.data) {
             const n = data.data;
             const newToast: ToastItem = {
@@ -176,7 +182,7 @@ function App() {
             setTimeout(() => {
               handleDismissToast(newToast.id);
             }, 5000);
-          } else if (data.type && (data.type.includes('celerytask') || data.type.includes('application') || data.type.includes('testrun'))) {
+          } else {
             refetchNotifications();
           }
         } catch (e) {
