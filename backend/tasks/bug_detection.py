@@ -99,7 +99,7 @@ def classify_severity(error_message):
     # return 'medium'
 
 
-@shared_task(name="tasks.bug_detection.detect_bugs")
+@shared_task(name="tasks.bug_detection.detect_bugs", queue="celery")
 def detect_bugs(test_run_id):
     """
     Celery task that analyzes test results for a TestRun,
@@ -258,7 +258,7 @@ def detect_bugs(test_run_id):
     }
 
 
-@shared_task(bind=True, name="tasks.bug_detection.start_agentic_bug_detection")
+@shared_task(bind=True, name="tasks.bug_detection.start_agentic_bug_detection", queue="celery")
 def start_agentic_bug_detection(self, app_id):
     """
     Celery task that triggers autonomous browser-use agent execution

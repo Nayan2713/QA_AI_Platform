@@ -46,6 +46,11 @@ const getTestCategory = (tc: TestCase): 'Access Control' | 'Industry Flow' | 'Ge
 interface TestCaseListProps {
   appId: number;
   testCases: TestCase[];
+  totalCount?: number;
+  page?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
+  onPageSizeChange?: (pageSize: number) => void;
   onTestExecuted: (testRunId: number, taskId?: string) => void;
   onRefreshTests: () => void;
   onTaskTriggered?: (taskId: string) => void;
@@ -55,6 +60,11 @@ interface TestCaseListProps {
 export const TestCaseList: React.FC<TestCaseListProps> = ({
   appId,
   testCases,
+  totalCount,
+  page = 1,
+  pageSize = 100,
+  onPageChange,
+  onPageSizeChange,
   onTestExecuted,
   onRefreshTests,
   onTaskTriggered,
@@ -359,6 +369,134 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     }
   };
 
+  const effectiveTotal = totalCount || testCases.length;
+  const totalPages = Math.ceil(effectiveTotal / pageSize) || 1;
+  const startIdx = effectiveTotal > 0 ? (page - 1) * pageSize + 1 : 0;
+  const endIdx = Math.min(page * pageSize, effectiveTotal);
+
+  const renderPaginationControls = () => (
+    <div style={{
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: '12px',
+      padding: '12px 18px',
+      margin: '16px 0',
+      borderRadius: '10px',
+      background: 'rgba(11, 8, 22, 0.65)',
+      border: '1px solid rgba(139, 92, 246, 0.2)',
+      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)'
+    }}>
+      <div style={{ fontSize: '0.85rem', color: '#d1d5db', fontWeight: 500 }}>
+        Showing <strong style={{ color: '#a78bfa' }}>{startIdx}</strong>–<strong style={{ color: '#a78bfa' }}>{endIdx}</strong> of <strong style={{ color: '#38bdf8' }}>{effectiveTotal}</strong> scenarios
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          <span>Per page:</span>
+          <select
+            value={pageSize}
+            onChange={(e) => onPageSizeChange?.(Number(e.target.value))}
+            style={{
+              backgroundColor: 'rgba(26, 19, 48, 0.9)',
+              color: '#fff',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              borderRadius: '6px',
+              padding: '4px 8px',
+              fontSize: '0.82rem',
+              cursor: 'pointer',
+              fontWeight: 600
+            }}
+          >
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={250}>250</option>
+            <option value={500}>500</option>
+            <option value={1000}>All (1000)</option>
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button
+            onClick={() => onPageChange?.(1)}
+            disabled={page <= 1}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              background: page <= 1 ? 'rgba(255,255,255,0.04)' : 'rgba(139, 92, 246, 0.2)',
+              color: page <= 1 ? 'rgba(255,255,255,0.3)' : '#c4b5fd',
+              cursor: page <= 1 ? 'not-allowed' : 'pointer',
+              fontSize: '0.8rem',
+              fontWeight: 600
+            }}
+            title="First Page"
+          >
+            ⏮️ First
+          </button>
+          <button
+            onClick={() => onPageChange?.(page - 1)}
+            disabled={page <= 1}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              background: page <= 1 ? 'rgba(255,255,255,0.04)' : 'rgba(139, 92, 246, 0.2)',
+              color: page <= 1 ? 'rgba(255,255,255,0.3)' : '#c4b5fd',
+              cursor: page <= 1 ? 'not-allowed' : 'pointer',
+              fontSize: '0.8rem',
+              fontWeight: 600
+            }}
+            title="Previous Page"
+          >
+            ◀️ Prev
+          </button>
+
+          <span style={{ fontSize: '0.83rem', fontWeight: 600, color: '#fff', padding: '0 8px' }}>
+            Page {page} of {totalPages}
+          </span>
+
+          <button
+            onClick={() => onPageChange?.(page + 1)}
+            disabled={page >= totalPages}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              background: page >= totalPages ? 'rgba(255,255,255,0.04)' : 'rgba(139, 92, 246, 0.2)',
+              color: page >= totalPages ? 'rgba(255,255,255,0.3)' : '#c4b5fd',
+              cursor: page >= totalPages ? 'not-allowed' : 'pointer',
+              fontSize: '0.8rem',
+              fontWeight: 600
+            }}
+            title="Next Page"
+          >
+            Next ▶️
+          </button>
+          <button
+            onClick={() => onPageChange?.(totalPages)}
+            disabled={page >= totalPages}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              background: page >= totalPages ? 'rgba(255,255,255,0.04)' : 'rgba(139, 92, 246, 0.2)',
+              color: page >= totalPages ? 'rgba(255,255,255,0.3)' : '#c4b5fd',
+              cursor: page >= totalPages ? 'not-allowed' : 'pointer',
+              fontSize: '0.8rem',
+              fontWeight: 600
+            }}
+            title="Last Page"
+          >
+            Last ⏭️
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="glass-card test-cases-card animate-slide-up" style={{ padding: '24px' }}>
       {/* Tier 1 Header: Title & AI Actions */}
@@ -375,7 +513,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
               color: '#c084fc',
               border: '1px solid rgba(139, 92, 246, 0.3)'
             }}>
-              {testCases.length} Scenarios
+              {effectiveTotal} Scenarios
             </span>
           </div>
           <p className="card-subtitle" style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px' }}>
@@ -743,6 +881,8 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       )}
 
       {/* Test Cases Cards List */}
+      {renderPaginationControls()}
+
       {testCases.length === 0 ? (
         <div className="empty-state-card">
           <svg className="empty-state-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#8b5cf6' }}>
@@ -1016,6 +1156,8 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
           })()}
         </div>
       )}
+
+      {testCases.length > 0 && renderPaginationControls()}
 
       {showModal && (
         <TestCaseFormModal

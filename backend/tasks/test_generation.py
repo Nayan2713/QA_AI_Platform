@@ -17,7 +17,7 @@ def run_in_thread(func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
-@shared_task(bind=True, name="tasks.test_generation.generate_tests")
+@shared_task(bind=True, name="tasks.test_generation.generate_tests", queue="celery")
 def generate_tests(self, app_id, model_choice=None):
     """
     Celery task that retrieves discovered pages/forms, sends them to the LLM

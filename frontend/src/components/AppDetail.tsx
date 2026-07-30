@@ -44,6 +44,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [testCases, setTestCases] = useState<TestCase[]>([]);
   const [isTestCasesLoading, setIsTestCasesLoading] = useState(true);
   const [testCasesError, setTestCasesError] = useState<any>(null);
+  const [testCasesPage, setTestCasesPage] = useState<number>(1);
+  const [testCasesPageSize, setTestCasesPageSize] = useState<number>(100);
+  const [totalTestCasesCount, setTotalTestCasesCount] = useState<number>(0);
 
   const [bugs, setBugs] = useState<Bug[]>([]);
   const [isBugsLoading, setIsBugsLoading] = useState(true);
@@ -164,11 +167,13 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
     const fetchTestCases = async (retryCount = 0) => {
       try {
-        const res = await api.get(`test-cases/?app=${appId}&page_size=100`, { signal, timeout: 15000 });
+        const res = await api.get(`test-cases/?app=${appId}&page=${testCasesPage}&page_size=${testCasesPageSize}`, { signal, timeout: 15000 });
         const rawData = res.data;
-        const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
+        const data = Array.isArray(rawData) ? rawData : (rawData?.results || []);
+        const totalCount = (rawData && typeof rawData === 'object' && rawData.count !== undefined) ? rawData.count : data.length;
         if (active) {
           setTestCases(data);
+          setTotalTestCasesCount(totalCount);
           setTestCasesError(null);
         }
       } catch (err: any) {
@@ -195,7 +200,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       active = false;
       controller.abort();
     };
-  }, [appId, refreshTrigger]);
+  }, [appId, refreshTrigger, testCasesPage, testCasesPageSize]);
 
   // 3. Fetch Bugs
   useEffect(() => {
@@ -1118,6 +1123,14 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                 <TestCaseList 
                   appId={app.id}
                   testCases={testCases}
+                  totalCount={totalTestCasesCount || app?.test_case_count || testCases.length}
+                  page={testCasesPage}
+                  pageSize={testCasesPageSize}
+                  onPageChange={(newPage) => setTestCasesPage(newPage)}
+                  onPageSizeChange={(newSize) => {
+                    setTestCasesPageSize(newSize);
+                    setTestCasesPage(1);
+                  }}
                   onRefreshTests={refetchAll}
                   onTestExecuted={(runId, taskId) => {
                     if (taskId) {

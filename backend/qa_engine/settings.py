@@ -20,7 +20,7 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 # FIX: restrict to real hostnames in production via env var
 #_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
-_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,workvoro.com,www.workvoro.com,52.144.45.25')
 ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
 
 
@@ -187,14 +187,14 @@ STORAGES = {
 # FIX: read allowed origins from env so docker-compose and local both work
 _cors_origins = os.getenv(
     'CORS_ALLOWED_ORIGINS',
-    'http://localhost:3000,http://127.0.0.1:3000'
+    'http://localhost:3000,http://127.0.0.1:3000,http://52.144.45.25:8080,https://workvoro.com,https://www.workvoro.com'
 )
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
 _csrf_origins = os.getenv(
     'CSRF_TRUSTED_ORIGINS',
-    'http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1'
+    'http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1,http://52.144.45.25:8080,https://workvoro.com,https://www.workvoro.com'
 )
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_origins.split(',') if o.strip()]
 
@@ -320,7 +320,3 @@ MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')
 
 SHODAN_API_KEY = os.getenv('SHODAN_API_KEY', None)
 VIRUSTOTAL_API_KEY = os.getenv('VIRUSTOTAL_API_KEY', None)
-
-
-
-

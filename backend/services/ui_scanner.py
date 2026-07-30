@@ -504,6 +504,96 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
                     logger.warning(f"Dead-click check failed for \"{text}\" on {target_url}: {click_err}")
                     continue
 
+            # -------------------------------------------------------------
+            # Check 6: Automated Input Character Fuzzing & Boundary Check
+            # -------------------------------------------------------------
+            try:
+                import re
+                input_candidates = page.evaluate("""
+                    () => {
+                        return Array.from(document.querySelectorAll('input')).map((el, idx) => {
+                            const rect = el.getBoundingClientRect();
+                            const isVisible = rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
+                            return {
+                                idx,
+                                type: (el.type || 'text').toLowerCase(),
+                                name: el.name || '',
+                                id: el.id || '',
+                                placeholder: el.placeholder || '',
+                                isVisible,
+                                isDisabled: el.disabled || el.readOnly,
+                                selector: el.id ? `#${el.id}` : (el.name ? `input[name="${el.name}"]` : `input:nth-of-type(${idx + 1})`)
+                            };
+                        }).filter(i => i.isVisible && !i.isDisabled && !['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'image', 'reset'].includes(i.type));
+                    }
+                """)
+
+                for inp in input_candidates[:6]:  # Limit to 6 inputs per page
+                    sel = inp['selector']
+                    attr_text = f"{inp['type']} {inp['name']} {inp['id']} {inp['placeholder']}".lower()
+                    
+                    is_phone_field = inp['type'] == 'tel' or any(k in attr_text for k in ['phone', 'mobile', 'cell', 'contact', 'whatsapp', 'phone_number'])
+                    is_email_field = inp['type'] == 'email' or any(k in attr_text for k in ['email', 'mail'])
+
+                    if not (is_phone_field or is_email_field):
+                        continue
+
+                    try:
+                        loc = page.locator(sel).first
+                        if not loc.is_visible():
+                            continue
+
+                        if is_phone_field:
+                            key = ('input_fuzz_phone', target_url, sel)
+                            if key not in seen_bug_keys:
+                                test_payload = "ABC#$@9876543210"
+                                loc.fill('')
+                                loc.type(test_payload, delay=50)
+                                loc.evaluate("el => el.dispatchEvent(new Event('blur'))")
+                                page.wait_for_timeout(300)
+
+                                val_after = loc.input_value()
+                                has_invalid_chars = bool(re.search(r'[A-Za-z#$@]', val_after))
+                                is_html5_valid = loc.evaluate("el => el.validity ? el.validity.valid : true")
+
+                                if has_invalid_chars and is_html5_valid:
+                                    seen_bug_keys.add(key)
+                                    ss_path = save_ui_screenshot(page, selector=sel, prefix="ui_input_fuzz")
+                                    field_label = inp['name'] or inp['id'] or inp['placeholder'] or sel
+                                    bug = Bug.objects.create(
+                                        application=application,
+                                        bug_type='ui',
+                                        severity=BugSeverity.HIGH,
+                                        title=f"[Input Validation Defect] Mobile/Phone field accepts invalid characters: \"{field_label}\"",
+                                        description=(
+                                            f"The mobile/phone number input field '{field_label}' on page {target_url} accepts non-numeric characters.\n\n"
+                                            f"Selector: {sel}\n"
+                                            f"Tested Payload: '{test_payload}'\n"
+                                            f"Value Accepted in Input: '{val_after}'\n\n"
+                                            f"Mobile number input fields should enforce strict numeric validation and reject or strip non-numeric symbols."
+                                        ),
+                                        element_selector=sel,
+                                        screenshot=ss_path,
+                                        status='open',
+                                        steps_to_reproduce=[
+                                            f"Navigate to {target_url}",
+                                            f"Locate input field '{field_label}' ({sel})",
+                                            f"Type invalid non-numeric string '{test_payload}'",
+                                            f"Observe that non-numeric characters '{val_after}' were accepted without validation error."
+                                        ]
+                                    )
+                                    bugs_created.append(bug)
+                                    page_bugs_created += 1
+
+                                # Clean up field
+                                loc.fill('')
+
+                    except Exception as fuzz_err:
+                        logger.warning(f"Input fuzzing check failed for {sel} on {target_url}: {fuzz_err}")
+
+            except Exception as fuzz_outer_err:
+                logger.warning(f"Failed scanning input fuzzing candidates on {target_url}: {fuzz_outer_err}")
+
             context.close()
 
     except Exception as scan_err:

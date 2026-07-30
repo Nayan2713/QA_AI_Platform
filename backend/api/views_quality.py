@@ -394,7 +394,9 @@ class QualityDashboardView(viewsets.ViewSet):
             )
         
         try:
-            app = Application.objects.get(id=app_id, user=request.user)
+            from core.views import get_user_and_team_user_ids
+            user_ids = get_user_and_team_user_ids(request.user)
+            app = Application.objects.get(id=app_id, user_id__in=user_ids)
             
             # Get all quality data
             quality_metrics = QualityMetrics.objects.filter(application=app).first()
@@ -502,7 +504,9 @@ class QualityDashboardView(viewsets.ViewSet):
             )
         
         try:
-            app = Application.objects.get(id=app_id, user=request.user)
+            from core.views import get_user_and_team_user_ids
+            user_ids = get_user_and_team_user_ids(request.user)
+            app = Application.objects.get(id=app_id, user_id__in=user_ids)
             
             import uuid
             task_id = str(uuid.uuid4())

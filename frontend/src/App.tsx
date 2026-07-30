@@ -22,10 +22,10 @@ const TestResultsRoute = () => {
   const navigate = useNavigate();
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
-      <TestResults 
+      <TestResults
         testRunId={parseInt(id || '0')}
         onClose={() => navigate(-1)}
-        onBugDetected={() => {}}
+        onBugDetected={() => { }}
       />
     </div>
   );
@@ -36,7 +36,7 @@ function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('access_token'));
   const [username, setUsername] = useState<string>(localStorage.getItem('username') || '');
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  
+
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -60,61 +60,119 @@ function App() {
     refetchInterval: 10000,
   });
 
-  // Global SSE listener for real-time task completion notifications
+  // Global SSE listener for real-time task completion notifications.
+  // Reconnects with a fresh token whenever the stored access token changes
+  // (silent refresh) or the connection drops (network blip, server restart,
+  // laptop sleep) — the previous version opened the connection once and
+  // never recovered from either case, so toasts/sound would silently stop
+  // firing while the notification bell kept working via polling.
   useEffect(() => {
     initAudioUnlock();
 
     if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
+      Notification.requestPermission().catch(() => { });
     }
 
     if (!token) return;
 
     const apiBase = (import.meta as any).env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin + '/api/' : 'http://127.0.0.1:8000/api/');
     const baseUrl = apiBase.endsWith('/') ? apiBase : apiBase + '/';
-    const sseUrl = `${baseUrl}events/?token=${encodeURIComponent(token)}`;
-    const eventSource = new EventSource(sseUrl);
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('[SSE Event Received]', data);
-        if (data.type === 'notification_created' && data.data) {
-          const n = data.data;
-          const newToast: ToastItem = {
-            id: `toast-${n.id || Date.now()}`,
-            title: n.title,
-            message: n.message,
-            level: n.level || 'info',
-          };
-          setToasts(prev => [newToast, ...prev.slice(0, 4)]);
-          playNotificationSound(n.level || 'info');
-          refetchNotifications();
+    let eventSource: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
 
-          // Native Browser Desktop OS Notification
-          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-            try {
-              new Notification(n.title, {
-                body: n.message,
-              });
-            } catch (err) {
-              console.warn('Desktop notification dispatch failed:', err);
-            }
-          }
-
-          setTimeout(() => {
-            handleDismissToast(newToast.id);
-          }, 5000);
-        } else if (data.type && (data.type.includes('celerytask') || data.type.includes('application') || data.type.includes('testrun'))) {
-          refetchNotifications();
-        }
-      } catch (e) {
-        // ignore heartbeats/parse errors
-      }
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, 3000);
     };
 
+    const connect = () => {
+      if (stopped) return;
+
+      const currentToken = localStorage.getItem('access_token');
+      if (!currentToken) return;
+
+      const sseUrl = `${baseUrl}events/?token=${encodeURIComponent(currentToken)}`;
+      eventSource = new EventSource(sseUrl);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('[SSE Event Received]', data);
+
+          if (data.type === 'auth_error') {
+            console.warn('[SSE] Token rejected, reconnecting with a fresh one:', data.message);
+            eventSource?.close();
+            scheduleReconnect();
+            return;
+          }
+
+          if (data.type === 'notification_created' && data.data) {
+            const n = data.data;
+            const newToast: ToastItem = {
+              id: `toast-${n.id || Date.now()}`,
+              title: n.title,
+              message: n.message,
+              level: n.level || 'info',
+            };
+            setToasts(prev => [newToast, ...prev.slice(0, 4)]);
+            playNotificationSound(n.level || 'info');
+            refetchNotifications();
+
+            // Native Browser Desktop OS Notification
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification(n.title, {
+                  body: n.message,
+                });
+              } catch (err) {
+                console.warn('Desktop notification dispatch failed:', err);
+              }
+            }
+
+            setTimeout(() => {
+              handleDismissToast(newToast.id);
+            }, 5000);
+          } else if (data.type && (data.type.includes('celerytask') || data.type.includes('application') || data.type.includes('testrun'))) {
+            refetchNotifications();
+          }
+        } catch (e) {
+          // ignore heartbeats/parse errors
+        }
+      };
+
+      eventSource.onerror = () => {
+        console.warn('[SSE] Connection dropped, reconnecting...');
+        eventSource?.close();
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+
+    // Fired by lib/api.ts right after a silent token refresh, so we swap
+    // to the new token immediately instead of waiting for the old one to
+    // eventually get rejected.
+    const handleTokenRefreshed = () => {
+      console.log('[SSE] Access token refreshed, reconnecting.');
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      eventSource?.close();
+      connect();
+    };
+    window.addEventListener('auth:token_refreshed', handleTokenRefreshed);
+
     return () => {
-      eventSource.close();
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      eventSource?.close();
+      window.removeEventListener('auth:token_refreshed', handleTokenRefreshed);
     };
   }, [token, refetchNotifications]);
 
@@ -233,11 +291,11 @@ function App() {
         localStorage.setItem('username', response.data.user.username);
         setToken(response.data.access);
         setUsername(response.data.user.username);
-        
+
         // Reset login form fields
         setAuthEmail('');
         setAuthPassword('');
-        
+
         // Perform clean navigation to dashboard
         window.location.href = '/dashboard';
       } else {
@@ -247,11 +305,11 @@ function App() {
           email: authEmail,
           password: authPassword
         });
-        
+
         // Success notification & switch to Login form
         setAuthSuccess('Successfully registered! Please log in.');
         setIsLogin(true);
-        
+
         // Keep the email filled in for ease of login, clear username and password
         setAuthUsername('');
         setAuthPassword('');
@@ -360,20 +418,20 @@ function App() {
   return (
     <div className="app-layout">
       <ToastManager toasts={toasts} onDismiss={handleDismissToast} />
-      <Navigation 
-        username={username} 
-        onLogout={handleLogout} 
+      <Navigation
+        username={username}
+        onLogout={handleLogout}
         onOpenTeamModal={() => setIsTeamModalOpen(true)}
         notifications={notifications}
         onRefreshNotifications={refetchNotifications}
       />
-      
+
       <TeamModal
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
         currentUser={username}
       />
-      
+
       <main className="main-content">
         <React.Suspense fallback={
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '200px', gap: '16px' }}>
@@ -383,32 +441,32 @@ function App() {
         }>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
-             <Route 
-               path="/scans/:id/:tab?/:runId?" 
-               element={
-                 <AppDetail 
-                   activeTaskId={activeTaskId}
-                   setActiveTaskId={setActiveTaskId}
-                 />
-               } 
-             />
-            <Route path="/results/:id" element={<TestResultsRoute />} />
-            <Route 
-              path="/bugs" 
+            <Route
+              path="/scans/:id/:tab?/:runId?"
               element={
-                <BugList 
-                  bugs={bugs} 
-                  onRefreshBugs={fetchGlobalBugs} 
+                <AppDetail
+                  activeTaskId={activeTaskId}
+                  setActiveTaskId={setActiveTaskId}
+                />
+              }
+            />
+            <Route path="/results/:id" element={<TestResultsRoute />} />
+            <Route
+              path="/bugs"
+              element={
+                <BugList
+                  bugs={bugs}
+                  onRefreshBugs={fetchGlobalBugs}
                   onRunTestCase={handleRunTestCaseFromGlobal}
                   activeTaskId={activeTaskId}
                 />
-              } 
+              }
             />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </React.Suspense>
       </main>
-      
+
       <footer className="app-footer">
         <p>© 2026 QA Engineer MVP. Built with Django, Playwright, Ollama, and React.</p>
       </footer>
@@ -441,7 +499,7 @@ function App() {
               {permissionError}
             </span>
           </div>
-          <button 
+          <button
             onClick={() => setPermissionError(null)}
             style={{
               background: 'rgba(255,255,255,0.2)',

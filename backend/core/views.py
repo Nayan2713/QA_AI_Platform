@@ -1243,10 +1243,21 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
         if not email:
             raise serializers.ValidationError({"email": "Email address is required."})
 
-        if TeamMember.objects.filter(owner=self.request.user, email__iexact=email).exists():
-            raise serializers.ValidationError({"email": "This user is already a member of your team."})
+        # 1. Prevent owner from adding themselves
+        if self.request.user.email and email == self.request.user.email.lower():
+            raise serializers.ValidationError({"email": "You cannot add yourself as a team member (you are the primary team owner)."})
 
+        # 2. Check if a team member with this email already exists for this owner
+        if TeamMember.objects.filter(owner=self.request.user, email__iexact=email).exists():
+            raise serializers.ValidationError({"email": "This email is already registered as a member of your team."})
+
+        # 3. Check if member_user exists and is already in this team or is owner
         member_user = User.objects.filter(email__iexact=email).first()
+        if member_user:
+            if member_user.id == self.request.user.id:
+                raise serializers.ValidationError({"email": "You cannot add yourself as a team member."})
+            if TeamMember.objects.filter(owner=self.request.user, member_user=member_user).exists():
+                raise serializers.ValidationError({"email": "This user is already a member of your team."})
 
         if password:
             if member_user:

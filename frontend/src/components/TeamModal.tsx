@@ -46,7 +46,13 @@ export const TeamModal: React.FC<TeamModalProps> = ({
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmail.trim()) return;
+    const trimmedEmail = newEmail.trim().toLowerCase();
+    if (!trimmedEmail) return;
+
+    if (members.some(m => m.email.toLowerCase() === trimmedEmail)) {
+      setErrorMsg("This user is already a member of your team.");
+      return;
+    }
 
     setIsSubmitting(true);
     setErrorMsg(null);
@@ -54,7 +60,7 @@ export const TeamModal: React.FC<TeamModalProps> = ({
 
     try {
       const res = await api.post('team/', {
-        email: newEmail.trim(),
+        email: trimmedEmail,
         role: newRole,
         password: newPassword.trim() || undefined
       });
@@ -70,8 +76,12 @@ export const TeamModal: React.FC<TeamModalProps> = ({
     } catch (err: any) {
       console.error('Failed to add team member:', err);
       const data = err.response?.data;
-      if (data && data.email) {
-        setErrorMsg(Array.isArray(data.email) ? data.email[0] : data.email);
+      if (data) {
+        if (typeof data.email === 'string') setErrorMsg(data.email);
+        else if (Array.isArray(data.email)) setErrorMsg(data.email[0]);
+        else if (typeof data.detail === 'string') setErrorMsg(data.detail);
+        else if (typeof data.non_field_errors === 'object' && Array.isArray(data.non_field_errors)) setErrorMsg(data.non_field_errors[0]);
+        else setErrorMsg('Failed to add team member. Please verify email and try again.');
       } else {
         setErrorMsg('Failed to add team member. Please verify email and try again.');
       }
@@ -183,7 +193,12 @@ export const TeamModal: React.FC<TeamModalProps> = ({
             ➕ Invite / Add New Team Member
           </h4>
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 130px auto', gap: '12px', alignItems: 'center' }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '12px',
+            alignItems: 'center'
+          }}>
             <input
               type="email"
               required
@@ -196,7 +211,9 @@ export const TeamModal: React.FC<TeamModalProps> = ({
                 borderRadius: '8px',
                 padding: '10px 14px',
                 color: '#fff',
-                fontSize: '0.85rem'
+                fontSize: '0.85rem',
+                width: '100%',
+                boxSizing: 'border-box'
               }}
             />
 
@@ -211,44 +228,52 @@ export const TeamModal: React.FC<TeamModalProps> = ({
                 borderRadius: '8px',
                 padding: '10px 14px',
                 color: '#fff',
-                fontSize: '0.85rem'
+                fontSize: '0.85rem',
+                width: '100%',
+                boxSizing: 'border-box'
               }}
             />
 
-            <select
-              value={newRole}
-              onChange={(e) => setNewRole(e.target.value)}
-              style={{
-                background: 'rgba(30, 41, 59, 0.9)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '8px',
-                padding: '10px 12px',
-                color: '#fff',
-                fontSize: '0.85rem'
-              }}
-            >
-              <option value="admin">👑 Admin</option>
-              <option value="member">🛠️ Member</option>
-              <option value="viewer">👁️ Viewer</option>
-            </select>
+            <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
+              <select
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value)}
+                style={{
+                  background: 'rgba(30, 41, 59, 0.9)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '8px',
+                  padding: '10px 12px',
+                  color: '#fff',
+                  fontSize: '0.85rem',
+                  flex: '1',
+                  minWidth: '110px'
+                }}
+              >
+                <option value="admin">👑 Admin</option>
+                <option value="member">🛠️ Member</option>
+                <option value="viewer">👁️ Viewer</option>
+              </select>
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              style={{
-                background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
-                color: '#fff',
-                border: 'none',
-                padding: '10px 18px',
-                borderRadius: '8px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                fontSize: '0.85rem',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              {isSubmitting ? 'Adding...' : 'Add Member'}
-            </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                style={{
+                  background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '10px 20px',
+                  borderRadius: '8px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  whiteSpace: 'nowrap',
+                  minWidth: '120px',
+                  boxShadow: '0 4px 14px rgba(168, 85, 247, 0.3)'
+                }}
+              >
+                {isSubmitting ? 'Adding...' : '➕ Add Member'}
+              </button>
+            </div>
           </div>
         </form>
 

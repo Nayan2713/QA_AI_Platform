@@ -584,6 +584,13 @@ def start_discovery(self, app_id, model_choice=None):
                     app.login_status = 'NOT_ATTEMPTED'
                 app.save()
 
+                # Trigger automated UI & input character fuzzing scanner across discovered pages
+                try:
+                    from services.ui_scanner import run_ui_scan
+                    run_ui_scan(app, max_pages=10, task_id=task_id)
+                except Exception as scan_ex:
+                    logger.warning(f"Input validation & UI defect scan during discovery failed: {scan_ex}")
+
                 task_record.status = 'success'
                 task_record.progress = 100
                 task_record.result = {
