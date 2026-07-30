@@ -5,6 +5,10 @@ import { User, Bug } from './lib/types';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigation } from './components/Navigation';
 import { TeamModal } from './components/TeamModal';
+import { ChatbotWidget } from './components/ChatbotWidget';
+import { ToastManager, ToastItem } from './components/ToastManager';
+import { NotificationItem } from './components/NotificationCenter';
+import { playNotificationSound, initAudioUnlock } from './lib/notificationSound';
 import './App.css';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then(module => ({ default: module.Dashboard })));
@@ -35,6 +39,84 @@ function App() {
   
   const navigate = useNavigate();
   const location = useLocation();
+
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const handleDismissToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  const { data: notifications = [], refetch: refetchNotifications } = useQuery<NotificationItem[]>({
+    queryKey: ['notifications'],
+    queryFn: async ({ signal }) => {
+      const response = await api.get<any>('notifications/', { signal });
+      const rawData = response.data;
+      if (Array.isArray(rawData)) return rawData;
+      if (rawData && Array.isArray(rawData.results)) return rawData.results;
+      if (rawData && Array.isArray(rawData.data)) return rawData.data;
+      return [];
+    },
+    enabled: !!token,
+    refetchInterval: 10000,
+  });
+
+  // Global SSE listener for real-time task completion notifications
+  useEffect(() => {
+    initAudioUnlock();
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+
+    if (!token) return;
+
+    const apiBase = (import.meta as any).env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin + '/api/' : 'http://127.0.0.1:8000/api/');
+    const baseUrl = apiBase.endsWith('/') ? apiBase : apiBase + '/';
+    const sseUrl = `${baseUrl}events/?token=${encodeURIComponent(token)}`;
+    const eventSource = new EventSource(sseUrl);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('[SSE Event Received]', data);
+        if (data.type === 'notification_created' && data.data) {
+          const n = data.data;
+          const newToast: ToastItem = {
+            id: `toast-${n.id || Date.now()}`,
+            title: n.title,
+            message: n.message,
+            level: n.level || 'info',
+          };
+          setToasts(prev => [newToast, ...prev.slice(0, 4)]);
+          playNotificationSound(n.level || 'info');
+          refetchNotifications();
+
+          // Native Browser Desktop OS Notification
+          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification(n.title, {
+                body: n.message,
+              });
+            } catch (err) {
+              console.warn('Desktop notification dispatch failed:', err);
+            }
+          }
+
+          setTimeout(() => {
+            handleDismissToast(newToast.id);
+          }, 5000);
+        } else if (data.type && (data.type.includes('celerytask') || data.type.includes('application') || data.type.includes('testrun'))) {
+          refetchNotifications();
+        }
+      } catch (e) {
+        // ignore heartbeats/parse errors
+      }
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [token, refetchNotifications]);
 
   const { data: bugs = [], refetch: fetchGlobalBugs } = useQuery({
     queryKey: ['globalBugs'],
@@ -277,10 +359,13 @@ function App() {
 
   return (
     <div className="app-layout">
+      <ToastManager toasts={toasts} onDismiss={handleDismissToast} />
       <Navigation 
         username={username} 
         onLogout={handleLogout} 
         onOpenTeamModal={() => setIsTeamModalOpen(true)}
+        notifications={notifications}
+        onRefreshNotifications={refetchNotifications}
       />
       
       <TeamModal
@@ -374,6 +459,9 @@ function App() {
           </button>
         </div>
       )}
+
+      {/* Floating Application-Scoped Chatbot */}
+      {!!token && <ChatbotWidget />}
     </div>
   );
 }

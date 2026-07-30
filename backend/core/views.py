@@ -1,4 +1,6 @@
 from rest_framework import viewsets, status, permissions
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
@@ -6,12 +8,12 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember, Notification
 from .serializers import (
     RegisterSerializer, UserSerializer, ApplicationSerializer, ApplicationListSerializer,
     PageSerializer, TestCaseSerializer, TestCaseListSerializer, TestRunSerializer, TestRunListSerializer,
     TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer,
-    APIEndpointSerializer, AgentSessionSerializer, TeamMemberSerializer
+    APIEndpointSerializer, AgentSessionSerializer, TeamMemberSerializer, NotificationSerializer
 )
 from services.test_validation_service import TestValidationService
 
@@ -33,7 +35,14 @@ def get_user_and_team_user_ids(user):
         Q(member_user=user) | Q(email__iexact=getattr(user, 'email', '')),
         status='active'
     ).values_list('owner_id', flat=True)
-    return list(set([user.id] + list(owned_ids)))
+    
+    member_user_ids = TeamMember.objects.filter(
+        owner=user,
+        status='active',
+        member_user__isnull=False
+    ).values_list('member_user_id', flat=True)
+
+    return list(set([user.id] + list(owned_ids) + list(member_user_ids)))
 
 
 def get_team_role(user, owner):
@@ -250,11 +259,21 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             .distinct()
             .order_by('-created_at')
         )
-        page = self.paginate_queryset(bugs)
+        unique_bugs = []
+        seen = set()
+        for bug in bugs:
+            norm_title = (bug.title or '').strip().lower()
+            norm_type = 'ui' if (bug.bug_type or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'] else (bug.bug_type or '').strip().lower()
+            key = (app.id, norm_title, norm_type)
+            if key not in seen:
+                seen.add(key)
+                unique_bugs.append(bug)
+
+        page = self.paginate_queryset(unique_bugs)
         if page is not None:
             serializer = BugSerializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-        serializer = BugSerializer(bugs, many=True)
+        serializer = BugSerializer(unique_bugs, many=True)
         return Response(serializer.data)
 
     @action(detail=True, methods=['get'], url_path='api-endpoints')
@@ -426,6 +445,40 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         check_team_permission(self.request.user, instance.app.user, 'destroy')
         instance.delete()
+
+    @action(detail=True, methods=['post'], url_path='auto-fix')
+    def auto_fix(self, request, pk=None):
+        """
+        Manually trigger AI Self-Healing & Selector Validation on a test case.
+        """
+        tc = self.get_object()
+        check_team_permission(request.user, tc.app.user, 'auto_fix')
+
+        import uuid
+        from tasks.execution import execute_test
+        from .signals import register_task_user, register_task_app
+
+        test_run = TestRun.objects.create(test_case=tc, status='PENDING')
+        task_id = str(uuid.uuid4())
+        CeleryTask.objects.create(
+            app=tc.app,
+            task_id=task_id,
+            task_type='execution',
+            status='pending',
+            progress=0,
+            result={"status_text": f"Starting Self-Healing verification for '{tc.title}'..."}
+        )
+        register_task_user(task_id, request.user.id)
+        register_task_app(task_id, tc.app.id)
+
+        model_choice = request.data.get('model_choice')
+        execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id, queue='execution')
+
+        return Response({
+            "status": "Self-Healing run queued",
+            "test_run_id": test_run.id,
+            "task_id": task_id
+        }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=False, methods=['post'], url_path='bulk_upload')
 
@@ -629,8 +682,9 @@ class TestRunViewSet(viewsets.ModelViewSet):
             # Safeguard against MemoryError when retrieving all test runs
             queryset = queryset[:100]
 
-        # Defer loading the large metadata field for list/bulk actions to prevent database OutOfMemory crashes
-        if self.action == 'list' or ids:
+        # Defer loading the large metadata field for list/bulk actions to prevent database OutOfMemory crashes,
+        # but keep metadata loaded when querying specific IDs for real-time execution progress polling
+        if self.action == 'list' and not ids:
             queryset = queryset.defer('metadata')
 
         if self.action == 'retrieve':
@@ -739,6 +793,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
         return Response({
             "status": test_run.status,
             "bugs_found": test_run.bugs_found,
+            "self_healed_count": test_run.self_healed_count,
             "data": serializer.data
         })
 
@@ -786,11 +841,10 @@ class BugViewSet(viewsets.ModelViewSet):
         seen = set()
         
         for bug in queryset[:500]:
-            endpoint_id = bug.api_endpoint_id if bug.api_endpoint_id else 0
-            # Deduplicate by the exact title so failures on different steps are kept separate,
-            # but identical step failures across different test runs are still grouped.
             app_id = bug.application_id or (bug.test_run.test_case.app_id if bug.test_run and bug.test_run.test_case else None)
-            key = (app_id, bug.title, endpoint_id, bug.severity, bug.bug_type)
+            norm_title = (bug.title or '').strip().lower()
+            norm_type = 'ui' if (bug.bug_type or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'] else (bug.bug_type or '').strip().lower()
+            key = (app_id, norm_title, norm_type)
             
             if key not in seen:
                 seen.add(key)
@@ -1229,4 +1283,45 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         check_team_permission(self.request.user, instance.owner, 'destroy')
         instance.delete()
+
+
+class ChatbotQueryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        message = request.data.get('message', '')
+        app_id = request.data.get('app_id')
+        
+        from services.chatbot_service import ChatbotService
+        service = ChatbotService()
+        result = service.query_assistant(request.user, message, app_id=app_id)
+        
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user).order_by('-created_at')
+
+    @action(detail=True, methods=['post'])
+    def mark_read(self, request, pk=None):
+        notif = self.get_object()
+        notif.is_read = True
+        notif.save()
+        return Response({'status': 'marked as read'})
+
+    @action(detail=False, methods=['post'])
+    def mark_all_read(self, request):
+        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        return Response({'status': 'all marked as read'})
+
+    @action(detail=False, methods=['delete', 'post'])
+    def clear_all(self, request):
+        Notification.objects.filter(user=request.user).delete()
+        return Response({'status': 'all notifications cleared'})
+
 

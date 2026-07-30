@@ -12,6 +12,7 @@ from playwright.sync_api import sync_playwright, Browser, BrowserContext
 
 from core.models import TestRun, TestResult, TestCase, CeleryTask
 from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
+from services.self_healing_service import SelfHealingService
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +526,46 @@ def execute_test(self, test_run_id, model_choice=None):
                     except Exception as e:
                         step_passed = False
                         error_msg = str(e)
+                        
+                        # ─── SELF-HEALING ENGINE ATTEMPT ───────────────
+                        heal_res = SelfHealingService.heal_selector(page, step)
+                        if heal_res.get("success"):
+                            healed_sel = heal_res["healed_selector"]
+                            logger.info(f"[EXECUTION SELF-HEALED] Step {step_num}: '{selector}' ➔ '{healed_sel}'")
+                            try:
+                                h_loc = page.locator(healed_sel).first
+                                if action == "click":
+                                    h_loc.click(timeout=8000)
+                                elif action == "fill":
+                                    h_loc.fill(str(value), timeout=8000)
+                                elif action == "select":
+                                    h_loc.select_option(str(value), timeout=8000)
+                                elif action == "assert":
+                                    if not h_loc.is_visible():
+                                        raise AssertionError(f"Healed element '{healed_sel}' not visible.")
+
+                                # Self-healing succeeded!
+                                step_passed = True
+                                step_auto_healed = True
+                                step_healing_details = heal_res
+                                error_msg = f"Self-Healed selector: '{selector}' ➔ '{healed_sel}' ({heal_res.get('reason', '')})"
+
+                                # Persist healed selector back to TestCase
+                                try:
+                                    tc = test_run.test_case
+                                    if tc and isinstance(tc.steps, list) and index < len(tc.steps):
+                                        tc.steps[index]['selector'] = healed_sel
+                                        tc.self_healed_count = (tc.self_healed_count or 0) + 1
+                                        tc.save(update_fields=['steps', 'self_healed_count'])
+                                    test_run.self_healed_count = (test_run.self_healed_count or 0) + 1
+                                    test_run.save(update_fields=['self_healed_count'])
+                                except Exception as save_h_err:
+                                    logger.warning(f"Failed to persist self-healed step: {save_h_err}")
+
+                                break  # exit retry loop with success!
+                            except Exception as h_err:
+                                logger.warning(f"[SELF-HEALING EXECUTION FAILED] Action failed on healed selector '{healed_sel}': {h_err}")
+
                         if attempt == 0:
                             logger.warning(
                                 f"Step {step_num} failed attempt 1, retrying in 1s... {error_msg}"
@@ -552,6 +593,7 @@ def execute_test(self, test_run_id, model_choice=None):
                     sp=step_passed, em=error_msg, sc=screenshot_b64,
                     sn=step_num, ps=passed_steps, ts=total_steps,
                     al=list(api_logs), cl=list(console_logs),
+                    ah=step_auto_healed, hd=step_healing_details,
                     flush_init=pending_init_result
                 ):
                     with transaction.atomic():
@@ -567,7 +609,9 @@ def execute_test(self, test_run_id, model_choice=None):
                             step_number=sn,
                             status='PASSED' if sp else 'FAILED',
                             error=em,
-                            screenshot=sc
+                            screenshot=sc,
+                            auto_healed=ah,
+                            healing_details=hd
                         )
                         # I6 FIX: Update metadata in-memory then save,
                         # instead of the previous SELECT + UPDATE that
@@ -601,7 +645,8 @@ def execute_test(self, test_run_id, model_choice=None):
                         test_run=test_run,
                         step_number=total_steps + 1,
                         status='FAILED',
-                        error=f"API failures:\n{details}"
+                        # error=f"API failures:\n{details}"
+                        error=f"API Network Failures Detected:\n{details}"
                     )
                 run_in_thread(log_api_failures)
                 total_steps += 1
@@ -851,7 +896,8 @@ def run_quality_analysis(test_run_id, api_logs=None):
                         test_run=test_run,
                         step_number=total_steps + 1,
                         status='FAILED',
-                        error=f"Quality failures:\n{details}"
+                        # error=f"Quality failures:\n{details}"
+                        error=f"API Response Quality Failures Detected:\n{details}"
                     )
                     
                     test_run.status = 'FAILED'

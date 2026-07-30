@@ -149,6 +149,12 @@ export const TestResults: React.FC<TestResultsProps> = ({
           <span className="meta-label">Bugs Logged:</span>
           <span className="meta-val bug-indicator">{testRun.bugs_found}</span>
         </div>
+        <div className="meta-item">
+          <span className="meta-label">Self-Healed:</span>
+          <span className="meta-val" style={{ color: '#34d399', fontWeight: 'bold' }}>
+            {testRun.self_healed_count || 0} step(s)
+          </span>
+        </div>
       </div>
 
       {/* Video Playback */}
@@ -271,6 +277,44 @@ export const TestResults: React.FC<TestResultsProps> = ({
                     <div className="step-error-box">
                       <strong>Execution Error:</strong>
                       <pre className="error-trace">{res.error}</pre>
+                    </div>
+                  )}
+
+                  {res.auto_healed && (
+                    <div style={{
+                      marginTop: '10px',
+                      padding: '12px 14px',
+                      background: 'rgba(16, 185, 129, 0.12)',
+                      border: '1px solid rgba(16, 185, 129, 0.35)',
+                      borderRadius: '8px',
+                      boxShadow: '0 0 12px rgba(16, 185, 129, 0.15)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                        <span style={{
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          backgroundColor: 'rgba(16, 185, 129, 0.25)',
+                          color: '#34d399',
+                          border: '1px solid rgba(16, 185, 129, 0.4)'
+                        }}>
+                          🩹 AI Self-Healed
+                        </span>
+                        <span style={{ fontSize: '0.8rem', color: '#a7f3d0', fontWeight: 600 }}>
+                          Confidence: {res.healing_details?.confidence ? `${Math.round(res.healing_details.confidence * 100)}%` : 'High'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.82rem', fontFamily: 'monospace', color: '#f3f4f6' }}>
+                        <span style={{ color: '#f87171', textDecoration: 'line-through' }}>{res.healing_details?.original_selector}</span>
+                        <span style={{ margin: '0 8px', color: '#34d399', fontWeight: 'bold' }}>➔</span>
+                        <span style={{ color: '#34d399', fontWeight: 'bold' }}>{res.healing_details?.healed_selector}</span>
+                      </div>
+                      {res.healing_details?.reason && (
+                        <div style={{ fontSize: '0.78rem', color: '#9ca3af', marginTop: '4px' }}>
+                          Reason: {res.healing_details.reason}
+                        </div>
+                      )}
                     </div>
                   )}
 

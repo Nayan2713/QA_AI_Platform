@@ -34,10 +34,23 @@ def get_user_id_for_instance(instance):
         elif isinstance(instance, AgentSession):
             return instance.application.user_id
         elif isinstance(instance, CeleryTask):
+            if instance.app_id:
+                return instance.app.user_id
             r = get_redis_client()
             user_id = r.get(f"task_user:{instance.task_id}")
             if user_id:
                 return int(user_id)
+            app_id = r.get(f"task_app:{instance.task_id}")
+            if app_id:
+                try:
+                    return Application.objects.get(id=int(app_id)).user_id
+                except Exception:
+                    pass
+            if isinstance(instance.result, dict) and instance.result.get('app_id'):
+                try:
+                    return Application.objects.get(id=int(instance.result['app_id'])).user_id
+                except Exception:
+                    pass
     except Exception as e:
         logger.error(f"Error resolving user_id for {instance}: {e}")
     return None
@@ -124,6 +137,118 @@ def model_post_save(sender, instance, created, **kwargs):
         data['app_id'] = instance.application_id or (instance.test_run.test_case.app_id if instance.test_run else None)
         
     publish_event(user_id, event_type, data)
+
+    # Auto-generate Notification records on task/run/discovery completion
+    try:
+        from .models import Notification
+        from django.contrib.auth.models import User
+        user_obj = User.objects.filter(id=user_id).first()
+        if user_obj:
+            notif_title = None
+            notif_msg = None
+            level = 'info'
+            link = None
+
+            if isinstance(instance, CeleryTask) and instance.status in ('success', 'failed'):
+                task_type = (instance.task_type or 'task').lower()
+                app_name = getattr(instance.app, 'name', instance.app.url) if instance.app else "Application"
+                
+                if 'test_gen' in task_type or 'test_generation' in task_type:
+                    tests_count = (instance.result or {}).get('tests_generated', 0)
+                    if instance.status == 'success':
+                        notif_title = f"AI Test Generation Completed"
+                        notif_msg = f"Generated {tests_count} automated test case(s) for {app_name}."
+                        level = 'success'
+                    else:
+                        notif_title = f"AI Test Generation Failed"
+                        notif_msg = f"Failed generating test suite: {instance.error or 'Check task details'}"
+                        level = 'error'
+                        
+                elif 'bug_detection' in task_type or 'ui_scan' in task_type or 'quality' in task_type:
+                    bugs_count = (instance.result or {}).get('bugs_found', 0)
+                    if instance.status == 'success':
+                        notif_title = f"Defect Audit Completed"
+                        notif_msg = f"Audit complete for {app_name}. Identified {bugs_count} defect(s)."
+                        level = 'warning' if bugs_count > 0 else 'success'
+                    else:
+                        notif_title = f"Defect Audit Failed"
+                        notif_msg = f"Audit failed for {app_name}: {instance.error or 'Check task details'}"
+                        level = 'error'
+                        
+                elif 'discovery' in task_type:
+                    pages_count = (instance.result or {}).get('pages_discovered', 0)
+                    if instance.status == 'success':
+                        notif_title = f"Discovery Scan Completed"
+                        notif_msg = f"Cataloged {pages_count} page(s) for {app_name}."
+                        level = 'success'
+                    else:
+                        notif_title = f"Discovery Scan Failed"
+                        notif_msg = f"Discovery failed for {app_name}: {instance.error or 'Check task details'}"
+                        level = 'error'
+                else:
+                    task_label = (instance.task_type or 'Background Task').replace('_', ' ').title()
+                    if instance.status == 'success':
+                        notif_title = f"Task Completed: {task_label}"
+                        notif_msg = f"{task_label} finished successfully for {app_name}."
+                        level = 'success'
+                    else:
+                        notif_title = f"Task Failed: {task_label}"
+                        notif_msg = f"{task_label} failed: {instance.error or 'Check task details'}"
+                        level = 'error'
+                link = f"/scans/{instance.app_id}" if instance.app_id else "/dashboard"
+
+            elif isinstance(instance, Bug) and created:
+                app_name = getattr(instance.application, 'name', instance.application.url) if instance.application else "App"
+                sev = (instance.severity or 'medium').upper()
+                notif_title = f"New Defect Identified: {instance.title[:45]}"
+                notif_msg = f"[{sev}] {instance.description[:120]} ({app_name})"
+                level = 'error' if instance.severity in ('high', 'critical') else 'warning'
+                link = f"/bugs"
+
+            elif isinstance(instance, Application) and instance.status in ('DISCOVERED', 'FAILED'):
+                app_name = getattr(instance, 'name', instance.url)
+                if instance.status == 'DISCOVERED':
+                    notif_title = f"Discovery Scan Completed"
+                    notif_msg = f"Discovery finished for {app_name}. Cataloged {instance.pages.count()} page(s) and {instance.api_endpoints.count()} API endpoint(s)."
+                    level = 'success'
+                else:
+                    notif_title = f"Discovery Scan Failed"
+                    notif_msg = f"Discovery failed for {app_name}: {instance.login_error or 'Check scan details'}"
+                    level = 'error'
+                link = f"/scans/{instance.id}"
+
+            elif isinstance(instance, TestRun) and instance.status in ('COMPLETED', 'FAILED'):
+                tc_title = getattr(instance.test_case, 'title', f"Run #{instance.id}")
+                if instance.status == 'COMPLETED':
+                    notif_title = f"Test Execution Passed: {tc_title}"
+                    notif_msg = f"Test Run #{instance.id} completed. {instance.bugs_found} bug(s) detected."
+                    level = 'success' if instance.bugs_found == 0 else 'warning'
+                else:
+                    notif_title = f"Test Execution Failed: {tc_title}"
+                    notif_msg = f"Test Run #{instance.id} failed during browser execution."
+                    level = 'error'
+                link = f"/test-runs/{instance.id}"
+
+            if notif_title and notif_msg:
+                notif = Notification.objects.create(
+                    user=user_obj,
+                    title=notif_title,
+                    message=notif_msg,
+                    level=level,
+                    link=link
+                )
+                notif_payload = {
+                    "id": notif.id,
+                    "title": notif.title,
+                    "message": notif.message,
+                    "level": notif.level,
+                    "link": notif.link,
+                    "is_read": notif.is_read,
+                    "created_at": notif.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                }
+                publish_event(user_id, "notification_created", notif_payload)
+    except Exception as err:
+        logger.error(f"Failed to generate notification: {err}")
 
 @receiver(post_delete)
 def model_post_delete(sender, instance, **kwargs):

@@ -31,16 +31,19 @@ def generate_tests(self, app_id, model_choice=None):
         obj, created = CeleryTask.objects.get_or_create(
             task_id=task_id,
             defaults={
+                'app_id': app_id,
                 'task_type': 'test_generation',
                 'status': 'progress',
                 'progress': 10,
-                'result': {"status_text": "Initializing test generation..."}
+                'result': {"status_text": "Initializing test generation...", "app_id": app_id}
             }
         )
         if not created:
+            obj.app_id = app_id
             obj.status = 'progress'
             obj.progress = 10
-            obj.result = {"status_text": "Initializing test generation..."}
+            if isinstance(obj.result, dict):
+                obj.result["app_id"] = app_id
             obj.save()
         return obj
 

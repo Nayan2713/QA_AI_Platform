@@ -1,16 +1,21 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { NotificationCenter, NotificationItem } from './NotificationCenter';
 
 interface NavigationProps {
   username?: string;
   onLogout: () => void;
   onOpenTeamModal?: () => void;
+  notifications?: NotificationItem[];
+  onRefreshNotifications?: () => void;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ 
   username, 
   onLogout,
-  onOpenTeamModal
+  onOpenTeamModal,
+  notifications = [],
+  onRefreshNotifications = () => {}
 }) => {
   const location = useLocation();
 
@@ -50,6 +55,11 @@ export const Navigation: React.FC<NavigationProps> = ({
               </button>
             )}
             
+            <NotificationCenter
+              notifications={notifications}
+              onRefreshNotifications={onRefreshNotifications}
+            />
+
             <div className="nav-divider"></div>
             
             <div className="nav-user">

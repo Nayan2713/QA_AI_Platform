@@ -121,6 +121,7 @@ class TestCase(models.Model):
         default=TestCaseValidationStatus.DRAFT,
     )
     generation_context = models.JSONField(default=dict, blank=True, null=True)
+    self_healed_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -136,6 +137,7 @@ class TestRun(models.Model):
     )
     metadata = models.JSONField(default=dict, blank=True)
     bugs_found = models.IntegerField(default=0)
+    self_healed_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -148,7 +150,9 @@ class TestResult(models.Model):
     step_number = models.IntegerField()
     status = models.CharField(max_length=20, choices=TestResultStatus.choices)
     error = models.TextField(blank=True, null=True)
-    screenshot = models.TextField(blank=True, null=True)  # base64 encoded image
+    screenshot = models.TextField(blank=True, null=True)  # base64 encoded image or relative file path
+    auto_healed = models.BooleanField(default=False)
+    healing_details = models.JSONField(default=dict, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -396,6 +400,28 @@ class TeamMember(models.Model):
 
     def __str__(self):
         return f"{self.email} ({self.role}) - Team of {self.owner.username}"
+
+
+class Notification(models.Model):
+    LEVEL_CHOICES = (
+        ('info', 'Info'),
+        ('success', 'Success'),
+        ('warning', 'Warning'),
+        ('error', 'Error'),
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    level = models.CharField(max_length=20, choices=LEVEL_CHOICES, default='info')
+    link = models.CharField(max_length=500, blank=True, null=True)
+    is_read = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.level.upper()}] {self.title} for {self.user.username}"
 
 # Import signals to register receivers
 from . import signals

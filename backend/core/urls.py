@@ -10,6 +10,8 @@ from .views import (
     AgentSessionViewSet,
     TeamMemberViewSet,
     health_check,
+    ChatbotQueryView,
+    NotificationViewSet,
 )
 from .events import RealTimeEventView
 
@@ -23,10 +25,12 @@ router.register(r'celery-tasks', CeleryTaskViewSet, basename='celerytask')
 router.register(r'api-endpoints', APIEndpointViewSet, basename='apiendpoint')
 router.register(r'agent-sessions', AgentSessionViewSet, basename='agentsession')
 router.register(r'team', TeamMemberViewSet, basename='teammember')
+router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [
     path('health/', health_check, name='health-check'),
     path('events/', RealTimeEventView.as_view(), name='realtime-events'),
+    path('chatbot/query/', ChatbotQueryView.as_view(), name='chatbot-query'),
     path('quality/', include('api.urls')),
     # ViewSets
     path('', include(router.urls)),

@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import base64
 import logging
@@ -7,6 +8,26 @@ from django.conf import settings
 from core.models import Application, Page, Bug, BugSeverity
 
 logger = logging.getLogger(__name__)
+
+# Buttons whose text matches these are skipped by the dead-click check —
+# clicking them for real on someone's live app would be destructive
+# (deletes data, logs the session out, charges a card, etc).
+_DESTRUCTIVE_KEYWORDS = [
+    'delete', 'remove', 'unsubscribe', 'deactivat', 'terminate', 'cancel subscription',
+    'cancel plan', 'close account', 'log out', 'logout', 'sign out', 'signout',
+    'pay', 'purchase', 'checkout', 'place order', 'confirm order', 'buy now',
+    'charge', 'transfer', 'withdraw', 'send money', 'submit payment', 'reset password',
+]
+
+# Hard cap on how many buttons get click-tested per page — keeps scan time and
+# blast radius bounded even on pages with dozens of interactive elements.
+_MAX_BUTTONS_PER_PAGE = 8
+
+
+def _is_probably_destructive(text: str) -> bool:
+    t = (text or '').lower()
+    return any(kw in t for kw in _DESTRUCTIVE_KEYWORDS)
+
 
 def save_ui_screenshot(page, selector=None, prefix="ui_bug"):
     """
@@ -27,7 +48,6 @@ def save_ui_screenshot(page, selector=None, prefix="ui_bug"):
             ss_bytes = page.screenshot(full_page=False)
 
         if ss_bytes:
-            import time
             media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
             os.makedirs(media_path, exist_ok=True)
             filename = f"{prefix}_{int(time.time() * 1000)}.png"
@@ -48,8 +68,9 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
     1. Broken Images & Assets (naturalWidth === 0)
     2. Horizontal Viewport Overflows & Layout Breakages
     3. Low Contrast / Invisible Text (text color matches background or opacity < 0.1)
-    4. Console & Asset Load Errors (404 CSS/Fonts, unhandled JS exceptions)
-    5. Overlapping & Clipped Interactive Elements
+    4. Asset Load Errors (404 CSS/Fonts/Scripts/Images)
+    5. Dead / Non-Functional Buttons (click-and-verify — see _MAX_BUTTONS_PER_PAGE
+       and _DESTRUCTIVE_KEYWORDS below for the safety cap and skip-list)
     """
     logger.info(f"Starting automated UI scan for Application ID {application.id} ({application.url})")
 
@@ -84,6 +105,8 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
             page_bugs_created = 0
             page_errors = []
             failed_assets = []
+            dialog_events = []      # native confirm()/alert()/prompt() triggered by a click
+            request_log = []        # (timestamp, url) for every network request on this page
 
             context_kwargs = {
                 "viewport": {"width": 1280, "height": 800},
@@ -118,8 +141,20 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
                         "type": response.request.resource_type
                     })
 
+            def on_dialog(dialog):
+                dialog_events.append(time.time())
+                try:
+                    dialog.dismiss()
+                except Exception:
+                    pass
+
+            def on_request(req):
+                request_log.append((time.time(), req.url))
+
             page.on("pageerror", on_page_error)
             page.on("response", on_response)
+            page.on("dialog", on_dialog)
+            page.on("request", on_request)
 
             try:
                 page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
@@ -207,7 +242,7 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
                 """)
 
                 for ov in overflow_elements:
-                    key = ('overflow', target_url, ov['selector'])
+                    key = ('overflow', ov['selector'])
                     if key not in seen_bug_keys:
                         seen_bug_keys.add(key)
                         ss_path = save_ui_screenshot(page, selector=ov['selector'], prefix="ui_overflow")
@@ -270,7 +305,7 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
                 """)
 
                 for vis in invisible_text_elements:
-                    key = ('contrast', target_url, vis['selector'])
+                    key = ('contrast', vis['selector'])
                     if key not in seen_bug_keys:
                         seen_bug_keys.add(key)
                         ss_path = save_ui_screenshot(page, selector=vis['selector'], prefix="ui_contrast")
@@ -299,7 +334,7 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
             # Check 4: Failed Asset Loads (404 CSS / Fonts)
             # -------------------------------------------------------------
             for asset in failed_assets[:3]:
-                key = ('failed_asset', target_url, asset['url'])
+                key = ('failed_asset', asset['url'])
                 if key not in seen_bug_keys:
                     seen_bug_keys.add(key)
                     bug = Bug.objects.create(
@@ -317,6 +352,157 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
                         ]
                     )
                     bugs_created.append(bug)
+
+            # -------------------------------------------------------------
+            # Check 5: Dead / Non-Functional Buttons (click-and-verify)
+            #
+            # Finds visible, enabled button-like elements, clicks each one,
+            # and checks whether the click had *any* observable effect:
+            # URL change, DOM mutation, a new network request, a new tab, or
+            # a native dialog. If none of those happen, the button is very
+            # likely wired to nothing (missing handler, dead JS, etc) and
+            # gets logged as a bug. Heuristic, so it can false-positive on
+            # buttons whose only effect is invisible (e.g. clipboard copy
+            # with no toast) — treat results as "needs a look", not gospel.
+            # -------------------------------------------------------------
+            try:
+                candidates = page.evaluate("""
+                    () => {
+                        const out = [];
+                        const sel = 'button, [role="button"], input[type="submit"], input[type="button"], input[type="reset"]';
+                        const els = document.querySelectorAll(sel);
+                        let idx = 0;
+                        for (const el of els) {
+                            const rect = el.getBoundingClientRect();
+                            const style = window.getComputedStyle(el);
+                            if (rect.width === 0 || rect.height === 0) continue;
+                            if (style.display === 'none' || style.visibility === 'hidden') continue;
+                            if (style.pointerEvents === 'none') continue;
+                            if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+
+                            const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().substring(0, 60);
+                            let selector;
+                            if (el.id) {
+                                selector = '#' + CSS.escape(el.id);
+                            } else {
+                                el.setAttribute('data-qa-scan-idx', String(idx));
+                                selector = '[data-qa-scan-idx="' + idx + '"]';
+                            }
+                            out.push({selector, text});
+                            idx++;
+                        }
+                        return out;
+                    }
+                """)
+            except Exception as e:
+                logger.error(f"Error collecting clickable elements: {e}")
+                candidates = []
+
+            tested = 0
+            for cand in candidates:
+                if tested >= _MAX_BUTTONS_PER_PAGE:
+                    break
+                selector = cand.get('selector')
+                text = cand.get('text') or '(no label)'
+
+                if _is_probably_destructive(text):
+                    continue  # skip delete/logout/pay/etc. — see _DESTRUCTIVE_KEYWORDS
+
+                key = ('dead_click', text)
+                if key in seen_bug_keys:
+                    continue
+
+                try:
+                    loc = page.locator(selector).first
+                    if not loc.is_visible():
+                        continue
+
+                    # Reset the per-element mutation flag right before clicking.
+                    page.evaluate(
+                        """(sel) => {
+                            window.__qaScanMutated = false;
+                            const target = document.querySelector(sel);
+                            if (!target) return;
+                            if (window.__qaScanObserver) window.__qaScanObserver.disconnect();
+                            window.__qaScanObserver = new MutationObserver(() => { window.__qaScanMutated = true; });
+                            window.__qaScanObserver.observe(document.body, {childList: true, subtree: true, attributes: true});
+                        }""",
+                        selector,
+                    )
+
+                    before_url = page.url
+                    before_page_count = len(context.pages)
+                    click_time = time.time()
+
+                    try:
+                        loc.click(timeout=2000)
+                    except Exception:
+                        try:
+                            loc.click(force=True, timeout=1500)
+                        except Exception:
+                            loc.evaluate("el => el.click()")
+
+                    page.wait_for_timeout(700)
+                    tested += 1
+
+                    # Close any popup/new-tab the click opened; that alone counts as "worked".
+                    opened_popup = len(context.pages) > before_page_count
+                    if opened_popup:
+                        for extra_page in context.pages[before_page_count:]:
+                            try:
+                                extra_page.close()
+                            except Exception:
+                                pass
+
+                    fired_dialog = any(t >= click_time for t in dialog_events)
+                    fired_request = any(t >= click_time for t, _ in request_log)
+                    try:
+                        mutated = bool(page.evaluate("() => window.__qaScanMutated === true"))
+                    except Exception:
+                        mutated = False  # page likely navigated away — treat separately below
+                    navigated = page.url != before_url
+
+                    worked = navigated or mutated or fired_request or fired_dialog or opened_popup
+
+                    if not worked:
+                        seen_bug_keys.add(key)
+                        ss_path = save_ui_screenshot(page, selector=selector, prefix="ui_dead_click")
+                        bug = Bug.objects.create(
+                            application=application,
+                            bug_type='ui',
+                            severity=BugSeverity.MEDIUM,
+                            title=f"[Dead Click] Button appears non-functional: \"{text}\"",
+                            description=(
+                                f"Clicking the button/element labeled \"{text}\" on page {target_url} produced no "
+                                f"observable effect — no URL change, DOM update, network request, dialog, or new tab.\n\n"
+                                f"Selector: {selector}\n"
+                                f"This is a heuristic check: some buttons legitimately have invisible effects "
+                                f"(e.g. clipboard copy with no toast). Please verify manually before treating as confirmed."
+                            ),
+                            element_selector=selector,
+                            screenshot=ss_path,
+                            status='open',
+                            steps_to_reproduce=[
+                                f"Navigate to {target_url}",
+                                f"Click the element \"{text}\" ({selector})",
+                                "Observe that nothing happens: no navigation, no visible UI change, no network activity",
+                            ],
+                        )
+                        bugs_created.append(bug)
+                        page_bugs_created += 1
+
+                    if navigated:
+                        # Restore the page so remaining candidates can still be tested.
+                        try:
+                            page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
+                            page.wait_for_timeout(500)
+                        except Exception as nav_err:
+                            logger.warning(f"Could not restore {target_url} after dead-click test: {nav_err}")
+                            break  # page is in an unknown state — stop testing buttons on it
+
+                except Exception as click_err:
+                    logger.warning(f"Dead-click check failed for \"{text}\" on {target_url}: {click_err}")
+                    continue
 
             context.close()
 

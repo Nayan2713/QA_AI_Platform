@@ -90,6 +90,7 @@ export interface TestCase {
   ai_generated: boolean;
   validation_status?: 'DRAFT' | 'VERIFIED' | 'BROKEN';
   model_used?: string;
+  self_healed_count?: number;
   created_at?: string;
 }
 
@@ -100,6 +101,8 @@ export interface TestResult {
   status: 'PASSED' | 'FAILED';
   error: string | null;
   screenshot: string | null;
+  auto_healed?: boolean;
+  healing_details?: Record<string, any>;
   created_at: string;
 }
 
@@ -112,6 +115,7 @@ export interface TestRun {
   metadata: Record<string, unknown>;
   results: TestResult[];
   bugs_found: number;
+  self_healed_count?: number;
   created_at: string;
 }
 

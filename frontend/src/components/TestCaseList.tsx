@@ -77,7 +77,15 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   const [editingTestCase, setEditingTestCase] = useState<TestCase | null>(null);
 
   // Suite Progress Tracking State
-  const [suiteRuns, setSuiteRuns] = useState<Array<{ id: number, testCaseId: number, title: string, status: string }>>([]);
+  const [suiteRuns, setSuiteRuns] = useState<Array<{
+    id: number;
+    testCaseId: number;
+    title: string;
+    status: string;
+    passedSteps?: number;
+    totalSteps?: number;
+    bugsFound?: number;
+  }>>([]);
   const [suiteRunStartTime, setSuiteRunStartTime] = useState<number | null>(null);
   const [showSuiteProgress, setShowSuiteProgress] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -103,6 +111,75 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
 
     return () => clearInterval(intervalId);
   }, [showSuiteProgress, suiteRunStartTime, suiteRuns]);
+
+  // Real-Time Test Suite Execution Status Polling
+  useEffect(() => {
+    if (!showSuiteProgress || suiteRuns.length === 0) return;
+
+    const hasUnfinished = suiteRuns.some(r => r.status === 'PENDING' || r.status === 'RUNNING');
+    if (!hasUnfinished) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const ids = suiteRuns
+          .map(r => r.id)
+          .filter(id => typeof id === 'number' && id < 1e12)
+          .join(',');
+        if (!ids) return;
+
+        const res = await api.get(`test-runs/?ids=${ids}`);
+        const rawData = res.data;
+        const runsData: any[] = Array.isArray(rawData) ? rawData : (rawData.results || []);
+
+        setSuiteRuns(prev => {
+          let updatedAny = false;
+          const nextRuns = prev.map(item => {
+            const match = runsData.find((u: any) => u.id === item.id);
+            if (match) {
+              if (
+                item.status !== match.status ||
+                item.passedSteps !== match.passed_steps ||
+                item.totalSteps !== match.total_steps ||
+                item.bugsFound !== match.bugs_found
+              ) {
+                updatedAny = true;
+                return {
+                  ...item,
+                  status: match.status,
+                  passedSteps: match.passed_steps ?? item.passedSteps,
+                  totalSteps: match.total_steps ?? item.totalSteps,
+                  bugsFound: match.bugs_found ?? item.bugsFound
+                };
+              }
+            }
+            return item;
+          });
+
+          // Check if all completed
+          const stillRunning = nextRuns.some(r => r.status === 'PENDING' || r.status === 'RUNNING');
+          if (!stillRunning && hasUnfinished) {
+            onRefreshTests();
+          }
+
+          return updatedAny ? nextRuns : prev;
+        });
+      } catch (err) {
+        console.error('Error polling suite execution status:', err);
+      }
+    }, 1500);
+
+    return () => clearInterval(pollInterval);
+  }, [showSuiteProgress, suiteRuns, onRefreshTests]);
+
+  // Computed Suite Execution Metrics
+  const totalSuiteCount = suiteRuns.length;
+  const passedSuiteCount = suiteRuns.filter(r => r.status === 'COMPLETED').length;
+  const failedSuiteCount = suiteRuns.filter(r => r.status === 'FAILED').length;
+  const runningSuiteCount = suiteRuns.filter(r => r.status === 'RUNNING').length;
+  const pendingSuiteCount = suiteRuns.filter(r => r.status === 'PENDING').length;
+  const doneSuiteCount = passedSuiteCount + failedSuiteCount;
+  const suitePercentComplete = totalSuiteCount > 0 ? Math.round((doneSuiteCount / totalSuiteCount) * 100) : 0;
+  const isSuiteActive = runningSuiteCount > 0 || pendingSuiteCount > 0;
 
   const handleValidateTest = async (testCaseId: number) => {
     setValidatingIds(prev => ({ ...prev, [testCaseId]: true }));
@@ -171,7 +248,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       if (runs.length > 0) {
         onTestExecuted(runs[0].id, runs[0].task_id);
       }
-      setSuccessMsg(`Queued all ${testCases.length} tests for execution.`);
+      setSuccessMsg(`Queued all ${testCases.length} tests for live execution tracking.`);
     } catch (err: any) {
       console.error(err);
       setError('Failed to run all test cases.');
@@ -250,6 +327,14 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     try {
       const response = await api.post('test-runs/execute/', { test_case_id: testCaseId, model_choice: selectedModel });
       setSuccessMsg(`Test run execution started.`);
+      if (response.data.test_run_id) {
+        setSuiteRuns([{
+          id: response.data.test_run_id,
+          testCaseId: testCaseId,
+          title: tc?.title || `Test Case #${testCaseId}`,
+          status: 'PENDING'
+        }]);
+      }
       if (response.data.task_id && onTaskTriggered) {
         onTaskTriggered(response.data.task_id);
       }
@@ -482,6 +567,181 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
         </div>
       )}
 
+      {/* Live Test Suite Execution Progress Dashboard */}
+      {showSuiteProgress && suiteRuns.length > 0 && (
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95), rgba(30, 27, 75, 0.9))',
+          border: '1px solid rgba(139, 92, 246, 0.35)',
+          borderRadius: '14px',
+          padding: '20px',
+          marginBottom: '24px',
+          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.4)'
+        }}>
+          {/* Dashboard Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '1.4rem' }}>
+                {isSuiteActive ? '⚡' : '✅'}
+              </span>
+              <div>
+                <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#ffffff' }}>
+                  {isSuiteActive ? 'Test Suite Execution In Progress...' : 'Test Suite Execution Completed'}
+                </h4>
+                <span style={{ fontSize: '0.8rem', color: isSuiteActive ? '#a7f3d0' : '#9ca3af' }}>
+                  {isSuiteActive 
+                    ? `Executing live Playwright scenarios (${elapsedSeconds}s elapsed)`
+                    : `Completed ${doneSuiteCount} of ${totalSuiteCount} tests in ${elapsedSeconds}s`}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {isSuiteActive && (
+                <button
+                  onClick={handleStopGeneration}
+                  style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                    color: '#fca5a5',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    padding: '6px 14px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '0.8rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  🛑 Stop Execution
+                </button>
+              )}
+              <button
+                onClick={() => setShowSuiteProgress(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  fontSize: '1.1rem'
+                }}
+                title="Close progress panel"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {/* Metric Counter Stat Cards */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+            gap: '10px',
+            marginBottom: '18px'
+          }}>
+            <div style={{ background: 'rgba(255, 255, 255, 0.05)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>TOTAL</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#fff' }}>{totalSuiteCount}</div>
+            </div>
+            <div style={{ background: 'rgba(16, 185, 129, 0.12)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+              <div style={{ fontSize: '0.7rem', color: '#6ee7b7', fontWeight: 700, textTransform: 'uppercase' }}>DONE (PASSED)</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#34d399' }}>{passedSuiteCount}</div>
+            </div>
+            <div style={{ background: 'rgba(239, 68, 68, 0.12)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
+              <div style={{ fontSize: '0.7rem', color: '#fca5a5', fontWeight: 700, textTransform: 'uppercase' }}>FAILED</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#f87171' }}>{failedSuiteCount}</div>
+            </div>
+            <div style={{ background: 'rgba(59, 130, 246, 0.12)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
+              <div style={{ fontSize: '0.7rem', color: '#93c5fd', fontWeight: 700, textTransform: 'uppercase' }}>RUNNING</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#60a5fa' }}>{runningSuiteCount}</div>
+            </div>
+            <div style={{ background: 'rgba(245, 158, 11, 0.12)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+              <div style={{ fontSize: '0.7rem', color: '#fde68a', fontWeight: 700, textTransform: 'uppercase' }}>PENDING</div>
+              <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#fbbf24' }}>{pendingSuiteCount}</div>
+            </div>
+          </div>
+
+          {/* Dual Visual Progress Bar */}
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 600, color: '#d1d5db', marginBottom: '6px' }}>
+              <span>Execution Progress: {doneSuiteCount} / {totalSuiteCount} Done</span>
+              <span>{suitePercentComplete}%</span>
+            </div>
+            <div style={{
+              height: '10px',
+              width: '100%',
+              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              borderRadius: '5px',
+              overflow: 'hidden',
+              display: 'flex'
+            }}>
+              <div style={{ width: `${(passedSuiteCount / totalSuiteCount) * 100}%`, backgroundColor: '#10b981', transition: 'width 0.4s ease' }} title="Passed" />
+              <div style={{ width: `${(failedSuiteCount / totalSuiteCount) * 100}%`, backgroundColor: '#ef4444', transition: 'width 0.4s ease' }} title="Failed" />
+              <div style={{ width: `${(runningSuiteCount / totalSuiteCount) * 100}%`, backgroundColor: '#3b82f6', transition: 'width 0.4s ease' }} className="animated-stripes" title="Running" />
+            </div>
+          </div>
+
+          {/* Live Run Items List */}
+          <div style={{
+            maxHeight: '200px',
+            overflowY: 'auto',
+            background: 'rgba(0, 0, 0, 0.3)',
+            borderRadius: '10px',
+            padding: '8px 12px',
+            border: '1px solid rgba(255, 255, 255, 0.05)'
+          }}>
+            {suiteRuns.map((run) => (
+              <div key={run.id} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '7px 10px',
+                borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+                fontSize: '0.82rem'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                  <span style={{ fontWeight: 600, color: '#e5e7eb', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: '380px' }}>
+                    {run.title}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {run.status === 'RUNNING' && (
+                    <span style={{ color: '#60a5fa', fontSize: '0.78rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      <span className="spinner-small" style={{ width: '12px', height: '12px' }} /> Running...
+                    </span>
+                  )}
+                  {run.status === 'PENDING' && (
+                    <span style={{ color: '#fbbf24', fontSize: '0.78rem', fontWeight: 600 }}>⏳ Queued</span>
+                  )}
+                  {run.status === 'COMPLETED' && (
+                    <span style={{ color: '#34d399', fontSize: '0.78rem', fontWeight: 700 }}>✓ Passed</span>
+                  )}
+                  {run.status === 'FAILED' && (
+                    <span style={{ color: '#f87171', fontSize: '0.78rem', fontWeight: 700 }}>✕ Failed</span>
+                  )}
+
+                  <button
+                    onClick={() => onTestExecuted(run.id)}
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                      color: '#fff',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      padding: '3px 8px',
+                      borderRadius: '5px',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Results ↗
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Test Cases Cards List */}
       {testCases.length === 0 ? (
         <div className="empty-state-card">
@@ -521,10 +781,12 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
               const category = getTestCategory(tc);
               const isVerified = tc.validation_status === 'VERIFIED';
               const isBroken = tc.validation_status === 'BROKEN';
+              const liveRun = suiteRuns.find(r => r.testCaseId === tc.id);
 
               return (
                 <div 
                   key={tc.id} 
+                  className={liveRun?.status === 'RUNNING' ? 'card-running-active' : ''}
                   style={{
                     background: 'rgba(11, 8, 22, 0.45)',
                     border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -541,6 +803,38 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                       <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#fff' }}>{tc.title}</h4>
                       
+                      {liveRun && showSuiteProgress && (
+                        <span style={{
+                          padding: '2px 9px',
+                          borderRadius: '12px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          backgroundColor: liveRun.status === 'RUNNING' ? 'rgba(59, 130, 246, 0.2)'
+                            : liveRun.status === 'PENDING' ? 'rgba(245, 158, 11, 0.2)'
+                            : liveRun.status === 'COMPLETED' ? 'rgba(16, 185, 129, 0.2)'
+                            : 'rgba(239, 68, 68, 0.2)',
+                          color: liveRun.status === 'RUNNING' ? '#60a5fa'
+                            : liveRun.status === 'PENDING' ? '#fbbf24'
+                            : liveRun.status === 'COMPLETED' ? '#34d399'
+                            : '#f87171',
+                          border: `1px solid ${
+                            liveRun.status === 'RUNNING' ? 'rgba(59, 130, 246, 0.4)'
+                            : liveRun.status === 'PENDING' ? 'rgba(245, 158, 11, 0.4)'
+                            : liveRun.status === 'COMPLETED' ? 'rgba(16, 185, 129, 0.4)'
+                            : 'rgba(239, 68, 68, 0.4)'
+                          }`
+                        }}>
+                          {liveRun.status === 'RUNNING' && <span className="spinner-small" style={{ width: '10px', height: '10px' }} />}
+                          {liveRun.status === 'RUNNING' && '⚡ Running...'}
+                          {liveRun.status === 'PENDING' && '⏳ Pending'}
+                          {liveRun.status === 'COMPLETED' && '✓ Passed'}
+                          {liveRun.status === 'FAILED' && '✕ Failed'}
+                        </span>
+                      )}
+
                       {category === 'Access Control' && (
                         <span style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 600, backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
                           Access Control

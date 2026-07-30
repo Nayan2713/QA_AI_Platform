@@ -125,8 +125,7 @@ def detect_bugs(test_run_id):
     try:
         with transaction.atomic():
             # Clear previous bugs for this test case to avoid duplicates across runs
-            #Bug.objects.filter(test_run__test_case=test_run.test_case).delete()
-            Bug.objects.filter(test_run=test_run).delete()
+            Bug.objects.filter(test_run__test_case=test_run.test_case).delete()
 
             
             seen_bugs_in_run = set()
@@ -276,16 +275,19 @@ def start_agentic_bug_detection(self, app_id):
         obj, created = CeleryTask.objects.get_or_create(
             task_id=task_id,
             defaults={
+                'app_id': app_id,
                 'task_type': 'bug_detection',
                 'status': 'progress',
                 'progress': 10,
-                'result': {"status_text": "Starting agentic bug audit..."}
+                'result': {"status_text": "Starting agentic bug audit...", "app_id": app_id}
             }
         )
         if not created:
+            obj.app_id = app_id
             obj.status = 'progress'
             obj.progress = 10
-            obj.result = {"status_text": "Starting agentic bug audit..."}
+            if isinstance(obj.result, dict):
+                obj.result["app_id"] = app_id
             obj.save()
         return obj
 

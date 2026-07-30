@@ -3,13 +3,20 @@ from django.contrib.auth.models import User
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from urllib.parse import urlparse
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember, Notification
 
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ('id', 'username', 'email')
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ('id', 'user', 'title', 'message', 'level', 'link', 'is_read', 'created_at')
+        read_only_fields = ('id', 'user', 'created_at')
 
 
 class TeamMemberSerializer(serializers.ModelSerializer):
@@ -77,9 +84,16 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
     def get_bug_count(self, obj):
         from django.db.models import Q
-        return Bug.objects.filter(
+        bugs = Bug.objects.filter(
             Q(test_run__test_case__app=obj) | Q(application=obj)
-        ).values('title', 'severity').distinct().count()
+        ).values('title', 'bug_type')
+        seen = set()
+        for b in bugs:
+            norm_title = (b['title'] or '').strip().lower()
+            btype = (b['bug_type'] or '').lower()
+            norm_type = 'ui' if btype in ['ui', 'ui_issue', 'ui_bug', 'visual'] else btype
+            seen.add((norm_title, norm_type))
+        return len(seen)
 
 
     def validate(self, attrs):
@@ -129,7 +143,7 @@ class TestCaseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TestCase
-        fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'generation_context', 'created_at')
+        fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'generation_context', 'self_healed_count', 'created_at')
         read_only_fields = ()
 
     def get_model_used(self, obj):
@@ -192,7 +206,7 @@ class TestCaseListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = TestCase
-        fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'created_at')
+        fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'self_healed_count', 'created_at')
 
     def get_model_used(self, obj):
         if hasattr(obj, 'model_used_annotated'):
@@ -205,7 +219,7 @@ class TestCaseListSerializer(serializers.ModelSerializer):
 class TestResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestResult
-        fields = ('id', 'test_run', 'step_number', 'status', 'error', 'screenshot', 'created_at')
+        fields = ('id', 'test_run', 'step_number', 'status', 'error', 'screenshot', 'auto_healed', 'healing_details', 'created_at')
 
 
 class TestResultListSerializer(serializers.ModelSerializer):
@@ -221,16 +235,28 @@ class TestRunSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TestRun
-        fields = ('id', 'test_case', 'test_case_title', 'app_url', 'status', 'metadata', 'results', 'bugs_found', 'created_at')
+        fields = ('id', 'test_case', 'test_case_title', 'app_url', 'status', 'metadata', 'results', 'bugs_found', 'self_healed_count', 'created_at')
 
 
 class TestRunListSerializer(serializers.ModelSerializer):
     test_case_title = serializers.CharField(source='test_case.title', read_only=True)
     app_url = serializers.CharField(source='test_case.app.url', read_only=True)
+    passed_steps = serializers.SerializerMethodField(read_only=True)
+    total_steps = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = TestRun
-        fields = ('id', 'test_case', 'test_case_title', 'app_url', 'status', 'bugs_found', 'created_at')
+        fields = ('id', 'test_case', 'test_case_title', 'app_url', 'status', 'bugs_found', 'self_healed_count', 'passed_steps', 'total_steps', 'created_at')
+
+    def get_passed_steps(self, obj):
+        if hasattr(obj, 'metadata') and isinstance(obj.metadata, dict):
+            return obj.metadata.get('passed_steps', 0)
+        return 0
+
+    def get_total_steps(self, obj):
+        if hasattr(obj, 'metadata') and isinstance(obj.metadata, dict):
+            return obj.metadata.get('total_steps', 0)
+        return 0
 
 
 class APIEndpointSerializer(serializers.ModelSerializer):
