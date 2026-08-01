@@ -43,9 +43,6 @@ services:
 
   # --- Celery Worker (Production Limits) ---
   celery_worker:
-    build:
-      context: ./backend
-      target: base
     command: celery -A qa_engine worker -l info --concurrency=4
     environment:
       - DEBUG=False
@@ -60,9 +57,6 @@ services:
 
   # --- Celery Beat (Production Limits) ---
   celery_beat:
-    build:
-      context: ./backend
-      target: base
     environment:
       - DEBUG=False
     deploy:

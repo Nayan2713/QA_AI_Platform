@@ -28,9 +28,6 @@ services:
 
   # Celery Worker (Dev Mounts)
   celery_worker:
-    build:
-      context: ./backend
-      target: base
     volumes:
       - ./backend:/app
     environment:
@@ -39,9 +36,6 @@ services:
 
   # Celery Beat (Dev Mounts)
   celery_beat:
-    build:
-      context: ./backend
-      target: base
     volumes:
       - ./backend:/app
     environment:
