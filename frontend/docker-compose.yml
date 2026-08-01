@@ -1,0 +1,14 @@
+services:
+  # --- React Frontend ---
+  frontend:
+    build:
+      context: .
+    container_name: qa_platform_frontend
+    restart: always
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    external: true
+    name: qa_platform_network

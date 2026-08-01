@@ -5,4 +5,5 @@ services:
     ports: []
   nginx:
     ports:
-      - "80:80"
+      - "81:80"
+

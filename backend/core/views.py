@@ -303,7 +303,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         app = self.get_object()
         from qa_engine.celery import app as celery_app
         from qa_engine.redis_client import get_redis_client
-        from tasks.cancellation import set_stop_flag
+        from tasks.cancellation import set_stop_flag, revoke_celery_task
 
         stopped_task_ids = []
         errors = []
@@ -339,14 +339,9 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
             for tid in all_task_ids:
                 try:
-                    # Set cooperative stop flag (works for threads)
+                    # Set cooperative stop flag and revoke task safely
                     set_stop_flag(tid)
-
-                    # Try Celery revoke
-                    try:
-                        celery_app.control.revoke(tid, terminate=True, signal='SIGTERM')
-                    except Exception:
-                        pass
+                    revoke_celery_task(tid)
 
                     # Mark CeleryTask as failed in DB
                     updated = CeleryTask.objects.filter(
@@ -1138,16 +1133,10 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
         task = self.get_object()
         target_task_id = task.task_id
         
-        # 1. Set cooperative stop flag (for thread workers on Windows & Unix)
-        from tasks.cancellation import set_stop_flag
+        # 1. Set cooperative stop flag & revoke Celery task safely
+        from tasks.cancellation import set_stop_flag, revoke_celery_task
         set_stop_flag(target_task_id)
-
-        # 2. Revoke the Celery task (SIGTERM is cross-platform)
-        from qa_engine.celery import app as celery_app
-        try:
-            celery_app.control.revoke(target_task_id, terminate=True, signal='SIGTERM')
-        except Exception as e:
-            logger.warning(f"Failed to revoke celery task {target_task_id}: {e}")
+        revoke_celery_task(target_task_id)
         
         # 3. Update status in database
         task.status = 'failed'

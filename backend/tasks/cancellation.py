@@ -74,3 +74,18 @@ def check_cancelled(task_id: str) -> None:
     if is_cancelled(task_id):
         logger.info(f"[CANCELLATION] Task {task_id} received stop signal — aborting.")
         raise TaskCancelled(f"Task {task_id} was stopped by user.")
+
+
+def revoke_celery_task(task_id: str) -> None:
+    """
+    Safely revoke a Celery task without passing terminate=True.
+    Passing terminate=True causes NotImplementedError on thread pools (-P threads).
+    Cooperative cancellation via set_stop_flag handles stopping active threads.
+    """
+    try:
+        from qa_engine.celery import app as celery_app
+        celery_app.control.revoke(task_id, terminate=False)
+        logger.info(f"[CANCELLATION] Safely revoked Celery task {task_id}")
+    except Exception as e:
+        logger.warning(f"[CANCELLATION] Failed to revoke task {task_id}: {e}")
+

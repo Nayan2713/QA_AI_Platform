@@ -181,7 +181,7 @@ services:
       - static_volume:/app/static:ro
       - media_volume:/app/media:ro
     ports:
-      - "80:80"
+      - "81:80"
     networks:
       - app_network
     depends_on:
@@ -192,16 +192,23 @@ services:
 
 volumes:
   postgres_data:
+    name: qa_platform_postgres_data
     driver: local
   redis_data:
+    name: qa_platform_redis_data
     driver: local
   static_volume:
+    name: qa_platform_static_volume
     driver: local
   media_volume:
+    name: qa_platform_media_volume
     driver: local
   logs_volume:
+    name: qa_platform_logs_volume
     driver: local
 
 networks:
   app_network:
     driver: bridge
+    name: qa_platform_network
+

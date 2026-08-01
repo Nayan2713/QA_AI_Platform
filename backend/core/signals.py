@@ -292,12 +292,9 @@ def application_pre_delete(sender, instance, **kwargs):
                 if val and int(val) == instance.id:
                     task_id = key.decode().replace('task_app:', '', 1)
                     # Set cooperative stop flag and revoke Celery task safely across OS platforms
-                    from tasks.cancellation import set_stop_flag
+                    from tasks.cancellation import set_stop_flag, revoke_celery_task
                     set_stop_flag(task_id)
-                    try:
-                        celery_app.control.revoke(task_id, terminate=True, signal='SIGTERM')
-                    except Exception:
-                        pass
+                    revoke_celery_task(task_id)
                     
                     # Update task status in database
                     try:

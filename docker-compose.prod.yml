@@ -91,7 +91,7 @@ services:
   # --- Nginx Ingress Reverse Proxy ---
   nginx:
     ports:
-      - "80:80"
+      - "81:80"
       # Uncomment if running HTTPS/SSL
       # - "443:443"
     deploy:
