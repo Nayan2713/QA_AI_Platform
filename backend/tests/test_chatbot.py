@@ -17,9 +17,8 @@ class ChatbotAPITests(TestCase):
         )
         self.app_a = Application.objects.create(
             user=self.user_a,
-            name='App A',
             url='https://appa.example.com',
-            environment='production'
+            base_url='https://appa.example.com'
         )
         self.tc_a = TestCaseModel.objects.create(
             app=self.app_a,
@@ -40,9 +39,8 @@ class ChatbotAPITests(TestCase):
         )
         self.app_b = Application.objects.create(
             user=self.user_b,
-            name='Secret App B',
             url='https://appb.example.com',
-            environment='production'
+            base_url='https://appb.example.com'
         )
 
     def test_unauthenticated_chatbot_query_returns_401(self):
@@ -56,8 +54,8 @@ class ChatbotAPITests(TestCase):
         
         # Check User A context includes App A
         app_names_a = [app['name'] for app in context_a['applications']]
-        self.assertIn('App A', app_names_a)
-        self.assertNotIn('Secret App B', app_names_a)
+        self.assertIn('https://appa.example.com', app_names_a)
+        self.assertNotIn('https://appb.example.com', app_names_a)
 
     def test_authenticated_chatbot_query_user_a(self):
         """Authenticated User A can query the chatbot and receive answers about App A."""
@@ -68,8 +66,8 @@ class ChatbotAPITests(TestCase):
         res_data = response.data
         self.assertIn('response', res_data)
         self.assertIn('suggestions', res_data)
-        self.assertIn('App A', res_data['response'])
-        self.assertNotIn('Secret App B', res_data['response'])
+        self.assertIn('https://appa.example.com', res_data['response'])
+        self.assertNotIn('https://appb.example.com', res_data['response'])
 
     def test_chatbot_rejects_cross_user_queries(self):
         """Chatbot rejects attempts to query about User B."""
@@ -79,4 +77,4 @@ class ChatbotAPITests(TestCase):
         
         res_data = response.data
         self.assertIn('Access Denied', res_data['response'])
-        self.assertNotIn('Secret App B', res_data['response'])
+        self.assertNotIn('https://appb.example.com', res_data['response'])

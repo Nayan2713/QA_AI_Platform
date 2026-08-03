@@ -62,7 +62,7 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   testCases,
   totalCount,
   page = 1,
-  pageSize = 100,
+  pageSize = 25,
   onPageChange,
   onPageSizeChange,
   onTestExecuted,
@@ -312,10 +312,15 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
     try {
       await api.post(`applications/${appId}/stop-all/`);
       setGenerating(false);
-      setSuccessMsg('All tasks stopped.');
+      setExecutingAll(false);
+      setExecutingTestCaseId(null);
+      setSuccessMsg('All tasks stopped successfully.');
       onRefreshTests();
     } catch (err) {
       console.error('Failed to stop tasks:', err);
+      setGenerating(false);
+      setExecutingAll(false);
+      setExecutingTestCaseId(null);
       setError('Failed to stop the tasks.');
     }
   };

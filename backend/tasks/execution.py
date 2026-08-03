@@ -52,6 +52,24 @@ def get_shared_browser() -> Browser:
     return browser
 
 
+def close_thread_browser():
+    """Safely stop thread-local Playwright browser instance if active."""
+    playwright = getattr(_local_pool, "playwright", None)
+    browser = getattr(_local_pool, "browser", None)
+    if browser:
+        try:
+            browser.close()
+        except Exception:
+            pass
+    if playwright:
+        try:
+            playwright.stop()
+        except Exception:
+            pass
+    _local_pool.browser = None
+    _local_pool.playwright = None
+
+
 # ─────────────────────────────────────────────────────────────
 # FIX 2: Session cache — store validated session state per app
 #         in memory so the "is session still valid?" check
@@ -394,6 +412,8 @@ def execute_test(self, test_run_id, model_choice=None):
                 step_passed = True
                 error_msg = None
                 screenshot_b64 = None
+                step_auto_healed = False
+                step_healing_details = None
 
                 for attempt in range(2):
                     step_passed = True

@@ -277,7 +277,7 @@ def get_llm(application=None, model_choice: str | None = None):
 # Convenience wrapper
 # ---------------------------------------------------------------------------
 
-def llm_predict(llm, prompt=None, model_choice=None) -> str:
+def llm_predict(llm, prompt=None, model_choice=None, timeout=60, task_id=None) -> str:
     """
     Runs a single prompt through get_llm()'s configured instance and
     returns plain text. Backwards compatible with:
@@ -285,6 +285,14 @@ def llm_predict(llm, prompt=None, model_choice=None) -> str:
       - llm_predict(llm, prompt)
       - llm_predict(llm, prompt, model_choice=...)
     """
+    if task_id:
+        try:
+            from tasks.cancellation import check_cancelled
+            check_cancelled(task_id)
+        except Exception as e:
+            if type(e).__name__ == "TaskCancelled":
+                raise
+
     if prompt is None:
         actual_prompt = llm
         actual_llm = get_llm()
@@ -292,7 +300,19 @@ def llm_predict(llm, prompt=None, model_choice=None) -> str:
         actual_prompt = prompt
         actual_llm = llm if not isinstance(llm, str) else get_llm(model_choice=model_choice)
 
+    if hasattr(actual_llm, 'request_timeout') and actual_llm.request_timeout is None:
+        actual_llm.request_timeout = timeout
+
     response = actual_llm.invoke(actual_prompt)
+
+    if task_id:
+        try:
+            from tasks.cancellation import check_cancelled
+            check_cancelled(task_id)
+        except Exception as e:
+            if type(e).__name__ == "TaskCancelled":
+                raise
+
     return response.content.strip() if hasattr(response, "content") else str(response).strip()
 
 

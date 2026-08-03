@@ -854,6 +854,7 @@ class BrowserDiscoveryService:
                             pass
 
                     try:
+                        self._check_stop(task_id)
                         await worker_page.goto(current_url, wait_until="domcontentloaded", timeout=8000)
                         self._check_stop(task_id)
                         await worker_page.wait_for_timeout(800)

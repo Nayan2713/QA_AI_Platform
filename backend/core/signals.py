@@ -197,38 +197,6 @@ def model_post_save(sender, instance, created, **kwargs):
                         level = 'error'
                 link = f"/scans/{instance.app_id}" if instance.app_id else "/dashboard"
 
-            elif isinstance(instance, Bug) and created:
-                app_name = getattr(instance.application, 'name', instance.application.url) if instance.application else "App"
-                sev = (instance.severity or 'medium').upper()
-                notif_title = f"New Defect Identified: {instance.title[:45]}"
-                notif_msg = f"[{sev}] {instance.description[:120]} ({app_name})"
-                level = 'error' if instance.severity in ('high', 'critical') else 'warning'
-                link = f"/bugs"
-
-            elif isinstance(instance, Application) and instance.status in ('DISCOVERED', 'FAILED'):
-                app_name = getattr(instance, 'name', instance.url)
-                if instance.status == 'DISCOVERED':
-                    notif_title = f"Discovery Scan Completed"
-                    notif_msg = f"Discovery finished for {app_name}. Cataloged {instance.pages.count()} page(s) and {instance.api_endpoints.count()} API endpoint(s)."
-                    level = 'success'
-                else:
-                    notif_title = f"Discovery Scan Failed"
-                    notif_msg = f"Discovery failed for {app_name}: {instance.login_error or 'Check scan details'}"
-                    level = 'error'
-                link = f"/scans/{instance.id}"
-
-            elif isinstance(instance, TestRun) and instance.status in ('COMPLETED', 'FAILED'):
-                tc_title = getattr(instance.test_case, 'title', f"Run #{instance.id}")
-                if instance.status == 'COMPLETED':
-                    notif_title = f"Test Execution Passed: {tc_title}"
-                    notif_msg = f"Test Run #{instance.id} completed. {instance.bugs_found} bug(s) detected."
-                    level = 'success' if instance.bugs_found == 0 else 'warning'
-                else:
-                    notif_title = f"Test Execution Failed: {tc_title}"
-                    notif_msg = f"Test Run #{instance.id} failed during browser execution."
-                    level = 'error'
-                link = f"/test-runs/{instance.id}"
-
             if notif_title and notif_msg:
                 notif = Notification.objects.create(
                     user=user_obj,

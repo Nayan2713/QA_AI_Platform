@@ -45,7 +45,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [isTestCasesLoading, setIsTestCasesLoading] = useState(true);
   const [testCasesError, setTestCasesError] = useState<any>(null);
   const [testCasesPage, setTestCasesPage] = useState<number>(1);
-  const [testCasesPageSize, setTestCasesPageSize] = useState<number>(100);
+  const [testCasesPageSize, setTestCasesPageSize] = useState<number>(25);
   const [totalTestCasesCount, setTotalTestCasesCount] = useState<number>(0);
 
   const [bugs, setBugs] = useState<Bug[]>([]);
@@ -158,11 +158,12 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   }, [app]);
 
   // 2. Fetch Test Cases
+  const [testCasesInitialLoaded, setTestCasesInitialLoaded] = useState(false);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    if (testCases.length === 0) setIsTestCasesLoading(true);
+    if (!testCasesInitialLoaded) setIsTestCasesLoading(true);
     setTestCasesError(null);
 
     const fetchTestCases = async (retryCount = 0) => {
@@ -175,6 +176,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           setTestCases(data);
           setTotalTestCasesCount(totalCount);
           setTestCasesError(null);
+          setTestCasesInitialLoaded(true);
         }
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
@@ -474,12 +476,15 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       await api.post(`applications/${appId}/stop-all/`);
       setActiveTaskId(null);
       setCurrentTask(null);
-      addToast('info', 'Task Terminated', 'All running and queued task workflows were stopped.');
+      setDiscovering(false);
+      addToast('info', 'Task Terminated', 'All running and queued task workflows were stopped successfully.');
       await refetchAll();
     } catch (err) {
       console.error('Failed to stop all tasks:', err);
       setActiveTaskId(null);
       setCurrentTask(null);
+      setDiscovering(false);
+      addToast('info', 'Task Termination Request Sent', 'Stop signal sent to server.');
     }
   };
 
@@ -1098,7 +1103,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
           {activeTab === 'tests' && (
             <div style={{ position: 'relative' }}>
-              {isTestCasesLoading ? (
+              {isTestCasesLoading && !testCasesInitialLoaded ? (
                 <div className="glass-card" style={{ padding: '40px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
                   <div className="spinner-small" style={{ borderTopColor: '#8b5cf6' }} />
                   <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }}>Loading test suite...</p>
