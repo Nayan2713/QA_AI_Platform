@@ -28,3 +28,22 @@ app.conf.imports = (
 @app.task(bind=True, ignore_result=True)
 def debug_task(self):
     print(f'Request: {self.request!r}')
+
+
+from celery.signals import task_prerun, task_postrun, task_failure
+from django.db import close_old_connections, connections
+
+@task_prerun.connect
+def cleanup_db_connections_prerun(*args, **kwargs):
+    close_old_connections()
+
+@task_postrun.connect
+def cleanup_db_connections_postrun(*args, **kwargs):
+    close_old_connections()
+    connections.close_all()
+
+@task_failure.connect
+def cleanup_db_connections_failure(*args, **kwargs):
+    close_old_connections()
+    connections.close_all()
+

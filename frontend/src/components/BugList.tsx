@@ -4,6 +4,7 @@ import api from '../lib/api';
 
 interface BugListProps {
   bugs: Bug[];
+  isLoading?: boolean;
   onRefreshBugs?: () => void;
   onRunTestCase?: (testCaseId: number) => void;
   activeTaskId?: string | null;
@@ -11,11 +12,13 @@ interface BugListProps {
 
 export const BugList: React.FC<BugListProps> = ({ 
   bugs, 
+  isLoading,
   onRefreshBugs,
   onRunTestCase,
   activeTaskId
 }) => {
   const [selectedBugId, setSelectedBugId] = useState<number | null>(null);
+  const [activeCategoryTab, setActiveCategoryTab] = useState<'all' | 'functional' | 'ui' | 'audit'>('all');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -34,6 +37,10 @@ export const BugList: React.FC<BugListProps> = ({
   const uiBugs = filteredBugs.filter(b => b.bug_type === 'ui' || b.bug_type === 'ui_issue' || b.bug_type === 'ui_bug' || b.bug_type === 'visual');
   const testCaseBugs = filteredBugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual');
   const auditBugs = filteredBugs.filter(b => b.bug_type === 'security' || b.bug_type === 'accessibility');
+
+  const totalFunctionalCount = bugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual').length;
+  const totalUiCount = bugs.filter(b => b.bug_type === 'ui' || b.bug_type === 'ui_issue' || b.bug_type === 'ui_bug' || b.bug_type === 'visual').length;
+  const totalAuditCount = bugs.filter(b => b.bug_type === 'security' || b.bug_type === 'accessibility').length;
 
   const renderBugItem = (bug: Bug) => {
     const isExpanded = selectedBugId === bug.id;
@@ -310,6 +317,20 @@ export const BugList: React.FC<BugListProps> = ({
     );
   };
 
+  if (isLoading && bugs.length === 0) {
+    return (
+      <div className="glass-card bug-list-card" style={{ padding: '32px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+          <div className="spinner"></div>
+          <span className="pulsing-text" style={{ fontSize: '1rem', fontWeight: 600 }}>Loading defect registry...</span>
+        </div>
+        <div className="skeleton-shimmer" style={{ width: '100%', height: '48px', borderRadius: '8px', marginBottom: '12px' }} />
+        <div className="skeleton-shimmer" style={{ width: '100%', height: '48px', borderRadius: '8px', marginBottom: '12px' }} />
+        <div className="skeleton-shimmer" style={{ width: '100%', height: '48px', borderRadius: '8px' }} />
+      </div>
+    );
+  }
+
   return (
     <div className="glass-card bug-list-card">
       <div className="card-header bugs-header">
@@ -337,6 +358,120 @@ export const BugList: React.FC<BugListProps> = ({
             🔄 Refresh Registry
           </button>
         )}
+      </div>
+
+      {/* Category Sub-Tabs Navigation Bar */}
+      <div style={{
+        display: 'flex',
+        gap: '8px',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+        marginBottom: '16px',
+        overflowX: 'auto',
+        paddingBottom: '8px'
+      }}>
+        <button
+          type="button"
+          onClick={() => setActiveCategoryTab('all')}
+          style={{
+            background: activeCategoryTab === 'all' ? 'rgba(139, 92, 246, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+            border: activeCategoryTab === 'all' ? '1px solid rgba(139, 92, 246, 0.5)' : '1px solid rgba(255, 255, 255, 0.08)',
+            color: activeCategoryTab === 'all' ? '#a78bfa' : 'rgba(255, 255, 255, 0.7)',
+            padding: '8px 16px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: '0.85rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <span>📊 All Defects</span>
+          <span style={{
+            background: 'rgba(255, 255, 255, 0.15)',
+            padding: '2px 6px',
+            borderRadius: '10px',
+            fontSize: '0.75rem'
+          }}>{bugs.length}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveCategoryTab('functional')}
+          style={{
+            background: activeCategoryTab === 'functional' ? 'rgba(248, 113, 113, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+            border: activeCategoryTab === 'functional' ? '1px solid rgba(248, 113, 113, 0.5)' : '1px solid rgba(255, 255, 255, 0.08)',
+            color: activeCategoryTab === 'functional' ? '#f87171' : 'rgba(255, 255, 255, 0.7)',
+            padding: '8px 16px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: '0.85rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <span>🛠️ Functional & Test Case Failures</span>
+          <span style={{
+            background: 'rgba(248, 113, 113, 0.2)',
+            padding: '2px 6px',
+            borderRadius: '10px',
+            fontSize: '0.75rem'
+          }}>{totalFunctionalCount}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveCategoryTab('ui')}
+          style={{
+            background: activeCategoryTab === 'ui' ? 'rgba(192, 132, 252, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+            border: activeCategoryTab === 'ui' ? '1px solid rgba(192, 132, 252, 0.5)' : '1px solid rgba(255, 255, 255, 0.08)',
+            color: activeCategoryTab === 'ui' ? '#c084fc' : 'rgba(255, 255, 255, 0.7)',
+            padding: '8px 16px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: '0.85rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <span>🎨 UI & Visual Layout Defects</span>
+          <span style={{
+            background: 'rgba(192, 132, 252, 0.2)',
+            padding: '2px 6px',
+            borderRadius: '10px',
+            fontSize: '0.75rem'
+          }}>{totalUiCount}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveCategoryTab('audit')}
+          style={{
+            background: activeCategoryTab === 'audit' ? 'rgba(96, 165, 250, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+            border: activeCategoryTab === 'audit' ? '1px solid rgba(96, 165, 250, 0.5)' : '1px solid rgba(255, 255, 255, 0.08)',
+            color: activeCategoryTab === 'audit' ? '#60a5fa' : 'rgba(255, 255, 255, 0.7)',
+            padding: '8px 16px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: '0.85rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <span>🛡️ Security & Accessibility Audits</span>
+          <span style={{
+            background: 'rgba(96, 165, 250, 0.2)',
+            padding: '2px 6px',
+            borderRadius: '10px',
+            fontSize: '0.75rem'
+          }}>{totalAuditCount}</span>
+        </button>
       </div>
 
       {/* Filters Panel */}
@@ -458,7 +593,7 @@ export const BugList: React.FC<BugListProps> = ({
         </div>
       ) : (
         <div className="bugs-table-container">
-          {testCaseBugs.length > 0 && (
+          {(activeCategoryTab === 'all' || activeCategoryTab === 'functional') && (
             <div className="bugs-section" style={{ marginBottom: '32px' }}>
               <h4 style={{ 
                 color: '#f87171', 
@@ -473,13 +608,26 @@ export const BugList: React.FC<BugListProps> = ({
               }}>
                 🛠️ Functional & Test Case Failures ({testCaseBugs.length})
               </h4>
-              <div className="bugs-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {testCaseBugs.map((bug) => renderBugItem(bug))}
-              </div>
+              {testCaseBugs.length > 0 ? (
+                <div className="bugs-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {testCaseBugs.map((bug) => renderBugItem(bug))}
+                </div>
+              ) : (
+                <div style={{
+                  padding: '14px 18px',
+                  background: 'rgba(248, 113, 113, 0.04)',
+                  border: '1px dashed rgba(248, 113, 113, 0.2)',
+                  borderRadius: '10px',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  fontSize: '0.85rem'
+                }}>
+                  ✨ Zero functional or test case failure defects in this view.
+                </div>
+              )}
             </div>
           )}
 
-          {(filterType === 'all' || filterType === 'ui') && (
+          {(activeCategoryTab === 'all' || activeCategoryTab === 'ui') && (
             <div className="bugs-section" style={{ marginBottom: '32px' }}>
               <h4 style={{ 
                 color: '#c084fc', 
@@ -516,7 +664,7 @@ export const BugList: React.FC<BugListProps> = ({
             </div>
           )}
           
-          {auditBugs.length > 0 && (
+          {(activeCategoryTab === 'all' || activeCategoryTab === 'audit') && (
             <div className="bugs-section" style={{ marginTop: (testCaseBugs.length > 0 || uiBugs.length > 0) ? '32px' : '0' }}>
               <h4 style={{ 
                 color: '#60a5fa', 
@@ -531,9 +679,22 @@ export const BugList: React.FC<BugListProps> = ({
               }}>
                 🛡️ Security & Accessibility Audits ({auditBugs.length})
               </h4>
-              <div className="bugs-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {auditBugs.map((bug) => renderBugItem(bug))}
-              </div>
+              {auditBugs.length > 0 ? (
+                <div className="bugs-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {auditBugs.map((bug) => renderBugItem(bug))}
+                </div>
+              ) : (
+                <div style={{
+                  padding: '14px 18px',
+                  background: 'rgba(96, 165, 250, 0.04)',
+                  border: '1px dashed rgba(96, 165, 250, 0.2)',
+                  borderRadius: '10px',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  fontSize: '0.85rem'
+                }}>
+                  ✨ Zero security or accessibility audit defects in this view.
+                </div>
+              )}
             </div>
           )}
         </div>

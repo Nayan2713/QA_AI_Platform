@@ -185,6 +185,20 @@ def model_post_save(sender, instance, created, **kwargs):
                         notif_title = f"Discovery Scan Failed"
                         notif_msg = f"Discovery failed for {app_name}: {instance.error or 'Check task details'}"
                         level = 'error'
+                elif 'batch' in task_type:
+                    tests_count = (instance.result or {}).get('batch_total', 0)
+                    if instance.status == 'success':
+                        notif_title = f"Test Suite Execution Completed"
+                        notif_msg = f"Executed batch of {tests_count} test case(s) for {app_name}."
+                        level = 'success'
+                    else:
+                        notif_title = f"Test Suite Execution Failed"
+                        notif_msg = f"Batch test execution encountered errors for {app_name}."
+                        level = 'error'
+                elif task_type == 'execution':
+                    # Suppress single test run notifications to avoid notification bell spam
+                    notif_title = None
+                    notif_msg = None
                 else:
                     task_label = (instance.task_type or 'Background Task').replace('_', ' ').title()
                     if instance.status == 'success':

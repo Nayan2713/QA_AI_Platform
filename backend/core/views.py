@@ -88,10 +88,22 @@ def check_team_permission(user, owner, action):
         if role not in ['owner', 'admin', 'member']:
             raise PermissionDenied("Viewers have read-only access.")
 
+from django.core.paginator import Paginator
+from django.utils.functional import cached_property
+
+class FastPaginator(Paginator):
+    @cached_property
+    def count(self):
+        try:
+            return self.object_list.order_by().count()
+        except Exception:
+            return super().count
+
 class StandardResultsSetPagination(PageNumberPagination):
-    page_size = 100
+    django_paginator_class = FastPaginator
+    page_size = 25
     page_size_query_param = 'page_size'
-    max_page_size = 1000
+    max_page_size = 500
 
 # Celery task imports - imported inside methods to prevent circular dependency
 # or loading issues before Celery is ready.
@@ -127,7 +139,16 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         check_team_permission(self.request.user, serializer.instance.user, 'update')
-        serializer.save()
+        app = serializer.save()
+        app.storage_state = None
+        app.login_status = 'NOT_ATTEMPTED'
+        app.login_error = None
+        app.save()
+        try:
+            from tasks.execution import invalidate_session_cache
+            invalidate_session_cache(app.id)
+        except Exception:
+            pass
 
     def perform_destroy(self, instance):
         check_team_permission(self.request.user, instance.user, 'destroy')
@@ -137,6 +158,66 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user_ids = get_user_and_team_user_ids(self.request.user)
         return Application.objects.filter(user_id__in=user_ids).order_by('-created_at')
+
+    @action(detail=True, methods=['post', 'patch'], url_path='update-credentials')
+    def update_credentials(self, request, pk=None):
+        app = self.get_object()
+        check_team_permission(request.user, app.user, 'update')
+        
+        login_url = request.data.get('login_url')
+        username = request.data.get('username')
+        password = request.data.get('password')
+        run_discovery = request.data.get('run_discovery', False)
+        
+        if login_url is not None:
+            app.login_url = login_url.strip() if login_url else None
+        if username is not None:
+            app.username = username.strip() if username else None
+        if password is not None:
+            app.password = password
+            
+        # Invalidate existing Playwright browser storage state and session cache
+        app.storage_state = None
+        app.login_status = 'NOT_ATTEMPTED'
+        app.login_error = None
+        app.save()
+
+        try:
+            from tasks.execution import invalidate_session_cache
+            invalidate_session_cache(app.id)
+        except Exception:
+            pass
+        
+        response_data = {
+            "message": "Login credentials updated successfully. Saved session cache has been reset.",
+            "application": ApplicationSerializer(app, context={'request': request}).data
+        }
+        
+        if run_discovery:
+            app.status = 'DISCOVERING'
+            app.save()
+            
+            import uuid
+            task_id = str(uuid.uuid4())
+            CeleryTask.objects.create(
+                app=app,
+                task_id=task_id,
+                task_type='discovery',
+                status='pending',
+                progress=0
+            )
+            from .signals import register_task_user, register_task_app
+            register_task_user(task_id, request.user.id)
+            register_task_app(task_id, app.id)
+            
+            from tasks.discovery import start_discovery
+            model_choice = request.data.get('model_choice')
+            start_discovery.apply_async(args=[app.id, model_choice], task_id=task_id, queue='discovery')
+            
+            response_data["task_id"] = task_id
+            response_data["status"] = "Discovery started with new credentials"
+            
+        return Response(response_data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
     def discover(self, request, pk=None):
@@ -301,83 +382,58 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         and raises TaskCancelled when the flag is set.
         """
         app = self.get_object()
-        from qa_engine.celery import app as celery_app
-        from qa_engine.redis_client import get_redis_client
         from tasks.cancellation import set_stop_flag, revoke_celery_task
 
         stopped_task_ids = []
         errors = []
 
         try:
-            # 1. Fetch active task IDs from SQL database first (robust persistent mapping)
-            db_task_ids = list(
-                CeleryTask.objects.filter(
-                    app=app,
-                    status__in=['pending', 'progress']
-                ).values_list('task_id', flat=True)
+            # Fetch all active task objects for app (pending, progress, running, started)
+            active_tasks = CeleryTask.objects.filter(
+                app=app,
+                status__in=['pending', 'progress', 'running', 'started']
             )
 
-            # 2. Redis scan fallback
-            redis_task_ids = []
-            try:
-                r = get_redis_client()
-                cursor = 0
-                while True:
-                    cursor, keys = r.scan(cursor, match='task_app:*', count=200)
-                    for key in keys:
-                        val = r.get(key)
-                        if val and int(val) == app.id:
-                            tid = key.decode().replace('task_app:', '', 1)
-                            redis_task_ids.append(tid)
-                    if cursor == 0:
-                        break
-            except Exception as redis_err:
-                errors.append(f"Redis registry lookup warning: {str(redis_err)}")
+            for t_obj in active_tasks:
+                tid = t_obj.task_id
+                set_stop_flag(tid)
+                revoke_celery_task(tid)
+                stopped_task_ids.append(tid)
 
-            # Combine unique task IDs
-            all_task_ids = list(set(db_task_ids + redis_task_ids))
+                # Unpack child tasks if batch task
+                sub_ids = (t_obj.result or {}).get('pending_tasks', []) or (t_obj.result or {}).get('child_tasks', [])
+                for sub_id in sub_ids:
+                    sub_str = str(sub_id)
+                    set_stop_flag(sub_str)
+                    revoke_celery_task(sub_str)
+                    CeleryTask.objects.filter(task_id=sub_str).update(status='failed', error='Stopped by user.')
+                    stopped_task_ids.append(sub_str)
 
-            for tid in all_task_ids:
-                try:
-                    # Set cooperative stop flag and revoke task safely
-                    set_stop_flag(tid)
-                    revoke_celery_task(tid)
-
-                    # Mark CeleryTask as failed in DB
-                    updated = CeleryTask.objects.filter(
-                        task_id=tid,
-                        status__in=['pending', 'progress']
-                    ).update(status='failed', error='Stopped by user.')
-                    stopped_task_ids.append(tid)
-                except Exception as e:
-                    errors.append(f"{tid}: {str(e)}")
+            active_tasks.update(status='failed', error='Stopped by user.')
 
         except Exception as e:
-            return Response(
-                {"status": "error", "message": f"Failed to stop tasks: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            errors.append(f"Failed to stop tasks: {str(e)}")
 
-        # Mark any PENDING/RUNNING TestRuns for this app as FAILED
+        # Mark all pending/running TestRuns for this app as FAILED
         try:
             TestRun.objects.filter(
                 test_case__app=app,
                 status__in=['PENDING', 'RUNNING']
             ).update(status='FAILED')
         except Exception as e:
-            errors.append(f"TestRun update failed: {str(e)})")
+            errors.append(f"TestRun update failed: {str(e)}")
 
-        # Reset app to IDLE if it was DISCOVERING
+        # Reset application status to IDLE
         try:
-            Application.objects.filter(id=app.id, status='DISCOVERING').update(status='IDLE')
+            Application.objects.filter(id=app.id).update(status='IDLE')
         except Exception as e:
             errors.append(f"App status reset failed: {str(e)}")
 
         return Response({
             "status": "success",
-            "stopped_count": len(stopped_task_ids),
+            "stopped_count": len(set(stopped_task_ids)),
             "errors": errors,
-            "message": f"Stop signal sent to {len(stopped_task_ids)} task(s) for this application."
+            "message": f"Stop signal sent to {len(set(stopped_task_ids))} task(s) for this application."
         })
 
     @action(detail=True, methods=['post'], url_path='scan-ui-bugs')
@@ -739,23 +795,37 @@ class TestRunViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def execute_batch(self, request):
         test_case_ids = request.data.get('test_case_ids', [])
+        app_id = request.data.get('app_id') or request.data.get('app')
         model_choice = request.data.get('model_choice')
-        if not test_case_ids:
-            return Response({"error": "test_case_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         user_ids = get_user_and_team_user_ids(request.user)
+
+        if not test_case_ids and app_id:
+            test_cases = TestCase.objects.filter(app_id=app_id, app__user_id__in=user_ids)
+        elif test_case_ids:
+            test_cases = TestCase.objects.filter(id__in=test_case_ids, app__user_id__in=user_ids)
+        else:
+            return Response({"error": "test_case_ids or app_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not test_cases.exists():
+            return Response({"error": "No valid test cases found"}, status=status.HTTP_404_NOT_FOUND)
+
+        import uuid
+        batch_task_id = f"batch-{uuid.uuid4()}"
+        first_app = test_cases.first().app
+        pending_task_ids = []
+
         runs = []
-        for tc_id in test_case_ids:
+        for test_case in test_cases:
             try:
-                test_case = TestCase.objects.get(id=tc_id, app__user_id__in=user_ids)
                 check_team_permission(request.user, test_case.app.user, 'create')
                 test_run = TestRun.objects.create(
                     test_case=test_case,
                     status='PENDING'
                 )
                 
-                import uuid
                 task_id = str(uuid.uuid4())
+                pending_task_ids.append(task_id)
                 
                 CeleryTask.objects.create(
                     app=test_case.app,
@@ -774,28 +844,45 @@ class TestRunViewSet(viewsets.ModelViewSet):
                 
                 runs.append({
                     "test_run_id": test_run.id,
-                    "test_case_id": tc_id,
+                    "test_case_id": test_case.id,
                     "task_id": task_id
                 })
-            except TestCase.DoesNotExist:
+            except Exception:
                 continue
-        return Response({"runs": runs}, status=status.HTTP_202_ACCEPTED)
+
+        if pending_task_ids:
+            from .signals import register_task_user, register_task_app
+            CeleryTask.objects.create(
+                app=first_app,
+                task_id=batch_task_id,
+                task_type='batch_execution',
+                status='pending',
+                progress=0,
+                result={
+                    "batch_total": len(pending_task_ids),
+                    "pending_tasks": pending_task_ids,
+                    "completed_count": 0,
+                    "status_text": f"Running batch suite of {len(pending_task_ids)} test case(s)..."
+                }
+            )
+            register_task_user(batch_task_id, request.user.id)
+            register_task_app(batch_task_id, first_app.id)
+
+        return Response({"runs": runs, "batch_task_id": batch_task_id}, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['get'])
     def status(self, request, pk=None):
         test_run = self.get_object()
-        serializer = self.get_serializer(test_run)
+        bugs = Bug.objects.filter(test_run=test_run)
         return Response({
             "status": test_run.status,
-            "bugs_found": test_run.bugs_found,
-            "self_healed_count": test_run.self_healed_count,
-            "data": serializer.data
+            "bugs_found": bugs.count(),
+            "data": TestRunSerializer(test_run, context={'request': request}).data
         })
 
 
 class BugViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
-    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
         user_ids = get_user_and_team_user_ids(self.request.user)
@@ -822,6 +909,16 @@ class BugViewSet(viewsets.ModelViewSet):
             else:
                 queryset = queryset.filter(bug_type=bug_type)
 
+        category = self.request.query_params.get('category')
+        if category:
+            cat = category.lower()
+            if cat == 'ui':
+                queryset = queryset.filter(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual'])
+            elif cat in ['audit', 'audits']:
+                queryset = queryset.filter(bug_type__in=['security', 'accessibility'])
+            elif cat == 'functional':
+                queryset = queryset.exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility'])
+
         status_param = self.request.query_params.get('status')
         if status_param:
             queryset = queryset.filter(status=status_param)
@@ -830,27 +927,69 @@ class BugViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
+
+        # Fast in-memory deduplication using lightweight values_list without fetching 500 ORM models
+        bug_fields = queryset.values_list('id', 'application_id', 'test_run__test_case__app_id', 'title', 'bug_type')[:300]
         
-        import re
-        unique_bugs = []
         seen = set()
-        
-        for bug in queryset[:500]:
-            app_id = bug.application_id or (bug.test_run.test_case.app_id if bug.test_run and bug.test_run.test_case else None)
-            norm_title = (bug.title or '').strip().lower()
-            norm_type = 'ui' if (bug.bug_type or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'] else (bug.bug_type or '').strip().lower()
-            key = (app_id, norm_title, norm_type)
-            
+        unique_ids = []
+        for bug_id, app_id, tr_app_id, title, bug_type in bug_fields:
+            target_app_id = app_id or tr_app_id
+            norm_title = (title or '').strip().lower()
+            norm_type = 'ui' if (bug_type or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'] else (bug_type or '').strip().lower()
+            key = (target_app_id, norm_title, norm_type)
             if key not in seen:
                 seen.add(key)
-                unique_bugs.append(bug)
-                
-        page = self.paginate_queryset(unique_bugs)
+                unique_ids.append(bug_id)
+        
+        page_ids = self.paginate_queryset(unique_ids)
+        if page_ids is not None:
+            bugs_dict = {b.id: b for b in queryset.filter(id__in=page_ids)}
+            ordered_bugs = [bugs_dict[b_id] for b_id in page_ids if b_id in bugs_dict]
+            serializer = self.get_serializer(ordered_bugs, many=True)
+            return self.get_paginated_response(serializer.data)
+            
+        unique_bugs = list(queryset.filter(id__in=unique_ids))
+        serializer = self.get_serializer(unique_bugs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='functional')
+    def functional(self, request):
+        queryset = self.filter_queryset(self.get_queryset()).exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility'])
+        return self._paginate_and_response(queryset)
+
+    @action(detail=False, methods=['get'], url_path='ui-defects')
+    def ui_defects(self, request):
+        queryset = self.filter_queryset(self.get_queryset()).filter(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual'])
+        return self._paginate_and_response(queryset)
+
+    @action(detail=False, methods=['get'], url_path='audits')
+    def audits(self, request):
+        queryset = self.filter_queryset(self.get_queryset()).filter(bug_type__in=['security', 'accessibility'])
+        return self._paginate_and_response(queryset)
+
+    @action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        queryset = self.filter_queryset(self.get_queryset())
+        bug_types = list(queryset.values_list('bug_type', flat=True))
+        
+        ui_count = sum(1 for bt in bug_types if (bt or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'])
+        audit_count = sum(1 for bt in bug_types if (bt or '').lower() in ['security', 'accessibility'])
+        functional_count = len(bug_types) - (ui_count + audit_count)
+        
+        return Response({
+            "total": len(bug_types),
+            "functional": functional_count,
+            "ui": ui_count,
+            "audit": audit_count
+        })
+
+    def _paginate_and_response(self, queryset):
+        page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-            
-        serializer = self.get_serializer(unique_bugs, many=True)
+        serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
     def get_serializer_class(self):
@@ -917,13 +1056,22 @@ class BugViewSet(viewsets.ModelViewSet):
 class APIEndpointViewSet(viewsets.ModelViewSet):
     serializer_class = APIEndpointSerializer
     permission_classes = (permissions.IsAuthenticated,)
+    pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        queryset = APIEndpoint.objects.filter(application__user=self.request.user).order_by('url_pattern')
+        user_ids = get_user_and_team_user_ids(self.request.user)
+        queryset = APIEndpoint.objects.filter(application__user_id__in=user_ids).order_by('url_pattern')
         app_id = self.request.query_params.get('app')
         if app_id:
             queryset = queryset.filter(application_id=app_id)
         return queryset
+
+    def list(self, request, *args, **kwargs):
+        if request.query_params.get('all') == 'true':
+            queryset = self.filter_queryset(self.get_queryset())
+            serializer = self.get_serializer(queryset, many=True)
+            return Response(serializer.data)
+        return super().list(request, *args, **kwargs)
 
     @action(detail=True, methods=['get'])
     def analyze(self, request, pk=None):
@@ -1137,6 +1285,14 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
         from tasks.cancellation import set_stop_flag, revoke_celery_task
         set_stop_flag(target_task_id)
         revoke_celery_task(target_task_id)
+
+        # 2. Unpack child subtasks if this is a batch task
+        sub_task_ids = (task.result or {}).get('pending_tasks', []) or (task.result or {}).get('child_tasks', [])
+        for sub_id in sub_task_ids:
+            sub_str = str(sub_id)
+            set_stop_flag(sub_str)
+            revoke_celery_task(sub_str)
+            CeleryTask.objects.filter(task_id=sub_str).update(status='failed', error="Task stopped by user.")
         
         # 3. Update status in database
         task.status = 'failed'
@@ -1145,6 +1301,11 @@ class CeleryTaskViewSet(viewsets.ReadOnlyModelViewSet):
         
         # 4. Handle Application status revert if needed
         if task.app:
+            from core.models import TestRun
+            TestRun.objects.filter(
+                test_case__app=task.app,
+                status__in=['PENDING', 'RUNNING']
+            ).update(status='FAILED')
             task.app.status = 'IDLE'
             task.app.save(update_fields=['status'])
             

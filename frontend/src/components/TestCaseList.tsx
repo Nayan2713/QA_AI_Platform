@@ -225,26 +225,17 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
   };
 
   const handleRunAllTests = async () => {
-    if (testCases.length === 0) return;
     setExecutingAll(true);
     setError('');
     setSuccessMsg('');
     
-    const initialRuns = testCases.map(tc => ({
-      id: Date.now() + tc.id,
-      testCaseId: tc.id,
-      title: tc.title,
-      status: 'PENDING'
-    }));
-    setSuiteRuns(initialRuns);
     setSuiteRunStartTime(Date.now());
     setShowSuiteProgress(true);
 
     try {
-      const testCaseIds = testCases.map(tc => tc.id);
-      const response = await api.post('test-runs/execute_batch/', { test_case_ids: testCaseIds, model_choice: selectedModel });
+      const response = await api.post('test-runs/execute_batch/', { app_id: appId, model_choice: selectedModel });
       
-      const runs = response.data.runs.map((r: any) => {
+      const runs = (response.data.runs || []).map((r: any) => {
         const tc = testCases.find(t => t.id === r.test_case_id);
         return {
           id: r.test_run_id,
@@ -258,12 +249,11 @@ export const TestCaseList: React.FC<TestCaseListProps> = ({
       if (runs.length > 0) {
         onTestExecuted(runs[0].id, runs[0].task_id);
       }
-      setSuccessMsg(`Queued all ${testCases.length} tests for live execution tracking.`);
+      setSuccessMsg(`Queued all ${runs.length} tests across all pages for live execution tracking.`);
     } catch (err: any) {
       console.error(err);
       setError('Failed to run all test cases.');
       setShowSuiteProgress(false);
-      setSuiteRuns([]);
     } finally {
       setExecutingAll(false);
     }

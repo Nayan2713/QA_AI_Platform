@@ -102,7 +102,7 @@ class Page(models.Model):
     connections = models.JSONField(default=list, blank=True, null=True)
     semantic_metadata = models.JSONField(default=dict, blank=True, null=True)
     ai_summary = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return f"{self.title or self.url} in {self.app.url}"
@@ -122,7 +122,7 @@ class TestCase(models.Model):
     )
     generation_context = models.JSONField(default=dict, blank=True, null=True)
     self_healed_count = models.IntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return f"{self.title} - {self.app.url}"
@@ -138,7 +138,7 @@ class TestRun(models.Model):
     metadata = models.JSONField(default=dict, blank=True)
     bugs_found = models.IntegerField(default=0)
     self_healed_count = models.IntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return f"Run {self.id} for {self.test_case.title} ({self.status})"
@@ -153,7 +153,7 @@ class TestResult(models.Model):
     screenshot = models.TextField(blank=True, null=True)  # base64 encoded image or relative file path
     auto_healed = models.BooleanField(default=False)
     healing_details = models.JSONField(default=dict, blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return f"Result Step {self.step_number} in Run {self.test_run.id} ({self.status})"
@@ -166,7 +166,7 @@ class APIEndpoint(models.Model):
     request_schema = models.JSONField(default=dict, blank=True)
     response_schema = models.JSONField(default=dict, blank=True)
     auth_type = models.CharField(max_length=100, blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -193,7 +193,7 @@ class Bug(models.Model):
     element_selector = models.CharField(max_length=512, null=True, blank=True)
     status = models.CharField(max_length=32, default='open')
     api_endpoint = models.ForeignKey(APIEndpoint, on_delete=models.SET_NULL, blank=True, null=True, related_name='bugs')
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return f"[{self.severity.upper()}] {self.title}"
@@ -207,7 +207,7 @@ class AgentSession(models.Model):
     tokens_used = models.IntegerField(default=0)
     duration_seconds = models.FloatField(null=True)
     result_summary = models.TextField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return f"{self.task_type.upper()} session for {self.application.url} ({self.status})"

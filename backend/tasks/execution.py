@@ -11,7 +11,7 @@ from django.db import transaction
 from playwright.sync_api import sync_playwright, Browser, BrowserContext
 
 from core.models import TestRun, TestResult, TestCase, CeleryTask
-from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
+from tasks.cancellation import check_cancelled, is_cancelled, clear_stop_flag, TaskCancelled, register_active_handle, unregister_active_handle
 from services.self_healing_service import SelfHealingService
 
 logger = logging.getLogger(__name__)
@@ -101,16 +101,18 @@ def invalidate_session_cache(app_id: int):
 
 os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 
+from django.db import close_old_connections
+
 def run_in_thread(func, *args, **kwargs):
     """
-    Directly executes the function on the main thread.
-
-    O5 FIX: Removed the ``connection.close()`` that was here previously.
-    It was defeating ``CONN_MAX_AGE=60`` by tearing down the persistent
-    connection after every single DB operation, causing ~2-5ms overhead
-    per call to re-establish the TCP socket.
+    Directly executes the function and ensures obsolete or stale
+    database connections are cleaned up.
     """
-    return func(*args, **kwargs)
+    try:
+        return func(*args, **kwargs)
+    finally:
+        close_old_connections()
+
 
 
 def perform_login(page, context, app) -> bool:
@@ -218,6 +220,16 @@ def execute_test(self, test_run_id, model_choice=None):
     logger.info(f"Starting test execution task for TestRun ID: {test_run_id} with model_choice: {model_choice}")
     task_id = self.request.id or "dummy_task_id"
 
+    # ─── Immediate Cancellation Check ───
+    if is_cancelled(task_id):
+        logger.info(f"[CANCELLATION] Task {task_id} already cancelled before start.")
+        def _cancel_task_record():
+            CeleryTask.objects.filter(task_id=task_id).update(status='failed', error='Task stopped by user.')
+            TestRun.objects.filter(id=test_run_id).update(status='FAILED')
+        run_in_thread(_cancel_task_record)
+        clear_stop_flag(task_id)
+        return {"status": "CANCELLED", "message": "Stopped by user."}
+
     def get_or_create_task():
         obj, created = CeleryTask.objects.get_or_create(
             task_id=task_id,
@@ -250,6 +262,19 @@ def execute_test(self, test_run_id, model_choice=None):
         test_case = test_run.test_case   # already prefetched
         app = test_case.app              # already prefetched
 
+        # Check if cancelled while waiting in queue or marked FAILED
+        if is_cancelled(task_id) or test_run.status == 'FAILED':
+            logger.info(f"[CANCELLATION] TestRun {test_run_id} (task {task_id}) marked FAILED/Cancelled — aborting.")
+            def _abort_run():
+                task_record.status = 'failed'
+                task_record.error = 'Task stopped by user.'
+                task_record.save()
+                test_run.status = 'FAILED'
+                test_run.save(update_fields=['status'])
+            run_in_thread(_abort_run)
+            clear_stop_flag(task_id)
+            return {"status": "CANCELLED", "message": "Stopped by user."}
+
         from services.test_classifier import TestClassifier
         engine = TestClassifier.classify_test_case(test_case)
 
@@ -258,6 +283,8 @@ def execute_test(self, test_run_id, model_choice=None):
 
         # ─── Mark run as RUNNING and clear old results ───
         def init_test_run():
+            if is_cancelled(task_id) or test_run.status == 'FAILED':
+                raise TaskCancelled("Test run was stopped by user.")
             test_run.status = 'RUNNING'
             test_run.metadata = {"engine_used": "PLAYWRIGHT"}
             test_run.save()
@@ -304,6 +331,7 @@ def execute_test(self, test_run_id, model_choice=None):
                     logger.error(f"Failed parsing storage state: {e}")
 
         context: BrowserContext = browser.new_context(**context_kwargs)
+        register_active_handle(task_id, context)
 
         # ─── FIX 4: Aggressive default timeouts ───
         # 15s was set previously — 3s is enough for most SPAs
@@ -312,6 +340,7 @@ def execute_test(self, test_run_id, model_choice=None):
         context.set_default_navigation_timeout(20000)
 
         page = context.new_page()
+        register_active_handle(task_id, page)
 
         page.on("console", lambda msg: console_logs.append(f"[{msg.type}] {msg.text}"))
 
@@ -704,6 +733,7 @@ def execute_test(self, test_run_id, model_choice=None):
                 task_record.error = str(global_err)
                 task_record.completed_at = timezone.now()
                 task_record.save()
+                _check_batch_completion(app.id, task_id)
             run_in_thread(save_crash)
             return {"error": str(global_err)}
 
@@ -729,6 +759,7 @@ def execute_test(self, test_run_id, model_choice=None):
             }
             task_record.completed_at = timezone.now()
             task_record.save()
+            _check_batch_completion(app.id, task_id)
         run_in_thread(complete_run)
 
         # OPTIMIZED: pass only test_run_id — api_logs already stored in
@@ -748,6 +779,7 @@ def execute_test(self, test_run_id, model_choice=None):
             task_record.completed_at = timezone.now()
             task_record.save()
             clear_stop_flag(task_id)
+            _check_batch_completion(app.id, task_id)
         run_in_thread(handle_cancelled)
         return {"status": "CANCELLED", "message": "Stopped by user."}
 
@@ -759,6 +791,7 @@ def execute_test(self, test_run_id, model_choice=None):
             task_record.completed_at = timezone.now()
             task_record.save()
             clear_stop_flag(task_id)
+            _check_batch_completion(app.id, task_id)
         run_in_thread(handle_outer_error)
         return {"error": str(e)}
 
@@ -769,6 +802,36 @@ def execute_test(self, test_run_id, model_choice=None):
         "passed_steps": passed_steps,
         "total_steps": total_steps
     }
+
+
+def _check_batch_completion(app_id: int, completed_task_id: str):
+    """
+    Checks if a task belongs to an active batch_execution CeleryTask.
+    Removes completed_task_id from pending_tasks, and if pending_tasks is empty,
+    marks the parent batch_execution task as 'success' to trigger a single summary notification.
+    """
+    def _do_check():
+        try:
+            batch_tasks = CeleryTask.objects.filter(
+                app_id=app_id,
+                task_type='batch_execution',
+                status='pending'
+            )
+            for b_task in batch_tasks:
+                result_data = dict(b_task.result or {})
+                pending = list(result_data.get('pending_tasks', []))
+                if completed_task_id in pending:
+                    pending.remove(completed_task_id)
+                    result_data['pending_tasks'] = pending
+                    result_data['completed_count'] = result_data.get('completed_count', 0) + 1
+                    b_task.result = result_data
+                    if len(pending) == 0:
+                        b_task.status = 'success'
+                        b_task.completed_at = timezone.now()
+                    b_task.save()
+        except Exception as e:
+            logger.error(f"Error checking batch completion: {e}")
+    run_in_thread(_do_check)
 
 
 def _run_browser_use_test(test_run, test_case, app, task_record, model_choice=None):

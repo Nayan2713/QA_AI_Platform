@@ -386,8 +386,14 @@ def start_agentic_bug_detection(self, app_id):
         return {"status": "FAILED", "error": str(e)}
 
 
+from django.db import close_old_connections
+
 def run_in_thread(func, *args, **kwargs):
-    return func(*args, **kwargs)
+    try:
+        return func(*args, **kwargs)
+    finally:
+        close_old_connections()
+
 
 
 @shared_task(bind=True)

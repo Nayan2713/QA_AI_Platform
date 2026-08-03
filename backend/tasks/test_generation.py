@@ -11,10 +11,14 @@ from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
 logger = logging.getLogger(__name__)
 
 
-# OPTIMIZED: run directly on the worker thread. Spawning threads and closing
-# connections on every call was defeating CONN_MAX_AGE=60 connection pooling.
+from django.db import close_old_connections
+
 def run_in_thread(func, *args, **kwargs):
-    return func(*args, **kwargs)
+    try:
+        return func(*args, **kwargs)
+    finally:
+        close_old_connections()
+
 
 
 @shared_task(bind=True, name="tasks.test_generation.generate_tests", queue="celery")

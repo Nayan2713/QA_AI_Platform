@@ -230,12 +230,18 @@ def run_async(coro, task_id=None):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop_holder.append(loop)
+        if task_id:
+            from tasks.cancellation import register_active_handle
+            register_active_handle(task_id, loop)
         try:
             val = loop.run_until_complete(coro)
             res.append((val,))
         except Exception as e:
             err.append(e)
         finally:
+            if task_id:
+                from tasks.cancellation import unregister_active_handle
+                unregister_active_handle(task_id, loop)
             loop.close()
             connection.close()
 
@@ -271,13 +277,17 @@ import os
 os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 
 
+from django.db import close_old_connections
+
 def run_in_thread(func, *args, **kwargs):
     """
-    Runs a function directly in the current thread since we have enabled
-    DJANGO_ALLOW_ASYNC_UNSAFE = True. This avoids spawning unnecessary
-    threads and leaking Django database connections.
+    Runs a function directly and ensures obsolete database connections are closed.
     """
-    return func(*args, **kwargs)
+    try:
+        return func(*args, **kwargs)
+    finally:
+        close_old_connections()
+
 
 
 

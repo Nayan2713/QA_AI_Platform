@@ -120,7 +120,7 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
 
   const fetchDashboardData = async () => {
     try {
-      setLoading(true);
+      if (!data) setLoading(true);
       const response = await api.get(
         `quality/quality-dashboard/dashboard/?application_id=${applicationId}`
       );

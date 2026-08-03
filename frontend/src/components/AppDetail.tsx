@@ -6,6 +6,7 @@ import { DiscoveryStatus } from './DiscoveryStatus';
 import { TestCaseList } from './TestCaseList';
 import { TestResults } from './TestResults';
 import { BugList } from './BugList';
+import { CredentialsModal } from './CredentialsModal';
 import QualityDashboard from './QualityDashboard/QualityDashboard';
 
 interface AppDetailProps {
@@ -63,6 +64,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [selectedApiAnalysis, setSelectedApiAnalysis] = useState<any | null>(null);
   const [loadingApiAnalysisId, setLoadingApiAnalysisId] = useState<number | null>(null);
   const [discovering, setDiscovering] = useState(false);
+  const [showCredentialsModal, setShowCredentialsModal] = useState(false);
   const activeTab = (tab as any) || 'discovery';
   const setActiveTab = (tabName: string) => {
     navigate(`/scans/${appId}/${tabName}`);
@@ -129,7 +131,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       try {
         const res = await api.get<Application>(`applications/${appId}/`, { signal });
         if (active) {
-          setApp(res.data);
+          setApp(prev => JSON.stringify(prev) === JSON.stringify(res.data) ? prev : res.data);
         }
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
@@ -146,7 +148,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     fetchApp();
     return () => {
       active = false;
-      controller.abort();
     };
   }, [appId, refreshTrigger]);
 
@@ -159,11 +160,15 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
   // 2. Fetch Test Cases
   const [testCasesInitialLoaded, setTestCasesInitialLoaded] = useState(false);
+  const prevPageRef = React.useRef({ page: testCasesPage, size: testCasesPageSize });
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    if (!testCasesInitialLoaded) setIsTestCasesLoading(true);
+    if (!testCasesInitialLoaded || prevPageRef.current.page !== testCasesPage || prevPageRef.current.size !== testCasesPageSize) {
+      setIsTestCasesLoading(true);
+    }
+    prevPageRef.current = { page: testCasesPage, size: testCasesPageSize };
     setTestCasesError(null);
 
     const fetchTestCases = async (retryCount = 0) => {
@@ -173,7 +178,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const data = Array.isArray(rawData) ? rawData : (rawData?.results || []);
         const totalCount = (rawData && typeof rawData === 'object' && rawData.count !== undefined) ? rawData.count : data.length;
         if (active) {
-          setTestCases(data);
+          setTestCases(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
           setTotalTestCasesCount(totalCount);
           setTestCasesError(null);
           setTestCasesInitialLoaded(true);
@@ -200,16 +205,20 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     fetchTestCases();
     return () => {
       active = false;
-      controller.abort();
     };
   }, [appId, refreshTrigger, testCasesPage, testCasesPageSize]);
+
+  // Initial load tracking flags to prevent background polling from flickering loading states
+  const [bugsInitialLoaded, setBugsInitialLoaded] = useState(false);
+  const [apiEndpointsInitialLoaded, setApiEndpointsInitialLoaded] = useState(false);
+  const [agentSessionsInitialLoaded, setAgentSessionsInitialLoaded] = useState(false);
 
   // 3. Fetch Bugs
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    if (bugs.length === 0) setIsBugsLoading(true);
+    if (!bugsInitialLoaded) setIsBugsLoading(true);
 
     const fetchBugs = async () => {
       try {
@@ -217,7 +226,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const rawData = res.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
         if (active) {
-          setBugs(data);
+          setBugs(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
         }
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
@@ -226,6 +235,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       } finally {
         if (active) {
           setIsBugsLoading(false);
+          setBugsInitialLoaded(true);
         }
       }
     };
@@ -233,7 +243,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     fetchBugs();
     return () => {
       active = false;
-      controller.abort();
     };
   }, [appId, refreshTrigger]);
 
@@ -242,25 +251,28 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    if (apiEndpoints.length === 0) setIsApiEndpointsLoading(true);
+    if (!apiEndpointsInitialLoaded) setIsApiEndpointsLoading(true);
 
     const fetchApiData = async () => {
       try {
-        const epRes = await api.get(`api-endpoints/?app=${appId}`, { signal });
+        const epRes = await api.get(`api-endpoints/?app=${appId}&all=true`, { signal });
         const rawData = epRes.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
-        if (active) setApiEndpoints(data);
+        if (active) setApiEndpoints(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch API endpoints:', err);
         }
       } finally {
-        if (active) setIsApiEndpointsLoading(false);
+        if (active) {
+          setIsApiEndpointsLoading(false);
+          setApiEndpointsInitialLoaded(true);
+        }
       }
 
       try {
         const graphRes = await api.get(`applications/${appId}/api-dependency-graph/`, { signal });
-        if (active) setApiGraph(graphRes.data);
+        if (active) setApiGraph(prev => JSON.stringify(prev) === JSON.stringify(graphRes.data) ? prev : graphRes.data);
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch API graph:', err);
@@ -273,7 +285,6 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     fetchApiData();
     return () => {
       active = false;
-      controller.abort();
     };
   }, [appId, refreshTrigger]);
 
@@ -282,27 +293,29 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     let active = true;
     const controller = new AbortController();
     const signal = controller.signal;
-    if (agentSessions.length === 0) setIsAgentSessionsLoading(true);
+    if (!agentSessionsInitialLoaded) setIsAgentSessionsLoading(true);
 
     const fetchSessions = async () => {
       try {
         const res = await api.get(`agent-sessions/?app=${appId}`, { signal });
         const rawData = res.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
-        if (active) setAgentSessions(data as any);
+        if (active) setAgentSessions(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : (data as any));
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch agent sessions:', err);
         }
       } finally {
-        if (active) setIsAgentSessionsLoading(false);
+        if (active) {
+          setIsAgentSessionsLoading(false);
+          setAgentSessionsInitialLoaded(true);
+        }
       }
     };
 
     fetchSessions();
     return () => {
       active = false;
-      controller.abort();
     };
   }, [appId, refreshTrigger]);
 
@@ -349,13 +362,13 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     };
   }, [appId, refetchAll]);
 
-  // Active Scan Live Polling: Updates counts (Pages, APIs, Bugs) every 2s while scanning/discovering
+  // Active Scan Live Polling: Updates counts (Pages, APIs, Bugs) every 5s while scanning/discovering
   useEffect(() => {
     if (!discovering && app?.status !== 'DISCOVERING' && !activeTaskId) return;
 
     const interval = setInterval(() => {
       refetchAll();
-    }, 2000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [discovering, app?.status, activeTaskId, refetchAll]);
@@ -722,6 +735,26 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           </div>
 
           <div className="header-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setShowCredentialsModal(true)}
+              disabled={discovering}
+              className="btn-secondary"
+              style={{
+                backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                border: '1px solid rgba(139, 92, 246, 0.35)',
+                color: '#c084fc',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              🔑 Credentials
+            </button>
+
             <button 
               onClick={handleStartDiscovery} 
               disabled={discovering} 
@@ -1147,6 +1180,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           {activeTab === 'bugs' && (
             <BugList 
               bugs={bugs} 
+              isLoading={isBugsLoading}
               onRefreshBugs={refetchAll}
               onRunTestCase={handleRunTestCase}
               activeTaskId={activeTaskId}
@@ -1253,6 +1287,23 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             />
           </div>
         </div>
+      )}
+
+      {showCredentialsModal && app && (
+        <CredentialsModal
+          app={app}
+          onClose={() => setShowCredentialsModal(false)}
+          onSuccess={(updatedApp, taskId, message) => {
+            setShowCredentialsModal(false);
+            setApp(updatedApp);
+            if (taskId) {
+              setActiveTaskId(taskId);
+              setDiscovering(true);
+            }
+            addToast('success', 'Credentials Updated', message || 'Target application credentials saved and session reset.');
+            refetchAll();
+          }}
+        />
       )}
     </div>
   );
