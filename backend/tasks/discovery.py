@@ -576,12 +576,14 @@ def start_discovery(self, app_id, model_choice=None):
                 except Exception as sec_err:
                     logger.error(f"Failed running domain security scan: {sec_err}")
 
-                # Run automated UI & visual defect scan
-                try:
-                    from services.ui_scanner import run_ui_scan
-                    run_ui_scan(app)
-                except Exception as ui_err:
-                    logger.error(f"Failed running automated UI scan: {ui_err}")
+                # Note: UI & visual defect scanning happens once, below, after status
+                # finalization (max_pages=10, cancellable). A redundant earlier call here
+                # (max_pages=5, no task_id) was removed — run_ui_scan() unconditionally
+                # deletes prior auto-scanned UI bugs as its first step, so calling it twice
+                # in one task meant the second call always wiped the first call's results,
+                # and if the second call then failed for any reason (e.g. resource pressure
+                # from launching a second browser this late in the task), both passes net
+                # zero UI bugs instead of falling back to the first pass's output.
 
                 # Finalize app status
                 app.status = 'DISCOVERED'

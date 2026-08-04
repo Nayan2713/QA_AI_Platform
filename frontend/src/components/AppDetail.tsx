@@ -25,8 +25,8 @@ interface ToastMessage {
   message: string;
 }
 
-export const AppDetail: React.FC<AppDetailProps> = ({ 
-  appId: propAppId, 
+export const AppDetail: React.FC<AppDetailProps> = ({
+  appId: propAppId,
   onBack,
   activeTestRunId: propActiveTestRunId,
   setActiveTestRunId: propSetActiveTestRunId,
@@ -71,7 +71,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   };
   const [showLoginError, setShowLoginError] = useState(false);
   const [apiSearchQuery, setApiSearchQuery] = useState('');
-  
+
   // Real-time toast notification system
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -82,7 +82,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       setToasts(prev => prev.filter(t => t.id !== toastId));
     }, 4500);
   };
-  
+
   // Track active execution via Route parameter
   const activeTestRunId = propActiveTestRunId !== undefined ? propActiveTestRunId : (runId ? parseInt(runId) : null);
   const setActiveTestRunId = (rId: number | null) => {
@@ -222,9 +222,30 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
     const fetchBugs = async () => {
       try {
-        const res = await api.get(`bugs/?app=${appId}`, { signal });
-        const rawData = res.data;
-        const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
+        // Fetch each bug category from its own dedicated, uncapped endpoint instead
+        // of the generic `bugs/?app=` list. That generic endpoint orders every bug
+        // type by -created_at and slices to the most recent 300 before de-duping,
+        // so on an app with heavy ongoing execution/functional bug traffic, UI/visual
+        // bugs (created once per discovery pass, not continuously) can get pushed out
+        // of that shared recency window entirely. Querying by category first means a
+        // quiet category can never be crowded out by a noisy one.
+        const extract = (res: any) => {
+          const rawData = res.data;
+          return Array.isArray(rawData) ? rawData : (rawData.results || []);
+        };
+
+        const [functionalRes, uiRes, auditsRes] = await Promise.all([
+          api.get(`bugs/functional/?app=${appId}&page_size=1000`, { signal }),
+          api.get(`bugs/ui-defects/?app=${appId}&page_size=1000`, { signal }),
+          api.get(`bugs/audits/?app=${appId}&page_size=1000`, { signal }),
+        ]);
+
+        const data = [
+          ...extract(functionalRes),
+          ...extract(uiRes),
+          ...extract(auditsRes),
+        ];
+
         if (active) {
           setBugs(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
         }
@@ -425,24 +446,24 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   // Backup polling for Celery tasks using real-time celery-status endpoint
   useEffect(() => {
     if (!activeTaskId) return;
-    
+
     let isMounted = true;
     let pollCount = 0;
     const MAX_POLLS = 150;
-    
+
     const pollInterval = setInterval(async () => {
       if (!isMounted || pollCount >= MAX_POLLS) {
         clearInterval(pollInterval);
         return;
       }
       pollCount++;
-      
+
       try {
         const res = await api.get(`tasks/${activeTaskId}/celery-status/`);
         if (!isMounted) return;
-        
+
         const celeryStatus = res.data.status;
-        
+
         if (celeryStatus === 'SUCCESS' || celeryStatus === 'FAILURE') {
           refetchAllDebounced();
           clearInterval(pollInterval);
@@ -484,7 +505,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       if (activeTaskId) {
         try {
           await api.post(`tasks/${activeTaskId}/stop/`);
-        } catch {}
+        } catch { }
       }
       await api.post(`applications/${appId}/stop-all/`);
       setActiveTaskId(null);
@@ -504,10 +525,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const handleStartDiscovery = async () => {
     if (!app) return;
     const oldStatus = app.status;
-    
+
     setDiscovering(true);
     setApp(prev => prev ? { ...prev, status: 'DISCOVERING' } : null);
-    
+
     try {
       const res = await api.post(`applications/${appId}/discover/`);
       if (res.data.task_id) {
@@ -562,7 +583,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     try {
       const pagesRes = await api.get<any[]>(`applications/${appId}/pages/`);
       const pages = pagesRes.data;
-      
+
       let reportContent = `# 📊 QA Test Execution & Defect Report\n`;
       reportContent += `**Target System**: ${app.url}\n`;
       reportContent += `**Base Domain**: ${app.base_url}\n`;
@@ -572,7 +593,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       reportContent += `**Total Pages Discovered**: ${pages.length}\n`;
       reportContent += `**Total Test Cases**: ${testCases.length}\n`;
       reportContent += `**Total Bugs Detected**: ${bugs.length}\n\n`;
-      
+
       reportContent += `---\n\n`;
       reportContent += `## 📄 1. Test Scope (Discovered Pages)\n`;
       if (pages.length === 0) {
@@ -588,7 +609,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         });
         reportContent += `\n`;
       }
-      
+
       reportContent += `---\n\n`;
       reportContent += `## 📋 2. Automated Test Suite\n`;
       if (testCases.length === 0) {
@@ -608,13 +629,13 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             else if (step.action === 'click') details = `selector \`${step.selector}\``;
             else if (step.action === 'wait') details = `for \`${step.value}ms\``;
             else if (step.action === 'assert') details = `that element \`${step.selector || 'body'}\` contains text \`"${step.value}"\``;
-            
+
             reportContent += `    ${stepIdx + 1}. **${actionStr}** ${details}\n`;
           });
           reportContent += `\n`;
         });
       }
-      
+
       reportContent += `---\n\n`;
       reportContent += `## 🐞 3. Defect Registry (Logged Bugs)\n`;
       if (bugs.length === 0) {
@@ -630,22 +651,22 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           reportContent += `\`\`\`text\n${bug.description}\n\`\`\`\n\n`;
         });
       }
-      
+
       reportContent += `---\n\n`;
       reportContent += `*Generated automatically by QA Engineer MVP Platform.*\n`;
-      
+
       const blob = new Blob([reportContent], { type: 'text/markdown;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      
+
       const safeName = app.url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '_');
       link.setAttribute('download', `QA_Report_${safeName}.md`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
     } catch (err) {
       console.error('Failed to generate report:', err);
       alert('Failed to generate report.');
@@ -755,9 +776,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               🔑 Credentials
             </button>
 
-            <button 
-              onClick={handleStartDiscovery} 
-              disabled={discovering} 
+            <button
+              onClick={handleStartDiscovery}
+              disabled={discovering}
               className={`btn-primary btn-discover ${discovering ? 'discovering' : ''}`}
               style={{
                 display: 'flex',
@@ -778,7 +799,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               )}
             </button>
 
-            <button 
+            <button
               onClick={handleDownloadReport}
               className="btn-secondary"
               style={{
@@ -796,8 +817,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             >
               📄 Export QA Report
             </button>
-            
-            <button 
+
+            <button
               onClick={handleDeleteAppDetail}
               className="btn-danger"
               style={{
@@ -893,11 +914,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           <div className="glass-card task-progress-tracker animate-slide-up" style={{
             marginBottom: '24px',
             padding: '18px 20px',
-            border: `1px solid ${
-              taskStatus === 'success' ? 'rgba(16, 185, 129, 0.4)' :
-              taskStatus === 'failed' ? 'rgba(239, 68, 68, 0.4)' :
-              'rgba(245, 158, 11, 0.4)'
-            }`,
+            border: `1px solid ${taskStatus === 'success' ? 'rgba(16, 185, 129, 0.4)' :
+                taskStatus === 'failed' ? 'rgba(239, 68, 68, 0.4)' :
+                  'rgba(245, 158, 11, 0.4)'
+              }`,
             background: 'rgba(18, 14, 33, 0.85)',
             borderRadius: '12px'
           }}>
@@ -954,42 +974,42 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       {/* Main Tabs Navigation Bar */}
       <div className="tabs-container">
         <div className="tabs-header" style={{ display: 'flex', gap: '4px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', marginBottom: '24px', overflowX: 'auto' }}>
-          <button 
+          <button
             className={`tab-btn ${activeTab === 'discovery' ? 'active' : ''}`}
             onClick={() => setActiveTab('discovery')}
             style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             🔍 Discovery Details
           </button>
-          <button 
+          <button
             className={`tab-btn ${activeTab === 'apis' ? 'active' : ''}`}
             onClick={() => setActiveTab('apis')}
             style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             🔌 APIs & Graph ({apiEndpoints.length})
           </button>
-          <button 
+          <button
             className={`tab-btn ${activeTab === 'tests' ? 'active' : ''}`}
             onClick={() => setActiveTab('tests')}
             style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             📋 Test Suite ({app.test_case_count})
           </button>
-          <button 
+          <button
             className={`tab-btn ${activeTab === 'bugs' ? 'active' : ''}`}
             onClick={() => setActiveTab('bugs')}
             style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             🐞 App Bugs ({app.bug_count})
           </button>
-          <button 
+          <button
             className={`tab-btn ${activeTab === 'sessions' ? 'active' : ''}`}
             onClick={() => setActiveTab('sessions')}
             style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             🔑 Sessions & Auth
           </button>
-          <button 
+          <button
             className={`tab-btn ${activeTab === 'quality' ? 'active' : ''}`}
             onClick={() => setActiveTab('quality')}
             style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
@@ -1001,9 +1021,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         {/* Tab Content Views */}
         <div className="tab-content">
           {activeTab === 'discovery' && (
-            <DiscoveryStatus 
-              appId={app.id} 
-              appStatus={app.status} 
+            <DiscoveryStatus
+              appId={app.id}
+              appStatus={app.status}
               discoverySource={app.discovery_source}
               onDiscoveryComplete={handleDiscoveryComplete}
               currentTask={currentTask}
@@ -1036,7 +1056,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                   }}
                 />
               </div>
-              
+
               {apiEndpoints.length === 0 ? (
                 <div className="empty-state-card">
                   <svg className="empty-state-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#06b6d4' }}>
@@ -1046,7 +1066,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                   </svg>
                   <h4 className="empty-state-title">No API Endpoints Captured Yet</h4>
                   <p className="empty-state-desc">
-                    As Playwright crawls your application or executes automated test cases, background HTTP API traffic 
+                    As Playwright crawls your application or executes automated test cases, background HTTP API traffic
                     (GET, POST, PUT, DELETE) will automatically be intercepted and cataloged here.
                   </p>
                   <button onClick={handleStartDiscovery} className="btn-primary" style={{ padding: '8px 20px' }}>
@@ -1080,8 +1100,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                               {ep.response_schema ? `${Object.keys(ep.response_schema).length} fields` : 'no schema'}
                             </td>
                             <td style={{ padding: '12px' }}>
-                              <button 
-                                className="btn-secondary" 
+                              <button
+                                className="btn-secondary"
                                 style={{ padding: '4px 10px', fontSize: '0.78rem' }}
                                 onClick={async () => {
                                   if (selectedApiAnalysis?.endpoint_id === ep.id) {
@@ -1150,7 +1170,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                   </button>
                 </div>
               ) : (
-                <TestCaseList 
+                <TestCaseList
                   appId={app.id}
                   testCases={testCases}
                   totalCount={totalTestCasesCount || app?.test_case_count || testCases.length}
@@ -1178,8 +1198,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           )}
 
           {activeTab === 'bugs' && (
-            <BugList 
-              bugs={bugs} 
+            <BugList
+              bugs={bugs}
               isLoading={isBugsLoading}
               onRefreshBugs={refetchAll}
               onRunTestCase={handleRunTestCase}
@@ -1194,7 +1214,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                 <p className="card-subtitle" style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                   Active credentials, cookies, and local storage variables preserved from Playwright automation runs.
                 </p>
-                
+
                 {(() => {
                   let cookies: any[] = [];
                   try {
@@ -1202,8 +1222,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
                       const parsed = JSON.parse(app.storage_state);
                       cookies = parsed.cookies || [];
                     }
-                  } catch (err) {}
-                  
+                  } catch (err) { }
+
                   return (
                     <div style={{ marginTop: '16px' }}>
                       <h4 style={{ color: '#60a5fa', marginBottom: '8px', fontSize: '0.9rem' }}>🍪 Preserved Session Cookies</h4>
@@ -1280,8 +1300,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         <div className="results-panel-drawer">
           <div className="results-panel-drawer-overlay" onClick={() => setActiveTestRunId(null)}></div>
           <div className="results-panel-drawer-content">
-            <TestResults 
-              testRunId={activeTestRunId} 
+            <TestResults
+              testRunId={activeTestRunId}
               onClose={() => setActiveTestRunId(null)}
               onBugDetected={refetchAll}
             />
