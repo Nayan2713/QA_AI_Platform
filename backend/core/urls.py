@@ -9,6 +9,7 @@ from .views import (
     APIEndpointViewSet,
     AgentSessionViewSet,
     TeamMemberViewSet,
+    LoadTestResultViewSet,
     health_check,
     ChatbotQueryView,
     NotificationViewSet,
@@ -23,9 +24,11 @@ router.register(r'bugs', BugViewSet, basename='bug')
 router.register(r'tasks', CeleryTaskViewSet, basename='task')
 router.register(r'celery-tasks', CeleryTaskViewSet, basename='celerytask')
 router.register(r'api-endpoints', APIEndpointViewSet, basename='apiendpoint')
+router.register(r'load-test-results', LoadTestResultViewSet, basename='loadtestresult')
 router.register(r'agent-sessions', AgentSessionViewSet, basename='agentsession')
 router.register(r'team', TeamMemberViewSet, basename='teammember')
 router.register(r'notifications', NotificationViewSet, basename='notification')
+
 
 urlpatterns = [
     path('health/', health_check, name='health-check'),

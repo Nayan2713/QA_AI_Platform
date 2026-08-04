@@ -3,7 +3,8 @@ from django.contrib.auth.models import User
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from urllib.parse import urlparse
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember, Notification
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember, Notification, PerformanceThreshold, LoadTestResult, WebVitalsResult, QualityMetricsSnapshot
+
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -318,6 +319,35 @@ class BugDetailSerializer(serializers.ModelSerializer):
             'api_endpoint', 'api_endpoint_detail', 'bug_type', 'steps_to_reproduce', 
             'screenshot', 'element_selector', 'status', 'created_at'
         )
+
+
+class PerformanceThresholdSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PerformanceThreshold
+        fields = ('id', 'application', 'api_latency_warning_ms', 'api_latency_critical_ms', 'page_load_warning_ms', 'page_load_critical_ms', 'created_at')
+
+
+class LoadTestResultSerializer(serializers.ModelSerializer):
+    api_endpoint_pattern = serializers.CharField(source='api_endpoint.url_pattern', read_only=True)
+    method = serializers.CharField(source='api_endpoint.method', read_only=True)
+
+    class Meta:
+        model = LoadTestResult
+        fields = ('id', 'application', 'api_endpoint', 'api_endpoint_pattern', 'method', 'concurrency', 'total_requests', 'p50_ms', 'p95_ms', 'p99_ms', 'error_rate', 'requests_per_second', 'created_at')
+
+
+class WebVitalsResultSerializer(serializers.ModelSerializer):
+    page_title = serializers.CharField(source='page.title', read_only=True)
+
+    class Meta:
+        model = WebVitalsResult
+        fields = ('id', 'application', 'page', 'page_title', 'url', 'lcp_ms', 'cls', 'ttfb_ms', 'performance_score', 'created_at')
+
+
+class QualityMetricsSnapshotSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QualityMetricsSnapshot
+        fields = ('id', 'application', 'coverage_score', 'reliability_score', 'accuracy_score', 'relevance_score', 'overall_score', 'web_vitals_score', 'grade', 'created_at')
 
 
 class CeleryTaskSerializer(serializers.ModelSerializer):

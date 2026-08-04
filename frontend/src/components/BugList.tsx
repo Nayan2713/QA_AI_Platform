@@ -18,7 +18,7 @@ export const BugList: React.FC<BugListProps> = ({
   activeTaskId
 }) => {
   const [selectedBugId, setSelectedBugId] = useState<number | null>(null);
-  const [activeCategoryTab, setActiveCategoryTab] = useState<'all' | 'functional' | 'ui' | 'audit'>('all');
+  const [activeCategoryTab, setActiveCategoryTab] = useState<'all' | 'functional' | 'ui' | 'audit' | 'performance'>('all');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -35,12 +35,15 @@ export const BugList: React.FC<BugListProps> = ({
   });
 
   const uiBugs = filteredBugs.filter(b => b.bug_type === 'ui' || b.bug_type === 'ui_issue' || b.bug_type === 'ui_bug' || b.bug_type === 'visual');
-  const testCaseBugs = filteredBugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual');
+  const testCaseBugs = filteredBugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual' && b.bug_type !== 'performance');
   const auditBugs = filteredBugs.filter(b => b.bug_type === 'security' || b.bug_type === 'accessibility');
+  const performanceBugs = filteredBugs.filter(b => b.bug_type === 'performance');
 
-  const totalFunctionalCount = bugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual').length;
+  const totalFunctionalCount = bugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual' && b.bug_type !== 'performance').length;
   const totalUiCount = bugs.filter(b => b.bug_type === 'ui' || b.bug_type === 'ui_issue' || b.bug_type === 'ui_bug' || b.bug_type === 'visual').length;
   const totalAuditCount = bugs.filter(b => b.bug_type === 'security' || b.bug_type === 'accessibility').length;
+  const totalPerformanceCount = bugs.filter(b => b.bug_type === 'performance').length;
+
 
   const renderBugItem = (bug: Bug) => {
     const isExpanded = selectedBugId === bug.id;
@@ -472,7 +475,34 @@ export const BugList: React.FC<BugListProps> = ({
             fontSize: '0.75rem'
           }}>{totalAuditCount}</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveCategoryTab('performance')}
+          style={{
+            background: activeCategoryTab === 'performance' ? 'rgba(234, 179, 8, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+            border: activeCategoryTab === 'performance' ? '1px solid rgba(234, 179, 8, 0.5)' : '1px solid rgba(255, 255, 255, 0.08)',
+            color: activeCategoryTab === 'performance' ? '#eab308' : 'rgba(255, 255, 255, 0.7)',
+            padding: '8px 16px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: '0.85rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <span>⚡ Performance & Load Issues</span>
+          <span style={{
+            background: 'rgba(234, 179, 8, 0.2)',
+            padding: '2px 6px',
+            borderRadius: '10px',
+            fontSize: '0.75rem'
+          }}>{totalPerformanceCount}</span>
+        </button>
       </div>
+
 
       {/* Filters Panel */}
       <div className="bugs-filters-panel" style={{
@@ -697,6 +727,41 @@ export const BugList: React.FC<BugListProps> = ({
               )}
             </div>
           )}
+
+          {(activeCategoryTab === 'all' || activeCategoryTab === 'performance') && (
+            <div className="bugs-section" style={{ marginTop: (testCaseBugs.length > 0 || uiBugs.length > 0 || auditBugs.length > 0) ? '32px' : '0' }}>
+              <h4 style={{ 
+                color: '#eab308', 
+                margin: '0 0 16px 0', 
+                borderBottom: '1px solid rgba(234, 179, 8, 0.15)', 
+                paddingBottom: '8px', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px', 
+                fontSize: '1.05rem', 
+                fontWeight: '600' 
+              }}>
+                ⚡ Performance & Load Issues ({performanceBugs.length})
+              </h4>
+              {performanceBugs.length > 0 ? (
+                <div className="bugs-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {performanceBugs.map((bug) => renderBugItem(bug))}
+                </div>
+              ) : (
+                <div style={{
+                  padding: '14px 18px',
+                  background: 'rgba(234, 179, 8, 0.04)',
+                  border: '1px dashed rgba(234, 179, 8, 0.2)',
+                  borderRadius: '10px',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  fontSize: '0.85rem'
+                }}>
+                  ✨ Zero performance or latency threshold defects in this view.
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
       )}
     </div>

@@ -8,6 +8,9 @@ import { TestResults } from './TestResults';
 import { BugList } from './BugList';
 import { CredentialsModal } from './CredentialsModal';
 import QualityDashboard from './QualityDashboard/QualityDashboard';
+import { PerformanceThresholdModal } from './PerformanceThresholdModal';
+import { LoadTestResultsPanel } from './LoadTestResultsPanel';
+
 
 interface AppDetailProps {
   appId?: number;
@@ -65,6 +68,8 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [loadingApiAnalysisId, setLoadingApiAnalysisId] = useState<number | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [showCredentialsModal, setShowCredentialsModal] = useState(false);
+  const [showPerformanceModal, setShowPerformanceModal] = useState(false);
+
   const activeTab = (tab as any) || 'discovery';
   const setActiveTab = (tabName: string) => {
     navigate(`/scans/${appId}/${tabName}`);
@@ -234,17 +239,20 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           return Array.isArray(rawData) ? rawData : (rawData.results || []);
         };
 
-        const [functionalRes, uiRes, auditsRes] = await Promise.all([
+        const [functionalRes, uiRes, auditsRes, perfRes] = await Promise.all([
           api.get(`bugs/functional/?app=${appId}&page_size=1000`, { signal }),
           api.get(`bugs/ui-defects/?app=${appId}&page_size=1000`, { signal }),
           api.get(`bugs/audits/?app=${appId}&page_size=1000`, { signal }),
+          api.get(`bugs/performance/?app=${appId}&page_size=1000`, { signal }),
         ]);
 
         const data = [
           ...extract(functionalRes),
           ...extract(uiRes),
           ...extract(auditsRes),
+          ...extract(perfRes),
         ];
+
 
         if (active) {
           setBugs(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
@@ -1016,7 +1024,15 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           >
             📊 Quality Dashboard
           </button>
+          <button
+            className={`tab-btn ${activeTab === 'performance' ? 'active' : ''}`}
+            onClick={() => setActiveTab('performance')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
+          >
+            ⚡ Performance & Load
+          </button>
         </div>
+
 
         {/* Tab Content Views */}
         <div className="tab-content">
@@ -1293,6 +1309,13 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           {activeTab === 'quality' && (
             <QualityDashboard applicationId={app.id.toString()} />
           )}
+
+          {activeTab === 'performance' && (
+            <LoadTestResultsPanel
+              appId={app.id}
+              onOpenSettings={() => setShowPerformanceModal(true)}
+            />
+          )}
         </div>
       </div>
 
@@ -1325,6 +1348,16 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           }}
         />
       )}
+
+      {showPerformanceModal && app && (
+        <PerformanceThresholdModal
+          appId={app.id}
+          isOpen={showPerformanceModal}
+          onClose={() => setShowPerformanceModal(false)}
+          onSaved={refetchAll}
+        />
+      )}
     </div>
   );
+
 };

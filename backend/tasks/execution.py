@@ -13,6 +13,8 @@ from playwright.sync_api import sync_playwright, Browser, BrowserContext
 from core.models import TestRun, TestResult, TestCase, CeleryTask
 from tasks.cancellation import check_cancelled, is_cancelled, clear_stop_flag, TaskCancelled, register_active_handle, unregister_active_handle
 from services.self_healing_service import SelfHealingService
+from services.performance_checker import check_performance_thresholds
+
 
 logger = logging.getLogger(__name__)
 
@@ -750,7 +752,14 @@ def execute_test(self, test_run_id, model_choice=None):
                 "engine_used": "PLAYWRIGHT"
             }
             test_run.save()
+
+            try:
+                check_performance_thresholds(test_run)
+            except Exception as perf_err:
+                logger.warning(f"Error checking performance thresholds for run #{test_run.id}: {perf_err}")
+
             task_record.status = 'success'
+
             task_record.progress = 100
             task_record.result = {
                 "status_text": f"Done: {test_run.status}. {passed_steps}/{total_steps} passed.",

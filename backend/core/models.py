@@ -198,7 +198,70 @@ class Bug(models.Model):
     def __str__(self):
         return f"[{self.severity.upper()}] {self.title}"
 
+
+class PerformanceThreshold(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='performance_thresholds', null=True, blank=True)
+    api_latency_warning_ms = models.IntegerField(default=500)
+    api_latency_critical_ms = models.IntegerField(default=2000)
+    page_load_warning_ms = models.IntegerField(default=3000)
+    page_load_critical_ms = models.IntegerField(default=8000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        app_str = self.application.url if self.application else 'Global'
+        return f"PerformanceThreshold ({app_str})"
+
+
+class LoadTestResult(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='load_test_results')
+    api_endpoint = models.ForeignKey(APIEndpoint, on_delete=models.SET_NULL, null=True, blank=True, related_name='load_test_results')
+    concurrency = models.IntegerField(default=20)
+    total_requests = models.IntegerField(default=0)
+    p50_ms = models.FloatField(default=0.0)
+    p95_ms = models.FloatField(default=0.0)
+    p99_ms = models.FloatField(default=0.0)
+    error_rate = models.FloatField(default=0.0)
+    requests_per_second = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def __str__(self):
+        return f"LoadTestResult for {self.application.url} — p95={self.p95_ms}ms"
+
+
+class WebVitalsResult(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='web_vitals_results')
+    page = models.ForeignKey(Page, on_delete=models.SET_NULL, null=True, blank=True, related_name='web_vitals_results')
+    url = models.URLField()
+    lcp_ms = models.FloatField(default=0.0, help_text='Largest Contentful Paint in ms')
+    cls = models.FloatField(default=0.0, help_text='Cumulative Layout Shift')
+    ttfb_ms = models.FloatField(default=0.0, help_text='Time to First Byte in ms')
+    performance_score = models.IntegerField(default=0, help_text='Overall performance score 0-100')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def __str__(self):
+        return f"WebVitals {self.url} — score {self.performance_score}"
+
+
+class QualityMetricsSnapshot(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='quality_snapshots')
+    coverage_score = models.FloatField(default=0)
+    reliability_score = models.FloatField(default=0)
+    accuracy_score = models.FloatField(default=0)
+    relevance_score = models.FloatField(default=0)
+    overall_score = models.FloatField(default=0)
+    web_vitals_score = models.FloatField(default=0)
+    grade = models.CharField(max_length=1, choices=QualityGrade.choices, default=QualityGrade.F)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Snapshot {self.application.url} @ {self.created_at} — {self.overall_score}%"
+
+
 class AgentSession(models.Model):
+
     application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='agent_sessions')
     task_type = models.CharField(max_length=64)   # discovery, test_execution, bug_detection
     status = models.CharField(max_length=32)      # running, completed, failed

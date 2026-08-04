@@ -603,7 +603,14 @@ def start_discovery(self, app_id, model_choice=None):
                 except Exception as scan_ex:
                     logger.warning(f"Input validation & UI defect scan during discovery failed: {scan_ex}")
 
+                try:
+                    from services.web_vitals_scanner import run_web_vitals_scan
+                    run_web_vitals_scan(app, task_id=task_id)
+                except Exception as wv_ex:
+                    logger.warning(f"Core Web Vitals scan during discovery failed: {wv_ex}")
+
                 task_record.status = 'success'
+
                 task_record.progress = 100
                 task_record.result = {
                     "pages_discovered": len(pages_data),

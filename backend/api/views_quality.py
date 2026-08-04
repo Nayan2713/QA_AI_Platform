@@ -8,8 +8,9 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Avg
 from core.models import (
     TestValidation, CoverageReport, FlakinessReport, BugValidation,
-    QualityMetrics, Application, TestCase, Bug, CeleryTask
+    QualityMetrics, QualityMetricsSnapshot, Application, TestCase, Bug, CeleryTask
 )
+
 from core.signals import register_task_user, register_task_app
 from .serializers_quality import (
     TestValidationSerializer, CoverageReportSerializer,
@@ -482,10 +483,23 @@ class QualityDashboardView(viewsets.ViewSet):
                 'api_health': {
                     'total_apis': api_endpoints.count(),
                     'endpoints': api_list,
-                }
+                },
+                'history': [
+                    {
+                        'id': snap.id,
+                        'overall_score': snap.overall_score,
+                        'web_vitals_score': snap.web_vitals_score,
+                        'coverage_score': snap.coverage_score,
+                        'reliability_score': snap.reliability_score,
+                        'accuracy_score': snap.accuracy_score,
+                        'created_at': snap.created_at.strftime('%m/%d %H:%M')
+                    }
+                    for snap in QualityMetricsSnapshot.objects.filter(application=app).order_by('created_at')[:30]
+                ]
             }
             
             return Response(dashboard_data)
+
         except Application.DoesNotExist:
             return Response(
                 {'error': 'Application not found'},

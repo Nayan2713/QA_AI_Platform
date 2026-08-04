@@ -8,13 +8,15 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember, Notification
+from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember, Notification, PerformanceThreshold, LoadTestResult, WebVitalsResult
 from .serializers import (
     RegisterSerializer, UserSerializer, ApplicationSerializer, ApplicationListSerializer,
     PageSerializer, TestCaseSerializer, TestCaseListSerializer, TestRunSerializer, TestRunListSerializer,
     TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer,
-    APIEndpointSerializer, AgentSessionSerializer, TeamMemberSerializer, NotificationSerializer
+    APIEndpointSerializer, AgentSessionSerializer, TeamMemberSerializer, NotificationSerializer,
+    PerformanceThresholdSerializer, LoadTestResultSerializer, WebVitalsResultSerializer
 )
+
 from services.test_validation_service import TestValidationService
 
 
@@ -266,6 +268,107 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             "discovery_source": app.discovery_source,
             "page_count": app.pages.count()
         })
+
+    @action(detail=True, methods=['get', 'patch'], url_path='performance-thresholds')
+    def performance_thresholds(self, request, pk=None):
+        app = self.get_object()
+        threshold = PerformanceThreshold.objects.filter(application=app).first()
+        if not threshold and request.method == 'GET':
+            threshold = PerformanceThreshold.objects.filter(application__isnull=True).first()
+            if not threshold:
+                threshold = PerformanceThreshold.objects.create(
+                    application=app,
+                    api_latency_warning_ms=500,
+                    api_latency_critical_ms=2000,
+                    page_load_warning_ms=3000,
+                    page_load_critical_ms=8000
+                )
+
+        if request.method == 'PATCH':
+            check_team_permission(request.user, app.user, 'update')
+            if not threshold:
+                threshold = PerformanceThreshold(application=app)
+            serializer = PerformanceThresholdSerializer(threshold, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save(application=app)
+            return Response(serializer.data)
+
+        serializer = PerformanceThresholdSerializer(threshold)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='load-test')
+    def load_test(self, request, pk=None):
+        app = self.get_object()
+        check_team_permission(request.user, app.user, 'create')
+        
+        concurrency = request.data.get('concurrency', 20)
+        duration_seconds = request.data.get('duration_seconds', 30)
+
+        import uuid
+        task_id = str(uuid.uuid4())
+        CeleryTask.objects.create(
+            app=app,
+            task_id=task_id,
+            task_type='load_test',
+            status='pending',
+            progress=0
+        )
+        from .signals import register_task_user, register_task_app
+        register_task_user(task_id, request.user.id)
+        register_task_app(task_id, app.id)
+
+        from tasks.quality_check import run_load_test_task
+        run_load_test_task.apply_async(args=[app.id, concurrency, duration_seconds], task_id=task_id, queue='quality')
+
+        return Response({
+            "status": "Load test initiated",
+            "task_id": task_id
+        }, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['get'], url_path='load-test-results')
+    def load_test_results(self, request, pk=None):
+        app = self.get_object()
+        results = LoadTestResult.objects.filter(application=app).select_related('api_endpoint').order_by('-created_at')[:100]
+        serializer = LoadTestResultSerializer(results, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post', 'get'], url_path='web-vitals')
+    def web_vitals(self, request, pk=None):
+        app = self.get_object()
+        if request.method == 'GET':
+            results = WebVitalsResult.objects.filter(application=app).select_related('page').order_by('-created_at')[:50]
+            serializer = WebVitalsResultSerializer(results, many=True)
+            return Response(serializer.data)
+
+        check_team_permission(request.user, app.user, 'create')
+        import uuid
+        task_id = str(uuid.uuid4())
+        CeleryTask.objects.create(
+            app=app,
+            task_id=task_id,
+            task_type='web_vitals',
+            status='pending',
+            progress=0
+        )
+        from .signals import register_task_user, register_task_app
+        register_task_user(task_id, request.user.id)
+        register_task_app(task_id, app.id)
+
+        from tasks.quality_check import run_web_vitals_scan_task
+        run_web_vitals_scan_task.apply_async(args=[app.id], task_id=task_id, queue='quality')
+
+        return Response({
+            "status": "Web Vitals scan initiated",
+            "task_id": task_id
+        }, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['get'], url_path='web-vitals-results')
+    def web_vitals_results(self, request, pk=None):
+        app = self.get_object()
+        results = WebVitalsResult.objects.filter(application=app).select_related('page').order_by('-created_at')[:50]
+        serializer = WebVitalsResultSerializer(results, many=True)
+        return Response(serializer.data)
+
 
     @action(detail=True, methods=['post'], url_path='run-tests')
     def run_tests(self, request, pk=None):
@@ -917,7 +1020,7 @@ class BugViewSet(viewsets.ModelViewSet):
             elif cat in ['audit', 'audits']:
                 queryset = queryset.filter(bug_type__in=['security', 'accessibility'])
             elif cat == 'functional':
-                queryset = queryset.exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility'])
+                queryset = queryset.exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility', 'performance'])
 
         status_param = self.request.query_params.get('status')
         if status_param:
@@ -955,7 +1058,7 @@ class BugViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='functional')
     def functional(self, request):
-        queryset = self.filter_queryset(self.get_queryset()).exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility'])
+        queryset = self.filter_queryset(self.get_queryset()).exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility', 'performance'])
         return self._paginate_and_response(queryset)
 
     @action(detail=False, methods=['get'], url_path='ui-defects')
@@ -968,6 +1071,11 @@ class BugViewSet(viewsets.ModelViewSet):
         queryset = self.filter_queryset(self.get_queryset()).filter(bug_type__in=['security', 'accessibility'])
         return self._paginate_and_response(queryset)
 
+    @action(detail=False, methods=['get'], url_path='performance')
+    def performance(self, request):
+        queryset = self.filter_queryset(self.get_queryset()).filter(bug_type='performance')
+        return self._paginate_and_response(queryset)
+
     @action(detail=False, methods=['get'], url_path='summary')
     def summary(self, request):
         queryset = self.filter_queryset(self.get_queryset())
@@ -975,14 +1083,17 @@ class BugViewSet(viewsets.ModelViewSet):
         
         ui_count = sum(1 for bt in bug_types if (bt or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'])
         audit_count = sum(1 for bt in bug_types if (bt or '').lower() in ['security', 'accessibility'])
-        functional_count = len(bug_types) - (ui_count + audit_count)
+        performance_count = sum(1 for bt in bug_types if (bt or '').lower() == 'performance')
+        functional_count = len(bug_types) - (ui_count + audit_count + performance_count)
         
         return Response({
             "total": len(bug_types),
             "functional": functional_count,
             "ui": ui_count,
-            "audit": audit_count
+            "audit": audit_count,
+            "performance": performance_count
         })
+
 
     def _paginate_and_response(self, queryset):
         page = self.paginate_queryset(queryset)
@@ -1053,7 +1164,21 @@ class BugViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
+class LoadTestResultViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = LoadTestResultSerializer
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get_queryset(self):
+        user_ids = get_user_and_team_user_ids(self.request.user)
+        queryset = LoadTestResult.objects.filter(application__user_id__in=user_ids).select_related('application', 'api_endpoint').order_by('-created_at')
+        app_id = self.request.query_params.get('app')
+        if app_id:
+            queryset = queryset.filter(application_id=app_id)
+        return queryset
+
+
 class APIEndpointViewSet(viewsets.ModelViewSet):
+
     serializer_class = APIEndpointSerializer
     permission_classes = (permissions.IsAuthenticated,)
     pagination_class = StandardResultsSetPagination

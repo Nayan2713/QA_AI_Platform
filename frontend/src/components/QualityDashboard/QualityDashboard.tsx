@@ -61,7 +61,17 @@ interface DashboardData {
       auth_type?: string;
     }>;
   };
+  history?: Array<{
+    id: number;
+    overall_score: number;
+    web_vitals_score: number;
+    coverage_score: number;
+    reliability_score: number;
+    accuracy_score: number;
+    created_at: string;
+  }>;
 }
+
 
 const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }) => {
   const [loading, setLoading] = useState(true);
@@ -299,8 +309,30 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
         </div>
       </div>
 
+      {/* Historical Score Trend LineChart */}
+      {data.history && data.history.length > 0 && (
+        <div className="chart-card" style={{ marginBottom: '24px', padding: '20px' }}>
+          <h3 style={{ margin: '0 0 16px 0', color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            📈 Quality & Performance Score Trend Over Time
+          </h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={data.history}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+              <XAxis dataKey="created_at" stroke="rgba(255,255,255,0.5)" tick={{ fontSize: 12 }} />
+              <YAxis domain={[0, 100]} stroke="rgba(255,255,255,0.5)" tick={{ fontSize: 12 }} />
+              <Tooltip contentStyle={{ background: '#1a1a24', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px' }} />
+              <Legend />
+              <Line type="monotone" dataKey="overall_score" stroke="#10b981" strokeWidth={3} name="Overall Quality Score" />
+              <Line type="monotone" dataKey="web_vitals_score" stroke="#c084fc" strokeWidth={2.5} name="Web Vitals Score" />
+              <Line type="monotone" dataKey="coverage_score" stroke="#3b82f6" strokeWidth={2} name="Coverage Score" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
       {/* Charts Section */}
       <div className="charts-section">
+
         {/* Coverage Chart */}
         <div className="chart-card">
           <h3>Test Coverage</h3>

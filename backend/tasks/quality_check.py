@@ -8,8 +8,10 @@ from django.db.models import Avg, Count
 from django.utils import timezone
 from core.models import (
     TestValidation, CoverageReport, FlakinessReport, BugValidation,
-    QualityMetrics, TestCase, Page, TestRun, Bug, Application, CeleryTask
+    QualityMetrics, TestCase, Page, TestRun, Bug, Application, CeleryTask,
+    LoadTestResult, WebVitalsResult, QualityMetricsSnapshot
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -734,7 +736,24 @@ def calculate_quality_metrics(self, application_id):
             }
         )
         
+        # Create a historical snapshot for trend tracking
+        try:
+            wv_avg = WebVitalsResult.objects.filter(application=app).aggregate(Avg('performance_score'))['performance_score__avg'] or 0.0
+            QualityMetricsSnapshot.objects.create(
+                application=app,
+                coverage_score=coverage_score,
+                reliability_score=reliability_score,
+                accuracy_score=accuracy_score,
+                relevance_score=relevance_score,
+                overall_score=overall_score,
+                web_vitals_score=round(wv_avg, 1),
+                grade=grade
+            )
+        except Exception as snap_err:
+            logger.warning(f"Failed to create QualityMetricsSnapshot: {snap_err}")
+
         print(f"✓ Quality metrics calculated: {app.url} - Grade {grade} ({overall_score:.1f}%)")
+
         
         return {
             'application_id': application_id,
@@ -927,3 +946,160 @@ def run_full_quality_check(self, application_id):
             'error': str(e),
             'success': False
         }
+
+
+# ============================================
+# PERFORMANCE & LOAD TEST TASKS
+# ============================================
+
+@shared_task(bind=True, queue="quality")
+def run_load_test_task(self, application_id, concurrency=20, duration_seconds=30):
+    """
+    Celery task for executing concurrent load testing against application endpoints.
+    Tracks status in CeleryTask model and bulk-creates LoadTestResult entries upon success.
+    """
+    import asyncio
+    from services.load_tester import run_load_test
+    from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
+
+    task_id = self.request.id or "dummy_load_test_task_id"
+    logger.info(f"Starting run_load_test_task {task_id} for app #{application_id}")
+
+    try:
+        app = Application.objects.get(id=application_id)
+    except Application.DoesNotExist:
+        logger.error(f"App #{application_id} not found in run_load_test_task")
+        return {"error": "Application not found"}
+
+    task_record, _ = CeleryTask.objects.get_or_create(
+        task_id=task_id,
+        defaults={
+            'app': app,
+            'task_type': 'load_test',
+            'status': 'running',
+            'progress': 10
+        }
+    )
+
+    try:
+        check_cancelled(task_id)
+        task_record.status = 'running'
+        task_record.progress = 30
+        task_record.save(update_fields=['status', 'progress'])
+
+        results_data = asyncio.run(run_load_test(app=app, concurrency=concurrency, duration_seconds=duration_seconds))
+
+        check_cancelled(task_id)
+
+        results_to_create = []
+        for item in results_data:
+            results_to_create.append(LoadTestResult(
+                application=app,
+                api_endpoint=item['api_endpoint'],
+                concurrency=item['concurrency'],
+                total_requests=item['total_requests'],
+                p50_ms=item['p50_ms'],
+                p95_ms=item['p95_ms'],
+                p99_ms=item['p99_ms'],
+                error_rate=item['error_rate'],
+                requests_per_second=item['requests_per_second']
+            ))
+
+        if results_to_create:
+            LoadTestResult.objects.bulk_create(results_to_create)
+
+        task_record.status = 'success'
+        task_record.progress = 100
+        task_record.result = {
+            "status_text": f"Load test completed: {len(results_data)} endpoint(s) tested.",
+            "endpoints_tested": len(results_data)
+        }
+        task_record.completed_at = timezone.now()
+        task_record.save()
+        clear_stop_flag(task_id)
+
+        return {"status": "SUCCESS", "results_count": len(results_data)}
+
+    except TaskCancelled:
+        logger.info(f"run_load_test_task {task_id} cancelled by user.")
+        task_record.status = 'failed'
+        task_record.error = 'Stopped by user.'
+        task_record.completed_at = timezone.now()
+        task_record.save()
+        clear_stop_flag(task_id)
+        return {"status": "CANCELLED"}
+
+    except Exception as e:
+        logger.error(f"run_load_test_task failure: {e}")
+        task_record.status = 'failed'
+        task_record.error = str(e)
+        task_record.completed_at = timezone.now()
+        task_record.save()
+        clear_stop_flag(task_id)
+        return {"error": str(e)}
+
+
+@shared_task(bind=True, queue="quality")
+def run_web_vitals_scan_task(self, application_id):
+    """
+    Celery task for executing Core Web Vitals scan on an application's pages.
+    """
+    from services.web_vitals_scanner import run_web_vitals_scan
+    from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
+
+    task_id = self.request.id or "dummy_web_vitals_task_id"
+    logger.info(f"Starting run_web_vitals_scan_task {task_id} for app #{application_id}")
+
+    try:
+        app = Application.objects.get(id=application_id)
+    except Application.DoesNotExist:
+        logger.error(f"App #{application_id} not found in run_web_vitals_scan_task")
+        return {"error": "Application not found"}
+
+    task_record, _ = CeleryTask.objects.get_or_create(
+        task_id=task_id,
+        defaults={
+            'app': app,
+            'task_type': 'web_vitals',
+            'status': 'running',
+            'progress': 10
+        }
+    )
+
+    try:
+        check_cancelled(task_id)
+        task_record.status = 'running'
+        task_record.progress = 40
+        task_record.save(update_fields=['status', 'progress'])
+
+        results = run_web_vitals_scan(application=app, task_id=task_id)
+
+        task_record.status = 'success'
+        task_record.progress = 100
+        task_record.result = {
+            "status_text": f"Core Web Vitals scan completed for {len(results)} page(s).",
+            "pages_scanned": len(results)
+        }
+        task_record.completed_at = timezone.now()
+        task_record.save()
+        clear_stop_flag(task_id)
+
+        return {"status": "SUCCESS", "scanned_count": len(results)}
+
+    except TaskCancelled:
+        logger.info(f"run_web_vitals_scan_task {task_id} cancelled by user.")
+        task_record.status = 'failed'
+        task_record.error = 'Stopped by user.'
+        task_record.completed_at = timezone.now()
+        task_record.save()
+        clear_stop_flag(task_id)
+        return {"status": "CANCELLED"}
+
+    except Exception as e:
+        logger.error(f"run_web_vitals_scan_task failure: {e}")
+        task_record.status = 'failed'
+        task_record.error = str(e)
+        task_record.completed_at = timezone.now()
+        task_record.save()
+        clear_stop_flag(task_id)
+        return {"error": str(e)}
