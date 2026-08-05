@@ -159,7 +159,28 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         check_team_permission(self.request.user, instance.user, 'destroy')
-        instance.delete()
+        app_id = instance.id
+        from django.db import transaction
+        from .models import (
+            TestCase, TestRun, TestResult, Bug, Page, CeleryTask, APIEndpoint,
+            AgentSession, WebVitalsResult, LoadTestResult, PerformanceThreshold,
+            QualityMetricsSnapshot,
+        )
+        with transaction.atomic():
+            db = 'default'
+            Bug.objects.filter(application_id=app_id)._raw_delete(using=db)
+            TestResult.objects.filter(test_run__test_case__app_id=app_id)._raw_delete(using=db)
+            TestRun.objects.filter(test_case__app_id=app_id)._raw_delete(using=db)
+            TestCase.objects.filter(app_id=app_id)._raw_delete(using=db)
+            Page.objects.filter(app_id=app_id)._raw_delete(using=db)
+            CeleryTask.objects.filter(app_id=app_id)._raw_delete(using=db)
+            APIEndpoint.objects.filter(application_id=app_id)._raw_delete(using=db)
+            AgentSession.objects.filter(application_id=app_id)._raw_delete(using=db)
+            WebVitalsResult.objects.filter(application_id=app_id)._raw_delete(using=db)
+            LoadTestResult.objects.filter(application_id=app_id)._raw_delete(using=db)
+            PerformanceThreshold.objects.filter(application_id=app_id)._raw_delete(using=db)
+            QualityMetricsSnapshot.objects.filter(application_id=app_id)._raw_delete(using=db)
+            Application.objects.filter(id=app_id)._raw_delete(using=db)
 
     # Helper query order
     def get_queryset(self):

@@ -6,6 +6,27 @@ from core.views import get_user_and_team_user_ids
 
 logger = logging.getLogger(__name__)
 
+
+def _get_deduplicated_bug_stats(bugs_qs):
+    bugs = bugs_qs.values('title', 'bug_type', 'severity')
+    seen = set()
+    counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+    for b in bugs:
+        norm_title = (b['title'] or '').strip().lower()
+        btype = (b['bug_type'] or '').lower()
+        norm_type = 'ui' if btype in ['ui', 'ui_issue', 'ui_bug', 'visual'] else btype
+        key = (norm_title, norm_type)
+        if key not in seen:
+            seen.add(key)
+            sev = (b['severity'] or 'low').lower()
+            if sev in counts:
+                counts[sev] += 1
+            else:
+                counts['low'] += 1
+    counts['total'] = len(seen)
+    return counts
+
+
 class ChatbotService:
     @staticmethod
     def build_user_context(user, app_id=None):
@@ -22,7 +43,8 @@ class ChatbotService:
         apps_summary = []
         for app in apps_qs[:10]:  # Limit top 10 apps
             tc_count = TestCase.objects.filter(app=app).count()
-            bug_count = Bug.objects.filter(application=app).count()
+            app_bugs_qs = Bug.objects.filter(Q(test_run__test_case__app=app) | Q(application=app))
+            app_bug_stats = _get_deduplicated_bug_stats(app_bugs_qs)
             api_count = APIEndpoint.objects.filter(application=app).count()
             latest_run = TestRun.objects.filter(test_case__app=app).order_by('-created_at').first()
             
@@ -32,7 +54,7 @@ class ChatbotService:
                 "url": app.url,
                 "environment": getattr(app, 'environment', app.status or 'production'),
                 "test_cases_count": tc_count,
-                "bugs_count": bug_count,
+                "bugs_count": app_bug_stats['total'],
                 "api_endpoints_count": api_count,
                 "latest_run_status": latest_run.status if latest_run else "No runs"
             })
@@ -51,15 +73,12 @@ class ChatbotService:
             for run in recent_runs_qs
         ]
         
-        # Bug severity summary
-        bugs_qs = Bug.objects.filter(application__user_id__in=user_ids)
-        bug_severity = {
-            "critical": bugs_qs.filter(severity='critical').count(),
-            "high": bugs_qs.filter(severity='high').count(),
-            "medium": bugs_qs.filter(severity='medium').count(),
-            "low": bugs_qs.filter(severity='low').count(),
-            "total": bugs_qs.count()
-        }
+        # Bug severity summary (deduplicated unique defects matching application cards)
+        if app_id:
+            all_bugs_qs = Bug.objects.filter(Q(test_run__test_case__app_id=app_id) | Q(application_id=app_id))
+        else:
+            all_bugs_qs = Bug.objects.filter(Q(test_run__test_case__app__user_id__in=user_ids) | Q(application__user_id__in=user_ids))
+        bug_severity = _get_deduplicated_bug_stats(all_bugs_qs)
         
         # Team Access & Members details
         from core.models import TeamMember
@@ -134,6 +153,24 @@ class ChatbotService:
                 "suggestions": ["Summary of my apps", "What are my latest bugs?", "How do I run test cases?"]
             }
 
+        # Handle casual greetings, farewells, and thanks naturally
+        norm_msg = lower_msg.strip(" !.,")
+        if norm_msg in ["ok by", "ok bye", "bye", "goodbye", "by", "see you", "talk to you later", "catch you later"]:
+            return {
+                "response": "Goodbye! Have a great day, and feel free to reach out anytime you need assistance with your QA testing.",
+                "suggestions": ["Summary of my apps", "What are my latest bugs?", "How do I run test cases?"]
+            }
+        if norm_msg in ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]:
+            return {
+                "response": f"Hello {user.username}! How can I assist you with your QA applications, test suites, or bugs today?",
+                "suggestions": ["Summary of my apps", "What are my latest bugs?", "How do I run test cases?"]
+            }
+        if norm_msg in ["thanks", "thank you", "thank you so much", "thanks a lot", "thx", "ok thanks"]:
+            return {
+                "response": "You're welcome! Let me know if you need any further help with your applications or test cases.",
+                "suggestions": ["Summary of my apps", "What are my latest bugs?", "How do I run test cases?"]
+            }
+
         # Build context strictly scoped to user
         context_data = self.build_user_context(user, app_id=app_id)
         context_str = json.dumps(context_data, indent=2)
@@ -144,9 +181,9 @@ YOUR PURPOSE:
 Assist the authenticated user (Username: {user.username}) in analyzing test suites, running test cases, reviewing bugs, tracking application health, and navigating the QA platform.
 
 STRICT OPERATIONAL RULES:
-1. DOMAIN SCOPE: Answer ONLY questions related to quality assurance, testing, application metrics, bugs, test runs, and how to use this QA platform.
-   If the query is clearly unrelated to QA or this platform (e.g. general trivia, cooking recipes, random coding outside QA), politely decline:
-   "I am specialized strictly as your QA AI Assistant. I can only answer questions regarding your QA applications, test suites, test run results, bugs, and platform usage."
+1. DOMAIN SCOPE & GREETINGS: Answer questions related to quality assurance, testing, application metrics, bugs, test runs, and platform usage.
+   - For polite greetings, thanks, or farewells (e.g. "hi", "hello", "thanks", "ok bye", "bye"), respond politely, warmly, and concisely as the QA AI Assistant.
+   - Only decline queries that ask for completely unrelated non-QA topics (e.g. general trivia, cooking recipes, weather, non-QA general knowledge).
 
 2. USER PRIVACY & MULTI-TENANCY ISOLATION (CRITICAL SECURITY REQUIREMENT):
    - You ONLY have access to the data of the current authenticated user ({user.username}, ID: {user.id}).

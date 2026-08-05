@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { Application, TestCase, Bug, CeleryTask, APIEndpoint, AgentSession } from '../lib/types';
 import { DiscoveryStatus } from './DiscoveryStatus';
@@ -36,6 +37,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const { id, tab, runId } = useParams<{ id: string; tab?: string; runId?: string }>();
   const appId = propAppId || parseInt(id || '0');
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   // Vanilla state management
   const [app, setApp] = useState<Application | null>(null);
@@ -605,8 +607,12 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const handleDeleteAppDetail = async () => {
     if (!app) return;
     if (window.confirm(`Are you sure you want to delete "${app.url}"? All tests, runs, and bugs will be permanently deleted.`)) {
+      queryClient.setQueryData<Application[]>(['applications'], (old) =>
+        Array.isArray(old) ? old.filter(a => a.id !== appId) : []
+      );
       try {
         await api.delete(`applications/${appId}/`);
+        queryClient.invalidateQueries({ queryKey: ['applications'] });
         if (onBack) {
           onBack();
         } else {
@@ -614,6 +620,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         }
       } catch (err) {
         console.error('Failed to delete application environment:', err);
+        queryClient.invalidateQueries({ queryKey: ['applications'] });
       }
     }
   };

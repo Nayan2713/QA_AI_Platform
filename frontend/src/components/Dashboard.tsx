@@ -54,12 +54,18 @@ export const Dashboard: React.FC = () => {
 
   const handleDeleteApp = async (id: number, url: string) => {
     if (window.confirm(`Are you sure you want to delete "${url}"? All pages, test cases, and bug logs will be permanently deleted.`)) {
+      queryClient.setQueryData<Application[]>(['applications'], (old) =>
+        Array.isArray(old) ? old.filter(app => app.id !== id) : []
+      );
       try {
         await api.delete(`applications/${id}/`);
         queryClient.invalidateQueries({ queryKey: ['applications'] });
+        refetch();
       } catch (err) {
         console.error(err);
         setError('Failed to delete application environment.');
+        queryClient.invalidateQueries({ queryKey: ['applications'] });
+        refetch();
       }
     }
   };
