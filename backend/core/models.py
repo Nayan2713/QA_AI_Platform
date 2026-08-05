@@ -382,6 +382,132 @@ class QualityMetrics(models.Model):
         app_url = self.application.url if self.application else 'N/A'
         return f"QualityMetrics for {app_url} — grade {self.grade}"
 
+
+class QualityMetricsSnapshot(models.Model):
+    """
+    Historical companion to QualityMetrics. QualityMetrics is a OneToOne
+    "current state" row that gets overwritten every time
+    calculate_quality_metrics() runs, so it can never show a trend. This
+    model keeps one row per calculation instead, so the dashboard can plot
+    score-over-time. Written alongside QualityMetrics, never in place of it.
+    """
+    application = models.ForeignKey(
+        Application, on_delete=models.CASCADE, related_name='quality_snapshots'
+    )
+    coverage_score = models.FloatField(default=0)
+    reliability_score = models.FloatField(default=0)
+    accuracy_score = models.FloatField(default=0)
+    relevance_score = models.FloatField(default=0)
+    performance_score = models.FloatField(default=0, null=True, blank=True)
+    overall_score = models.FloatField(default=0)
+    grade = models.CharField(max_length=1, choices=QualityGrade.choices, default=QualityGrade.F)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        app_url = self.application.url if self.application else 'N/A'
+        return f"QualityMetricsSnapshot for {app_url} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class PerformanceThreshold(models.Model):
+    """
+    Latency budgets used to turn TestRun.metadata['api_calls'] entries and
+    Web Vitals measurements into Bug records. One row per Application;
+    application=None acts as the global default used when an app hasn't
+    set its own.
+    """
+    application = models.OneToOneField(
+        Application, on_delete=models.CASCADE,
+        related_name='performance_threshold', null=True, blank=True
+    )
+    api_latency_warning_ms = models.IntegerField(default=500)
+    api_latency_critical_ms = models.IntegerField(default=2000)
+    page_load_warning_ms = models.IntegerField(default=3000)
+    page_load_critical_ms = models.IntegerField(default=8000)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        app_url = self.application.url if self.application else 'GLOBAL DEFAULT'
+        return f"PerformanceThreshold for {app_url}"
+
+    @classmethod
+    def for_application(cls, application):
+        """Return the app's own threshold row, falling back to the global
+        default (application=None), falling back to unsaved in-memory
+        defaults if neither exists yet."""
+        threshold = cls.objects.filter(application=application).first()
+        if threshold:
+            return threshold
+        threshold = cls.objects.filter(application__isnull=True).first()
+        if threshold:
+            return threshold
+        return cls()
+
+
+class LoadTestResult(models.Model):
+    """
+    Result of firing concurrent traffic at one API endpoint via
+    services.load_tester.run_load_test(). Distinct from performance-
+    threshold bugs, which only observe latency from a single sequential
+    browser session.
+    """
+    application = models.ForeignKey(
+        Application, on_delete=models.CASCADE, related_name='load_test_results'
+    )
+    api_endpoint = models.ForeignKey(
+        APIEndpoint, on_delete=models.SET_NULL, null=True, blank=True, related_name='load_test_results'
+    )
+    method = models.CharField(max_length=10, default='GET')
+    url_pattern = models.CharField(max_length=1000, blank=True)
+    concurrency = models.IntegerField(default=20)
+    duration_seconds = models.IntegerField(default=30)
+    total_requests = models.IntegerField(default=0)
+    successful_requests = models.IntegerField(default=0)
+    error_rate = models.FloatField(default=0)  # 0.0 - 1.0
+    requests_per_second = models.FloatField(default=0)
+    p50_ms = models.FloatField(default=0)
+    p95_ms = models.FloatField(default=0)
+    p99_ms = models.FloatField(default=0)
+    max_ms = models.FloatField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"LoadTest [{self.method}] {self.url_pattern} @ {self.concurrency}c ({self.created_at:%Y-%m-%d %H:%M})"
+
+
+class WebVitalsResult(models.Model):
+    """
+    Core Web Vitals + basic Performance-category signal captured via
+    Playwright's PerformanceObserver bridge (services.web_vitals_scanner),
+    scoped per discovered Page. Threshold breaches also get mirrored into
+    Bug (bug_type='performance') so they show up in the normal bug list.
+    """
+    application = models.ForeignKey(
+        Application, on_delete=models.CASCADE, related_name='web_vitals_results'
+    )
+    page = models.ForeignKey(
+        Page, on_delete=models.SET_NULL, null=True, blank=True, related_name='web_vitals_results'
+    )
+    url = models.URLField(max_length=1000)
+    lcp_ms = models.FloatField(null=True, blank=True)   # Largest Contentful Paint
+    cls_score = models.FloatField(null=True, blank=True)  # Cumulative Layout Shift
+    ttfb_ms = models.FloatField(null=True, blank=True)  # Time to First Byte
+    transfer_size_kb = models.FloatField(null=True, blank=True)
+    performance_score = models.FloatField(default=0)  # 0-100, see web_vitals_scanner.score()
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"WebVitals for {self.url} — {self.performance_score:.0f}/100"
+
+
 class TeamMember(models.Model):
     ROLE_CHOICES = (
         ('admin', 'Admin'),
@@ -425,4 +551,3 @@ class Notification(models.Model):
 
 # Import signals to register receivers
 from . import signals
-

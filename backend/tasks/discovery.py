@@ -603,6 +603,14 @@ def start_discovery(self, app_id, model_choice=None):
                 except Exception as scan_ex:
                     logger.warning(f"Input validation & UI defect scan during discovery failed: {scan_ex}")
 
+                # Web Vitals scan — called once only (see the note above about
+                # why run_ui_scan is no longer called twice in this task).
+                try:
+                    from services.web_vitals_scanner import run_web_vitals_scan
+                    run_web_vitals_scan(app, max_pages=5, task_id=task_id)
+                except Exception as wv_err:
+                    logger.warning(f"Web Vitals scan during discovery failed: {wv_err}")
+
                 task_record.status = 'success'
                 task_record.progress = 100
                 task_record.result = {

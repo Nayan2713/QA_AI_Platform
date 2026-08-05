@@ -1,3 +1,4 @@
+import logging
 from rest_framework import viewsets, status, permissions
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -8,12 +9,18 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember, Notification
+logger = logging.getLogger(__name__)
+
+from .models import (
+    Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint,
+    AgentSession, TeamMember, Notification, PerformanceThreshold, LoadTestResult, WebVitalsResult,
+)
 from .serializers import (
     RegisterSerializer, UserSerializer, ApplicationSerializer, ApplicationListSerializer,
     PageSerializer, TestCaseSerializer, TestCaseListSerializer, TestRunSerializer, TestRunListSerializer,
     TestResultSerializer, BugSerializer, BugDetailSerializer, CeleryTaskSerializer,
-    APIEndpointSerializer, AgentSessionSerializer, TeamMemberSerializer, NotificationSerializer
+    APIEndpointSerializer, AgentSessionSerializer, TeamMemberSerializer, NotificationSerializer,
+    PerformanceThresholdSerializer, LoadTestResultSerializer, WebVitalsResultSerializer,
 )
 from services.test_validation_service import TestValidationService
 
@@ -218,6 +225,63 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             response_data["status"] = "Discovery started with new credentials"
             
         return Response(response_data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get', 'patch'], url_path='performance-thresholds')
+    def performance_thresholds(self, request, pk=None):
+        app = self.get_object()
+        threshold, _ = PerformanceThreshold.objects.get_or_create(application=app)
+
+        if request.method == 'PATCH':
+            check_team_permission(request.user, app.user, 'update')
+            serializer = PerformanceThresholdSerializer(threshold, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+
+        return Response(PerformanceThresholdSerializer(threshold).data)
+
+    @action(detail=True, methods=['post'], url_path='load-test')
+    def load_test(self, request, pk=None):
+        app = self.get_object()
+        check_team_permission(request.user, app.user, 'update')
+
+        concurrency = int(request.data.get('concurrency', 20))
+        duration_seconds = int(request.data.get('duration_seconds', 30))
+
+        import uuid
+        task_id = str(uuid.uuid4())
+        CeleryTask.objects.create(
+            app=app, task_id=task_id, task_type='load_test', status='pending', progress=0
+        )
+        from .signals import register_task_user, register_task_app
+        register_task_user(task_id, request.user.id)
+        register_task_app(task_id, app.id)
+
+        from tasks.quality_check import run_load_test_task
+        run_load_test_task.apply_async(
+            args=[app.id, concurrency, duration_seconds], task_id=task_id, queue='quality'
+        )
+
+        return Response({
+            "task_id": task_id,
+            "status": "pending",
+            "message": f"Load test started at {concurrency} concurrent users for {duration_seconds}s.",
+        }, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['get'], url_path='load-test-results')
+    def load_test_results(self, request, pk=None):
+        app = self.get_object()
+        results = LoadTestResult.objects.filter(application=app)[:100]
+        return Response(LoadTestResultSerializer(results, many=True).data)
+
+    @action(detail=True, methods=['get'], url_path='web-vitals')
+    def web_vitals(self, request, pk=None):
+        app = self.get_object()
+        # Latest result per page: keep it simple, just return the most recent
+        # N rows — a page with repeat scans will show its newest first since
+        # WebVitalsResult.Meta.ordering is -created_at.
+        results = WebVitalsResult.objects.filter(application=app)[:200]
+        return Response(WebVitalsResultSerializer(results, many=True).data)
 
     @action(detail=True, methods=['post'])
     def discover(self, request, pk=None):
@@ -583,6 +647,8 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
         model_choice = request.data.get('model_choice', 'auto')
         file_bytes = file_obj.read()
+        import base64
+        file_b64 = base64.b64encode(file_bytes).decode('ascii')
 
         import uuid
         task_id = str(uuid.uuid4())
@@ -596,7 +662,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
         from tasks.bulk_upload import process_bulk_upload
         process_bulk_upload.apply_async(
-            args=[app.id, file_bytes, file_obj.name, model_choice, is_preview],
+            args=[app.id, file_b64, file_obj.name, model_choice, is_preview],
             task_id=task_id
         )
 
@@ -682,21 +748,28 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             "api_endpoints": api_list,
             "industry": app.industry
         }
-        
         from services.llm_service import LLMService
         llm_service = LLMService(model_choice=model_choice)
         
-        test_case_data = llm_service.generate_single_test_case(pages_data, title)
+        test_case_data, llm_error = llm_service.generate_single_test_case(pages_data, title)
         
         if not test_case_data:
-            return Response({"error": "Failed to generate test case"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            error_detail = llm_error or "LLM returned no data."
+            logger.error(f"generate_single failed for app={app_id}, title={title!r}: {error_detail}")
+            return Response(
+                {"error": "Failed to generate test case", "detail": error_detail},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
             
-        from config.llm_config import get_llm
-        try:
-            llm = get_llm(model_choice=model_choice)
-            test_case_data["model_used"] = getattr(llm, 'model', model_choice)
-        except Exception:
-            test_case_data["model_used"] = model_choice
+        # Attach model_used label without calling get_llm() again
+        if "model_used" not in test_case_data:
+            model_labels = {
+                "openai": "ChatGPT (gpt-4o-mini)",
+                "ollama_groq": "Ollama (groq)",
+                "ollama_qwen": "Ollama (Qwen)",
+                "ollama": "Ollama (Local)",
+            }
+            test_case_data["model_used"] = model_labels.get(model_choice, "ChatGPT (gpt-4o-mini)")
             
         return Response(test_case_data)
 
@@ -886,21 +959,24 @@ class BugViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user_ids = get_user_and_team_user_ids(self.request.user)
+        app_id = self.request.query_params.get('app')
         from django.db.models import Q
-        queryset = (
-            Bug.objects.filter(
-                Q(test_run__test_case__app__user_id__in=user_ids) |
-                Q(application__user_id__in=user_ids)
+
+        if app_id:
+            queryset = Bug.objects.filter(
+                Q(application_id=app_id) | Q(test_run__test_case__app_id=app_id),
+                Q(application__user_id__in=user_ids) | Q(test_run__test_case__app__user_id__in=user_ids)
             )
-            .select_related('application', 'test_run', 'test_run__test_case', 'test_run__test_case__app', 'api_endpoint')
+        else:
+            queryset = Bug.objects.filter(
+                Q(application__user_id__in=user_ids) | Q(test_run__test_case__app__user_id__in=user_ids)
+            )
+
+        queryset = (
+            queryset.select_related('application', 'test_run', 'test_run__test_case', 'api_endpoint')
+            .defer('test_run__test_case__steps', 'test_run__test_case__generation_context')
             .order_by('-created_at')
         )
-        app_id = self.request.query_params.get('app')
-        if app_id:
-            queryset = queryset.filter(
-                Q(test_run__test_case__app_id=app_id) |
-                Q(application_id=app_id)
-            )
         
         bug_type = self.request.query_params.get('bug_type')
         if bug_type:
@@ -916,8 +992,10 @@ class BugViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual'])
             elif cat in ['audit', 'audits']:
                 queryset = queryset.filter(bug_type__in=['security', 'accessibility'])
+            elif cat == 'performance':
+                queryset = queryset.filter(bug_type='performance')
             elif cat == 'functional':
-                queryset = queryset.exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility'])
+                queryset = queryset.exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility', 'performance'])
 
         status_param = self.request.query_params.get('status')
         if status_param:
@@ -927,35 +1005,11 @@ class BugViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-
-        # Fast in-memory deduplication using lightweight values_list without fetching 500 ORM models
-        bug_fields = queryset.values_list('id', 'application_id', 'test_run__test_case__app_id', 'title', 'bug_type')[:300]
-        
-        seen = set()
-        unique_ids = []
-        for bug_id, app_id, tr_app_id, title, bug_type in bug_fields:
-            target_app_id = app_id or tr_app_id
-            norm_title = (title or '').strip().lower()
-            norm_type = 'ui' if (bug_type or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'] else (bug_type or '').strip().lower()
-            key = (target_app_id, norm_title, norm_type)
-            if key not in seen:
-                seen.add(key)
-                unique_ids.append(bug_id)
-        
-        page_ids = self.paginate_queryset(unique_ids)
-        if page_ids is not None:
-            bugs_dict = {b.id: b for b in queryset.filter(id__in=page_ids)}
-            ordered_bugs = [bugs_dict[b_id] for b_id in page_ids if b_id in bugs_dict]
-            serializer = self.get_serializer(ordered_bugs, many=True)
-            return self.get_paginated_response(serializer.data)
-            
-        unique_bugs = list(queryset.filter(id__in=unique_ids))
-        serializer = self.get_serializer(unique_bugs, many=True)
-        return Response(serializer.data)
+        return self._paginate_and_response(queryset)
 
     @action(detail=False, methods=['get'], url_path='functional')
     def functional(self, request):
-        queryset = self.filter_queryset(self.get_queryset()).exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility'])
+        queryset = self.filter_queryset(self.get_queryset()).exclude(bug_type__in=['ui', 'ui_issue', 'ui_bug', 'visual', 'security', 'accessibility', 'performance'])
         return self._paginate_and_response(queryset)
 
     @action(detail=False, methods=['get'], url_path='ui-defects')
@@ -968,6 +1022,11 @@ class BugViewSet(viewsets.ModelViewSet):
         queryset = self.filter_queryset(self.get_queryset()).filter(bug_type__in=['security', 'accessibility'])
         return self._paginate_and_response(queryset)
 
+    @action(detail=False, methods=['get'], url_path='performance')
+    def performance(self, request):
+        queryset = self.filter_queryset(self.get_queryset()).filter(bug_type='performance')
+        return self._paginate_and_response(queryset)
+
     @action(detail=False, methods=['get'], url_path='summary')
     def summary(self, request):
         queryset = self.filter_queryset(self.get_queryset())
@@ -975,21 +1034,38 @@ class BugViewSet(viewsets.ModelViewSet):
         
         ui_count = sum(1 for bt in bug_types if (bt or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'])
         audit_count = sum(1 for bt in bug_types if (bt or '').lower() in ['security', 'accessibility'])
-        functional_count = len(bug_types) - (ui_count + audit_count)
+        performance_count = sum(1 for bt in bug_types if (bt or '').lower() == 'performance')
+        functional_count = len(bug_types) - (ui_count + audit_count + performance_count)
         
         return Response({
             "total": len(bug_types),
             "functional": functional_count,
             "ui": ui_count,
-            "audit": audit_count
+            "audit": audit_count,
+            "performance": performance_count
         })
 
     def _paginate_and_response(self, queryset):
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
+        bug_fields = queryset.values_list('id', 'application_id', 'title', 'bug_type')[:300]
+        seen = set()
+        unique_ids = []
+        for bug_id, app_id, title, bug_type in bug_fields:
+            norm_title = (title or '').strip().lower()
+            norm_type = 'ui' if (bug_type or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'] else (bug_type or '').strip().lower()
+            key = (app_id, norm_title, norm_type)
+            if key not in seen:
+                seen.add(key)
+                unique_ids.append(bug_id)
+
+        page_ids = self.paginate_queryset(unique_ids)
+        if page_ids is not None:
+            bugs_dict = {b.id: b for b in queryset.filter(id__in=page_ids)}
+            ordered_bugs = [bugs_dict[b_id] for b_id in page_ids if b_id in bugs_dict]
+            serializer = self.get_serializer(ordered_bugs, many=True)
             return self.get_paginated_response(serializer.data)
-        serializer = self.get_serializer(queryset, many=True)
+
+        unique_bugs = list(queryset.filter(id__in=unique_ids))
+        serializer = self.get_serializer(unique_bugs, many=True)
         return Response(serializer.data)
 
     def get_serializer_class(self):
@@ -1482,7 +1558,6 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['delete', 'post'])
     def clear_all(self, request):
-        Notification.objects.filter(user=request.user).delete()
-        return Response({'status': 'all notifications cleared'})
-
-
+        qs = Notification.objects.filter(user=request.user)
+        deleted_count = qs._raw_delete(using=qs.db)
+        return Response({'status': 'all notifications cleared', 'count': deleted_count})

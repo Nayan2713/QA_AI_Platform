@@ -38,11 +38,22 @@ interface AccuracyMetrics {
   needs_review: number;
 }
 
+interface QualityHistoryPoint {
+  created_at: string;
+  overall_score: number;
+  coverage_score: number;
+  reliability_score: number;
+  accuracy_score: number;
+  relevance_score: number;
+  performance_score: number | null;
+}
+
 interface DashboardData {
   application_id: string;
   application_name: string;
   overall_quality: QualityMetrics;
   component_scores: ComponentScores;
+  history: QualityHistoryPoint[];
   coverage: CoverageMetrics;
   reliability: ReliabilityMetrics;
   accuracy: AccuracyMetrics;
@@ -68,7 +79,7 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
-  
+
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [currentTask, setCurrentTask] = useState<any>(null);
 
@@ -82,21 +93,21 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
       setCurrentTask(null);
       return;
     }
-    
+
     let isMounted = true;
     let pollCount = 0;
     const MAX_POLLS = 200; // Stop polling after 5 minutes
-    
+
     const fetchTaskStatus = async () => {
       if (!isMounted || pollCount >= MAX_POLLS) return;
       pollCount++;
-      
+
       try {
         const response = await api.get(`tasks/${activeTaskId}/`);
         if (!isMounted) return;
-        
+
         setCurrentTask(response.data);
-        
+
         if (response.data.status === 'success') {
           await fetchDashboardData();
           setActiveTaskId(null);
@@ -108,10 +119,10 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
         console.error('Failed to poll quality check status:', err);
       }
     };
-    
+
     fetchTaskStatus();
     const intervalId = setInterval(fetchTaskStatus, 1500);
-    
+
     return () => {
       isMounted = false;
       clearInterval(intervalId);
@@ -142,7 +153,7 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
         'quality/quality-dashboard/run_full_check/',
         { application_id: applicationId }
       );
-      
+
       if (response.data.task_id) {
         setActiveTaskId(response.data.task_id);
       }
@@ -173,11 +184,18 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
     'F': '#ef4444'
   };
 
+  const latestPerformanceScore = data.history && data.history.length > 0
+    ? data.history[data.history.length - 1].performance_score
+    : null;
+
   const componentScoresData = [
     { name: 'Coverage', value: data.component_scores.coverage, fill: '#3b82f6' },
     { name: 'Reliability', value: data.component_scores.reliability, fill: '#10b981' },
     { name: 'Accuracy', value: data.component_scores.accuracy, fill: '#f59e0b' },
-    { name: 'Relevance', value: data.component_scores.relevance, fill: '#8b5cf6' }
+    { name: 'Relevance', value: data.component_scores.relevance, fill: '#8b5cf6' },
+    ...(latestPerformanceScore !== null
+      ? [{ name: 'Web Vitals', value: latestPerformanceScore, fill: '#38bdf8' }]
+      : []),
   ];
 
   const coverageData = [
@@ -200,8 +218,8 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
           <h1>Quality Dashboard</h1>
           <p className="app-name">{data.application_name}</p>
         </div>
-        <button 
-          className="run-check-btn" 
+        <button
+          className="run-check-btn"
           onClick={runFullCheck}
           disabled={running}
         >
@@ -228,7 +246,7 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
               {currentTask.progress}%
             </span>
           </div>
-          
+
           <div style={{
             width: '100%',
             height: '8px',
@@ -245,7 +263,7 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
               borderRadius: '4px'
             }} />
           </div>
-          
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {currentTask.status === 'progress' && <div className="spinner-small" />}
             <span style={{ fontSize: '0.9rem', color: 'rgba(255, 255, 255, 0.85)' }}>
@@ -264,9 +282,9 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
           <h2>Overall Quality Score</h2>
           <p className="score-value">{data.overall_quality.score.toFixed(1)}/100</p>
           <div className="score-bar">
-            <div 
-              className="score-fill" 
-              style={{ 
+            <div
+              className="score-fill"
+              style={{
                 width: `${data.overall_quality.score}%`,
                 backgroundColor: gradeColor[data.overall_quality.grade]
               }}
@@ -286,9 +304,9 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
                 <span className="score-number">{component.value.toFixed(0)}%</span>
               </div>
               <div className="mini-bar">
-                <div 
-                  className="mini-fill" 
-                  style={{ 
+                <div
+                  className="mini-fill"
+                  style={{
                     width: `${component.value}%`,
                     backgroundColor: component.fill
                   }}
@@ -298,6 +316,30 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
           ))}
         </div>
       </div>
+
+      {/* Quality Trend Over Time — finally uses the LineChart import that
+          was sitting unused; needs data.history from QualityMetricsSnapshot */}
+      {data.history && data.history.length > 1 && (
+        <div className="component-scores-section">
+          <h3>Quality Trend</h3>
+          <div className="chart-card">
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={data.history.map(h => ({
+                ...h,
+                label: new Date(h.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+              }))}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" />
+                <YAxis domain={[0, 100]} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="overall_score" name="Overall" stroke="#a78bfa" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="performance_score" name="Web Vitals Performance" stroke="#38bdf8" strokeWidth={2} dot={false} connectNulls />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       {/* Charts Section */}
       <div className="charts-section">
@@ -436,8 +478,8 @@ const QualityDashboard: React.FC<{ applicationId: string }> = ({ applicationId }
                   return (
                     <tr key={api.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
                       <td style={{ padding: '10px 8px' }}>
-                        <span style={{ 
-                          backgroundColor: `${getMethodBadgeColor(api.method)}20`, 
+                        <span style={{
+                          backgroundColor: `${getMethodBadgeColor(api.method)}20`,
                           color: getMethodBadgeColor(api.method),
                           border: `1px solid ${getMethodBadgeColor(api.method)}40`,
                           padding: '2px 6px',

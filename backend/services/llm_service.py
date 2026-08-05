@@ -218,10 +218,11 @@ Return ONLY valid, strictly-formatted JSON. Do NOT include markdown code block s
             if parsed:
                 result, _ = parsed
                 if result and len(result) > 0:
-                    return result[0]
+                    return result[0], None
         except Exception as e:
             logger.warning(f"Failed to generate single test case: {e}")
-        return None
+            return None, str(e)
+        return None, "LLM returned an empty or unparseable response."
 
     def summarize_page(self, page_data):
         """
@@ -380,26 +381,19 @@ Start with {{ and end with }}.
             if last_list > first_list:
                 cleaned = cleaned[first_list:last_list + 1]
 
-        # 1. Strip single-line JS comments (// ...) excluding http:// or https://
-        lines = []
-        for line in cleaned.splitlines():
-            line_no_comment = re.sub(r'(?<!http:)(?<!https:)//.*$', '', line)
-            lines.append(line_no_comment)
-        cleaned = "\n".join(lines)
+        # 1. Strip JS comments safely without stripping // inside strings (like xpath=// or http://)
+        cleaned = self._strip_js_comments(cleaned)
 
-        # 2. Strip multi-line /* ... */ comments
-        cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
-
-        # 3. Strip trailing commas before } or ]
+        # 2. Strip trailing commas before } or ]
         cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
 
         try:
             try:
-                data = json.loads(cleaned)
+                data = json.loads(cleaned, strict=False)
             except json.JSONDecodeError:
                 # Attempt to auto-close truncated JSON structure if LLM hit token limit
                 repaired = self._auto_close_json(cleaned)
-                data = json.loads(repaired)
+                data = json.loads(repaired, strict=False)
             industry = "General"
             test_cases_list = []
 
@@ -469,6 +463,63 @@ Start with {{ and end with }}.
         except Exception as e:
             logger.error(f"Failed parsing LLM output: {e}. Raw: {text[:300]}")
         return None
+
+    def _strip_js_comments(self, text: str) -> str:
+        """Strips JS single-line (//) and multi-line (/* */) comments without stripping // inside strings (e.g. xpath=// or http://)."""
+        result = []
+        i = 0
+        n = len(text)
+        in_string = False
+        string_char = ''
+        escape = False
+
+        while i < n:
+            char = text[i]
+
+            if escape:
+                result.append(char)
+                escape = False
+                i += 1
+                continue
+
+            if char == '\\' and in_string:
+                result.append(char)
+                escape = True
+                i += 1
+                continue
+
+            if in_string:
+                result.append(char)
+                if char == string_char:
+                    in_string = False
+                i += 1
+                continue
+
+            if char in ('"', "'"):
+                in_string = True
+                string_char = char
+                result.append(char)
+                i += 1
+                continue
+
+            if char == '/' and i + 1 < n and text[i + 1] == '/':
+                i += 2
+                while i < n and text[i] not in ('\r', '\n'):
+                    i += 1
+                continue
+
+            if char == '/' and i + 1 < n and text[i + 1] == '*':
+                i += 2
+                while i < n and not (text[i] == '*' and i + 1 < n and text[i + 1] == '/'):
+                    i += 1
+                if i < n:
+                    i += 2
+                continue
+
+            result.append(char)
+            i += 1
+
+        return "".join(result)
 
     def _auto_close_json(self, s: str) -> str:
         """Closes unclosed braces and brackets for truncated JSON responses."""

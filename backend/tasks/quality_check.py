@@ -6,9 +6,11 @@ from celery import shared_task
 import logging
 from django.db.models import Avg, Count
 from django.utils import timezone
+import asyncio
 from core.models import (
     TestValidation, CoverageReport, FlakinessReport, BugValidation,
-    QualityMetrics, TestCase, Page, TestRun, Bug, Application, CeleryTask
+    QualityMetrics, QualityMetricsSnapshot, TestCase, Page, TestRun, Bug, Application, CeleryTask,
+    LoadTestResult, WebVitalsResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -733,6 +735,28 @@ def calculate_quality_metrics(self, application_id):
                 'recommendations': recommendations
             }
         )
+
+        # Also write a history row so the dashboard can plot a trend line —
+        # QualityMetrics itself is a OneToOne "current state" row that gets
+        # overwritten every run and can never show history on its own.
+        latest_web_vitals_score = None
+        try:
+            latest_wv = WebVitalsResult.objects.filter(application=app).first()
+            if latest_wv:
+                latest_web_vitals_score = latest_wv.performance_score
+        except Exception:
+            pass
+
+        QualityMetricsSnapshot.objects.create(
+            application=app,
+            coverage_score=coverage_score,
+            reliability_score=reliability_score,
+            accuracy_score=accuracy_score,
+            relevance_score=relevance_score,
+            performance_score=latest_web_vitals_score,
+            overall_score=overall_score,
+            grade=grade,
+        )
         
         print(f"✓ Quality metrics calculated: {app.url} - Grade {grade} ({overall_score:.1f}%)")
         
@@ -772,8 +796,12 @@ def run_full_quality_check(self, application_id):
     OPTIMIZED: direct DB calls instead of thread-per-operation.
     CANCELLATION: check_cancelled() is called between every pipeline step.
     """
+    from django.db import close_old_connections
+    from django.conf import settings
     from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
 
+    if not getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+        close_old_connections()
     task_id = self.request.id or "dummy_task_id"
     task_record = None
 
@@ -927,3 +955,141 @@ def run_full_quality_check(self, application_id):
             'error': str(e),
             'success': False
         }
+
+# ============================================
+# LOAD TESTING TASK
+# ============================================
+
+@shared_task(bind=True, queue="quality")
+def run_load_test_task(self, application_id, concurrency=20, duration_seconds=30):
+    """
+    Fires concurrent traffic at the application's already-discovered
+    APIEndpoint list via services.load_tester.run_load_test(), then bulk-
+    creates one LoadTestResult row per endpoint.
+
+    Follows the same rule as every other scanner in this codebase: gather
+    everything in memory first, only touch the DB once the full run
+    completes, so a mid-run failure never leaves partial/misleading data.
+    """
+    from django.db import close_old_connections
+    from django.conf import settings
+    from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
+    from services.load_tester import run_load_test
+
+    if not getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+        close_old_connections()
+    task_id = self.request.id or "dummy_task_id"
+    task_record = None
+
+    try:
+        app = Application.objects.get(id=application_id)
+        task_record = CeleryTask.objects.filter(task_id=task_id).first()
+
+        def update_progress(progress, status_text):
+            if task_record:
+                task_record.status = 'progress'
+                task_record.progress = progress
+                task_record.result = {"status_text": status_text}
+                task_record.save()
+
+        update_progress(10, f"Starting load test at {concurrency} concurrent users...")
+        check_cancelled(task_id)
+
+        from core.models import APIEndpoint
+        endpoints = list(APIEndpoint.objects.filter(application=app))
+
+        if not endpoints:
+            if task_record:
+                task_record.status = 'success'
+                task_record.progress = 100
+                task_record.result = {"status_text": "No discovered API endpoints to load-test.", "results": []}
+                task_record.completed_at = timezone.now()
+                task_record.save()
+            return {'application_id': application_id, 'results': [], 'success': True}
+
+        update_progress(30, f"Firing traffic at {len(endpoints)} endpoint(s)...")
+        check_cancelled(task_id)
+
+        import concurrent.futures
+
+        def _run_async():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(
+                    run_load_test(app, endpoints, concurrency=concurrency, duration_seconds=duration_seconds, task_id=task_id)
+                )
+            finally:
+                loop.close()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_run_async)
+            results = future.result()
+
+        check_cancelled(task_id)
+        update_progress(90, "Saving results...")
+
+        endpoint_by_id = {e.id: e for e in endpoints}
+        to_create = [
+            LoadTestResult(
+                application=app,
+                api_endpoint=endpoint_by_id.get(r['api_endpoint_id']),
+                method=r['method'],
+                url_pattern=r['url_pattern'],
+                concurrency=concurrency,
+                duration_seconds=duration_seconds,
+                total_requests=r['total_requests'],
+                successful_requests=r['successful_requests'],
+                error_rate=r['error_rate'],
+                requests_per_second=r['requests_per_second'],
+                p50_ms=r['p50_ms'],
+                p95_ms=r['p95_ms'],
+                p99_ms=r['p99_ms'],
+                max_ms=r['max_ms'],
+            )
+            for r in results
+        ]
+        if to_create:
+            LoadTestResult.objects.bulk_create(to_create, batch_size=100)
+
+        if task_record:
+            task_record.status = 'success'
+            task_record.progress = 100
+            task_record.result = {
+                "status_text": f"Load test complete — {len(results)} endpoint(s) tested.",
+                "results": results,
+            }
+            task_record.completed_at = timezone.now()
+            task_record.save()
+
+        clear_stop_flag(task_id)
+        return {'application_id': application_id, 'results': results, 'success': True}
+
+    except TaskCancelled:
+        logger.info(f"Load test task {task_id} cancelled by user.")
+        try:
+            clear_stop_flag(task_id)
+            if task_record:
+                task_record.status = 'failed'
+                task_record.error = 'Stopped by user.'
+                task_record.completed_at = timezone.now()
+                task_record.save()
+        except Exception:
+            pass
+        return {'application_id': application_id, 'error': 'Stopped by user.', 'success': False}
+
+    except Exception as e:
+        logger.error(f"✗ Load test failed: {str(e)}")
+        try:
+            if task_record:
+                task_record.status = 'failed'
+                task_record.error = str(e)
+                task_record.completed_at = timezone.now()
+                task_record.save()
+            else:
+                CeleryTask.objects.filter(task_id=task_id).update(
+                    status='failed', error=str(e), completed_at=timezone.now()
+                )
+        except Exception:
+            pass
+        return {'application_id': application_id, 'error': str(e), 'success': False}

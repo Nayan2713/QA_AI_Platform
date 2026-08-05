@@ -209,7 +209,20 @@ def model_post_save(sender, instance, created, **kwargs):
                         notif_title = f"Task Failed: {task_label}"
                         notif_msg = f"{task_label} failed: {instance.error or 'Check task details'}"
                         level = 'error'
-                link = f"/scans/{instance.app_id}" if instance.app_id else "/dashboard"
+                # Route to the specific tab for this task type
+                if 'discovery' in task_type:
+                    tab = 'discovery'
+                elif 'test_gen' in task_type or 'test_generation' in task_type or 'bulk_upload' in task_type:
+                    tab = 'tests'
+                elif 'execution' in task_type or 'batch' in task_type:
+                    tab = 'tests'
+                elif 'bug_detection' in task_type or 'ui_scan' in task_type:
+                    tab = 'bugs'
+                elif 'quality' in task_type or 'load_test' in task_type:
+                    tab = 'quality'
+                else:
+                    tab = 'discovery'
+                link = f"/scans/{instance.app_id}/{tab}" if instance.app_id else "/dashboard"
 
             if notif_title and notif_msg:
                 notif = Notification.objects.create(

@@ -67,7 +67,12 @@ export const TestCaseFormModal: React.FC<TestCaseFormModalProps> = ({ appId, tes
       setGeneratedModel(generated.model_used || modelChoice);
     } catch (err: any) {
       console.error(err);
-      setError('Failed to generate test case via AI. Ensure the backend LLM service is running.');
+      const serverDetail = err.response?.data?.detail || err.response?.data?.error;
+      if (serverDetail) {
+        setError(`AI generation failed: ${serverDetail}`);
+      } else {
+        setError('Failed to generate test case via AI. Ensure the backend LLM service is running.');
+      }
     } finally {
       setGenerating(false);
     }

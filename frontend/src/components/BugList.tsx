@@ -10,15 +10,15 @@ interface BugListProps {
   activeTaskId?: string | null;
 }
 
-export const BugList: React.FC<BugListProps> = ({ 
-  bugs, 
+export const BugList: React.FC<BugListProps> = ({
+  bugs,
   isLoading,
   onRefreshBugs,
   onRunTestCase,
   activeTaskId
 }) => {
   const [selectedBugId, setSelectedBugId] = useState<number | null>(null);
-  const [activeCategoryTab, setActiveCategoryTab] = useState<'all' | 'functional' | 'ui' | 'audit'>('all');
+  const [activeCategoryTab, setActiveCategoryTab] = useState<'all' | 'functional' | 'ui' | 'audit' | 'performance'>('all');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -35,18 +35,20 @@ export const BugList: React.FC<BugListProps> = ({
   });
 
   const uiBugs = filteredBugs.filter(b => b.bug_type === 'ui' || b.bug_type === 'ui_issue' || b.bug_type === 'ui_bug' || b.bug_type === 'visual');
-  const testCaseBugs = filteredBugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual');
+  const performanceBugs = filteredBugs.filter(b => b.bug_type === 'performance');
+  const testCaseBugs = filteredBugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual' && b.bug_type !== 'performance');
   const auditBugs = filteredBugs.filter(b => b.bug_type === 'security' || b.bug_type === 'accessibility');
 
-  const totalFunctionalCount = bugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual').length;
+  const totalFunctionalCount = bugs.filter(b => b.bug_type !== 'security' && b.bug_type !== 'accessibility' && b.bug_type !== 'ui' && b.bug_type !== 'ui_issue' && b.bug_type !== 'ui_bug' && b.bug_type !== 'visual' && b.bug_type !== 'performance').length;
   const totalUiCount = bugs.filter(b => b.bug_type === 'ui' || b.bug_type === 'ui_issue' || b.bug_type === 'ui_bug' || b.bug_type === 'visual').length;
   const totalAuditCount = bugs.filter(b => b.bug_type === 'security' || b.bug_type === 'accessibility').length;
+  const totalPerformanceCount = bugs.filter(b => b.bug_type === 'performance').length;
 
   const renderBugItem = (bug: Bug) => {
     const isExpanded = selectedBugId === bug.id;
     return (
-      <div 
-        key={bug.id} 
+      <div
+        key={bug.id}
         className={`bug-item severity-${bug.severity} ${isExpanded ? 'expanded' : ''}`}
       >
         <div className="bug-item-summary" onClick={() => toggleExpandBug(bug.id)}>
@@ -56,10 +58,10 @@ export const BugList: React.FC<BugListProps> = ({
             </span>
             <span className="bug-title">{bug.title}</span>
           </div>
-          
+
           <div className="bug-metadata-block" onClick={(e) => e.stopPropagation()}>
             <span className="bug-app-url">{bug.app_url}</span>
-            
+
             {bug.test_case_id && onRunTestCase && (
               <button
                 onClick={() => onRunTestCase(bug.test_case_id!)}
@@ -85,8 +87,8 @@ export const BugList: React.FC<BugListProps> = ({
                 ▶ Run Test
               </button>
             )}
-            
-            <button 
+
+            <button
               onClick={() => toggleExpandBug(bug.id)}
               className="btn-bug-expand-toggle"
               style={{
@@ -114,7 +116,7 @@ export const BugList: React.FC<BugListProps> = ({
               <h6>Description & Trace:</h6>
               <pre className="desc-text">{bug.description}</pre>
             </div>
-            
+
             {/* Step Execution Timeline */}
             {bug.test_case_steps && bug.test_case_steps.length > 0 && (
               <div className="bug-steps-timeline" style={{ marginTop: '20px', marginBottom: '20px' }}>
@@ -127,12 +129,12 @@ export const BugList: React.FC<BugListProps> = ({
                     const stepResult = bug.test_run_results?.find(r => r.step_number === stepNum);
                     const isFailed = stepResult?.status === 'FAILED';
                     const isPassed = stepResult?.status === 'PASSED';
-                    
+
                     let stepColor = 'rgba(255, 255, 255, 0.4)';
                     let stepBg = 'rgba(255, 255, 255, 0.02)';
                     let stepBorder = 'rgba(255, 255, 255, 0.08)';
                     let statusIcon = '⚪';
-                    
+
                     if (isPassed) {
                       stepColor = '#10b981';
                       stepBg = 'rgba(16, 185, 129, 0.04)';
@@ -158,7 +160,7 @@ export const BugList: React.FC<BugListProps> = ({
                     else if (step.action === 'screenshot') details = step.value ? `label: '${step.value}'` : '';
 
                     return (
-                      <div 
+                      <div
                         key={idx}
                         style={{
                           display: 'flex',
@@ -201,7 +203,7 @@ export const BugList: React.FC<BugListProps> = ({
                             <span style={{ display: 'block', fontSize: '0.72rem', color: 'rgba(255, 255, 255, 0.4)', marginBottom: '4px', textTransform: 'uppercase' }}>
                               📸 Failure Screenshot:
                             </span>
-                            <img 
+                            <img
                               src={(() => {
                                 const ss = stepResult.screenshot;
                                 const origin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
@@ -209,7 +211,7 @@ export const BugList: React.FC<BugListProps> = ({
                                 if (ss.startsWith('http')) return ss;
                                 if (ss.startsWith('/')) return `${origin}${ss}`;
                                 return `${origin}/media/${ss}`;
-                              })()} 
+                              })()}
                               alt={`Step ${stepNum} Failure Screenshot`}
                               style={{
                                 maxWidth: '100%',
@@ -227,7 +229,7 @@ export const BugList: React.FC<BugListProps> = ({
 
                   {/* Render background verification or API failures listed as extra steps */}
                   {bug.test_run_results?.filter(r => r.step_number > bug.test_case_steps!.length).map((result, idx) => (
-                    <div 
+                    <div
                       key={`extra-${idx}`}
                       style={{
                         display: 'flex',
@@ -263,7 +265,7 @@ export const BugList: React.FC<BugListProps> = ({
                 </div>
               </div>
             )}
-            
+
             {bug.steps_to_reproduce && bug.steps_to_reproduce.length > 0 && (
               <div className="repro-steps-section" style={{ marginTop: '16px', marginBottom: '16px' }}>
                 <h6 style={{ color: '#fff', marginBottom: '8px', fontSize: '0.9rem', fontWeight: '600' }}>
@@ -282,15 +284,15 @@ export const BugList: React.FC<BugListProps> = ({
                 <h6 style={{ color: '#fff', marginBottom: '8px', fontSize: '0.9rem', fontWeight: '600' }}>
                   📸 Captured Bug Screenshot:
                 </h6>
-                <img 
+                <img
                   src={(() => {
                     const ss = bug.screenshot;
                     const origin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
                     if (ss.startsWith('http')) return ss;
                     if (ss.startsWith('/')) return `${origin}${ss}`;
                     return `${origin}/media/${ss}`;
-                  })()} 
-                  alt="Captured Bug Screenshot" 
+                  })()}
+                  alt="Captured Bug Screenshot"
                   style={{
                     maxWidth: '100%',
                     maxHeight: '400px',
@@ -472,6 +474,32 @@ export const BugList: React.FC<BugListProps> = ({
             fontSize: '0.75rem'
           }}>{totalAuditCount}</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveCategoryTab('performance')}
+          style={{
+            background: activeCategoryTab === 'performance' ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+            border: activeCategoryTab === 'performance' ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid rgba(255, 255, 255, 0.08)',
+            color: activeCategoryTab === 'performance' ? '#38bdf8' : 'rgba(255, 255, 255, 0.7)',
+            padding: '8px 16px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: '0.85rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <span>⚡ Performance & Load Issues</span>
+          <span style={{
+            background: 'rgba(56, 189, 248, 0.2)',
+            padding: '2px 6px',
+            borderRadius: '10px',
+            fontSize: '0.75rem'
+          }}>{totalPerformanceCount}</span>
+        </button>
       </div>
 
       {/* Filters Panel */}
@@ -486,11 +514,11 @@ export const BugList: React.FC<BugListProps> = ({
         flexWrap: 'wrap'
       }}>
         <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'rgba(255, 255, 255, 0.6)' }}>Filters:</span>
-        
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.4)', textTransform: 'uppercase' }}>Severity</label>
-          <select 
-            value={filterSeverity} 
+          <select
+            value={filterSeverity}
             onChange={(e) => setFilterSeverity(e.target.value)}
             style={{
               background: 'rgba(20, 20, 30, 0.7)',
@@ -511,8 +539,8 @@ export const BugList: React.FC<BugListProps> = ({
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.4)', textTransform: 'uppercase' }}>Bug Type</label>
-          <select 
-            value={filterType} 
+          <select
+            value={filterType}
             onChange={(e) => setFilterType(e.target.value)}
             style={{
               background: 'rgba(20, 20, 30, 0.7)',
@@ -535,8 +563,8 @@ export const BugList: React.FC<BugListProps> = ({
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.4)', textTransform: 'uppercase' }}>Status</label>
-          <select 
-            value={filterStatus} 
+          <select
+            value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
             style={{
               background: 'rgba(20, 20, 30, 0.7)',
@@ -558,16 +586,16 @@ export const BugList: React.FC<BugListProps> = ({
       {bugs.length === 0 && filterSeverity === 'all' && filterType === 'all' && filterStatus === 'all' ? (
         <div className="bugs-table-container">
           <div className="bugs-section" style={{ marginBottom: '32px' }}>
-            <h4 style={{ 
-              color: '#c084fc', 
-              margin: '0 0 16px 0', 
-              borderBottom: '1px solid rgba(192, 132, 252, 0.15)', 
-              paddingBottom: '8px', 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '8px', 
-              fontSize: '1.05rem', 
-              fontWeight: '600' 
+            <h4 style={{
+              color: '#c084fc',
+              margin: '0 0 16px 0',
+              borderBottom: '1px solid rgba(192, 132, 252, 0.15)',
+              paddingBottom: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '1.05rem',
+              fontWeight: '600'
             }}>
               🎨 UI & Visual Layout Defects (0)
             </h4>
@@ -595,16 +623,16 @@ export const BugList: React.FC<BugListProps> = ({
         <div className="bugs-table-container">
           {(activeCategoryTab === 'all' || activeCategoryTab === 'functional') && (
             <div className="bugs-section" style={{ marginBottom: '32px' }}>
-              <h4 style={{ 
-                color: '#f87171', 
-                margin: '0 0 16px 0', 
-                borderBottom: '1px solid rgba(248, 113, 113, 0.15)', 
-                paddingBottom: '8px', 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '8px', 
-                fontSize: '1.05rem', 
-                fontWeight: '600' 
+              <h4 style={{
+                color: '#f87171',
+                margin: '0 0 16px 0',
+                borderBottom: '1px solid rgba(248, 113, 113, 0.15)',
+                paddingBottom: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '1.05rem',
+                fontWeight: '600'
               }}>
                 🛠️ Functional & Test Case Failures ({testCaseBugs.length})
               </h4>
@@ -629,16 +657,16 @@ export const BugList: React.FC<BugListProps> = ({
 
           {(activeCategoryTab === 'all' || activeCategoryTab === 'ui') && (
             <div className="bugs-section" style={{ marginBottom: '32px' }}>
-              <h4 style={{ 
-                color: '#c084fc', 
-                margin: '0 0 16px 0', 
-                borderBottom: '1px solid rgba(192, 132, 252, 0.15)', 
-                paddingBottom: '8px', 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '8px', 
-                fontSize: '1.05rem', 
-                fontWeight: '600' 
+              <h4 style={{
+                color: '#c084fc',
+                margin: '0 0 16px 0',
+                borderBottom: '1px solid rgba(192, 132, 252, 0.15)',
+                paddingBottom: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '1.05rem',
+                fontWeight: '600'
               }}>
                 🎨 UI & Visual Layout Defects ({uiBugs.length})
               </h4>
@@ -663,19 +691,19 @@ export const BugList: React.FC<BugListProps> = ({
               )}
             </div>
           )}
-          
+
           {(activeCategoryTab === 'all' || activeCategoryTab === 'audit') && (
             <div className="bugs-section" style={{ marginTop: (testCaseBugs.length > 0 || uiBugs.length > 0) ? '32px' : '0' }}>
-              <h4 style={{ 
-                color: '#60a5fa', 
-                margin: '0 0 16px 0', 
-                borderBottom: '1px solid rgba(96, 165, 250, 0.15)', 
-                paddingBottom: '8px', 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '8px', 
-                fontSize: '1.05rem', 
-                fontWeight: '600' 
+              <h4 style={{
+                color: '#60a5fa',
+                margin: '0 0 16px 0',
+                borderBottom: '1px solid rgba(96, 165, 250, 0.15)',
+                paddingBottom: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '1.05rem',
+                fontWeight: '600'
               }}>
                 🛡️ Security & Accessibility Audits ({auditBugs.length})
               </h4>
@@ -693,6 +721,40 @@ export const BugList: React.FC<BugListProps> = ({
                   fontSize: '0.85rem'
                 }}>
                   ✨ Zero security or accessibility audit defects in this view.
+                </div>
+              )}
+            </div>
+          )}
+
+          {(activeCategoryTab === 'all' || activeCategoryTab === 'performance') && (
+            <div className="bugs-section" style={{ marginTop: (testCaseBugs.length > 0 || uiBugs.length > 0 || auditBugs.length > 0) ? '32px' : '0' }}>
+              <h4 style={{
+                color: '#38bdf8',
+                margin: '0 0 16px 0',
+                borderBottom: '1px solid rgba(56, 189, 248, 0.15)',
+                paddingBottom: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '1.05rem',
+                fontWeight: '600'
+              }}>
+                ⚡ Performance & Load Issues ({performanceBugs.length})
+              </h4>
+              {performanceBugs.length > 0 ? (
+                <div className="bugs-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {performanceBugs.map((bug) => renderBugItem(bug))}
+                </div>
+              ) : (
+                <div style={{
+                  padding: '14px 18px',
+                  background: 'rgba(56, 189, 248, 0.04)',
+                  border: '1px dashed rgba(56, 189, 248, 0.2)',
+                  borderRadius: '10px',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  fontSize: '0.85rem'
+                }}>
+                  ✨ Zero performance or load-time defects in this view.
                 </div>
               )}
             </div>

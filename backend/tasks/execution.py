@@ -762,6 +762,15 @@ def execute_test(self, test_run_id, model_choice=None):
             _check_batch_completion(app.id, task_id)
         run_in_thread(complete_run)
 
+        # Check captured api_calls latency against this app's
+        # PerformanceThreshold and record any breaches as Bug rows
+        # (bug_type='performance'). Never allowed to fail the test run.
+        try:
+            from services.performance_checker import check_performance_thresholds
+            run_in_thread(lambda: check_performance_thresholds(test_run))
+        except Exception as perf_err:
+            logger.error(f"Performance threshold check failed: {perf_err}")
+
         # OPTIMIZED: pass only test_run_id — api_logs already stored in
         # TestRun.metadata, avoiding a potentially large broker payload.
         run_quality_analysis.apply_async(args=[test_run.id], queue='quality')

@@ -64,6 +64,9 @@ export const AppDetail: React.FC<AppDetailProps> = ({
   const [selectedApiAnalysis, setSelectedApiAnalysis] = useState<any | null>(null);
   const [loadingApiAnalysisId, setLoadingApiAnalysisId] = useState<number | null>(null);
   const [discovering, setDiscovering] = useState(false);
+  const [loadTesting, setLoadTesting] = useState(false);
+  const [loadTestResults, setLoadTestResults] = useState<any[]>([]);
+  const [loadTestStatusText, setLoadTestStatusText] = useState('');
   const [showCredentialsModal, setShowCredentialsModal] = useState(false);
   const activeTab = (tab as any) || 'discovery';
   const setActiveTab = (tabName: string) => {
@@ -234,16 +237,18 @@ export const AppDetail: React.FC<AppDetailProps> = ({
           return Array.isArray(rawData) ? rawData : (rawData.results || []);
         };
 
-        const [functionalRes, uiRes, auditsRes] = await Promise.all([
+        const [functionalRes, uiRes, auditsRes, performanceRes] = await Promise.all([
           api.get(`bugs/functional/?app=${appId}&page_size=1000`, { signal }),
           api.get(`bugs/ui-defects/?app=${appId}&page_size=1000`, { signal }),
           api.get(`bugs/audits/?app=${appId}&page_size=1000`, { signal }),
+          api.get(`bugs/performance/?app=${appId}&page_size=1000`, { signal }),
         ]);
 
         const data = [
           ...extract(functionalRes),
           ...extract(uiRes),
           ...extract(auditsRes),
+          ...extract(performanceRes),
         ];
 
         if (active) {
@@ -511,6 +516,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       setActiveTaskId(null);
       setCurrentTask(null);
       setDiscovering(false);
+      setLoadTesting(false);
       addToast('info', 'Task Terminated', 'All running and queued task workflows were stopped successfully.');
       await refetchAll();
     } catch (err) {
@@ -518,6 +524,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       setActiveTaskId(null);
       setCurrentTask(null);
       setDiscovering(false);
+      setLoadTesting(false);
       addToast('info', 'Task Termination Request Sent', 'Stop signal sent to server.');
     }
   };
@@ -546,6 +553,53 @@ export const AppDetail: React.FC<AppDetailProps> = ({
     setDiscovering(false);
     refetchAll();
     setActiveTab('tests');
+  };
+
+  const handleRunLoadTest = async () => {
+    if (!app) return;
+    setLoadTesting(true);
+    setLoadTestStatusText('Starting load test...');
+    try {
+      const res = await api.post(`applications/${appId}/load-test/`, {
+        concurrency: 20,
+        duration_seconds: 30,
+      });
+      const taskId = res.data.task_id;
+      if (taskId) {
+        setActiveTaskId(taskId);
+      }
+      addToast('info', 'Load Test Started', res.data.message || 'Firing concurrent traffic at discovered endpoints.');
+
+      // Simple poll loop — task_id lookup on CeleryTaskViewSet uses
+      // lookup_field='task_id', so this hits the row directly.
+      const poll = async () => {
+        try {
+          const taskRes = await api.get(`tasks/${taskId}/`);
+          const t = taskRes.data;
+          setLoadTestStatusText(t.result?.status_text || `Status: ${t.status}`);
+
+          if (t.status === 'success') {
+            const resultsRes = await api.get(`applications/${appId}/load-test-results/`);
+            setLoadTestResults(resultsRes.data || []);
+            setLoadTesting(false);
+            addToast('success', 'Load Test Complete', t.result?.status_text || 'Done.');
+          } else if (t.status === 'failed') {
+            setLoadTesting(false);
+            addToast('error', 'Load Test Failed', t.error || 'The load test did not complete.');
+          } else {
+            setTimeout(poll, 2000);
+          }
+        } catch (pollErr) {
+          setLoadTesting(false);
+          console.error('Failed polling load test status:', pollErr);
+        }
+      };
+      setTimeout(poll, 2000);
+    } catch (err) {
+      console.error(err);
+      setLoadTesting(false);
+      addToast('error', 'Load Test Failed to Start', 'Could not start the load test.');
+    }
   };
 
   const handleDeleteAppDetail = async () => {
@@ -819,6 +873,34 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             </button>
 
             <button
+              onClick={handleRunLoadTest}
+              disabled={loadTesting}
+              className="btn-secondary"
+              style={{
+                backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                color: '#38bdf8',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                cursor: loadTesting ? 'default' : 'pointer',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                opacity: loadTesting ? 0.7 : 1,
+              }}
+            >
+              {loadTesting ? (
+                <>
+                  <div className="spinner-small"></div>
+                  <span>{loadTestStatusText || 'Running Load Test...'}</span>
+                </>
+              ) : (
+                '⚡ Run Load Test'
+              )}
+            </button>
+
+            <button
               onClick={handleDeleteAppDetail}
               className="btn-danger"
               style={{
@@ -838,6 +920,48 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             </button>
           </div>
         </div>
+
+        {loadTestResults.length > 0 && (
+          <div style={{
+            background: 'rgba(56, 189, 248, 0.06)',
+            border: '1px solid rgba(56, 189, 248, 0.2)',
+            borderRadius: '10px',
+            padding: '16px',
+            margin: '16px 0',
+          }}>
+            <h4 style={{ margin: '0 0 12px 0', color: '#38bdf8' }}>⚡ Load Test Results</h4>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '6px 10px' }}>Endpoint</th>
+                    <th style={{ padding: '6px 10px' }}>Requests</th>
+                    <th style={{ padding: '6px 10px' }}>Error Rate</th>
+                    <th style={{ padding: '6px 10px' }}>RPS</th>
+                    <th style={{ padding: '6px 10px' }}>p50</th>
+                    <th style={{ padding: '6px 10px' }}>p95</th>
+                    <th style={{ padding: '6px 10px' }}>p99</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loadTestResults.map((r: any) => (
+                    <tr key={r.id} style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                      <td style={{ padding: '6px 10px' }}>{r.method} {r.url_pattern}</td>
+                      <td style={{ padding: '6px 10px' }}>{r.total_requests}</td>
+                      <td style={{ padding: '6px 10px', color: r.error_rate > 0.05 ? '#ef4444' : '#34d399' }}>
+                        {(r.error_rate * 100).toFixed(1)}%
+                      </td>
+                      <td style={{ padding: '6px 10px' }}>{r.requests_per_second?.toFixed(1)}</td>
+                      <td style={{ padding: '6px 10px' }}>{Math.round(r.p50_ms)}ms</td>
+                      <td style={{ padding: '6px 10px' }}>{Math.round(r.p95_ms)}ms</td>
+                      <td style={{ padding: '6px 10px' }}>{Math.round(r.p99_ms)}ms</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* High-Level Overview Metrics Grid (5 cards across full width) */}
         <div style={{

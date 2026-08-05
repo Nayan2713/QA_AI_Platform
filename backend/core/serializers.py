@@ -3,7 +3,10 @@ from django.contrib.auth.models import User
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from urllib.parse import urlparse
-from .models import Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint, AgentSession, TeamMember, Notification
+from .models import (
+    Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint,
+    AgentSession, TeamMember, Notification, PerformanceThreshold, LoadTestResult, WebVitalsResult,
+)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -332,3 +335,34 @@ class AgentSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentSession
         fields = '__all__'
+
+
+class PerformanceThresholdSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PerformanceThreshold
+        fields = (
+            'id', 'application', 'api_latency_warning_ms', 'api_latency_critical_ms',
+            'page_load_warning_ms', 'page_load_critical_ms', 'updated_at',
+        )
+        read_only_fields = ('id', 'application', 'updated_at')
+
+
+class LoadTestResultSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LoadTestResult
+        fields = (
+            'id', 'application', 'api_endpoint', 'method', 'url_pattern', 'concurrency',
+            'duration_seconds', 'total_requests', 'successful_requests', 'error_rate',
+            'requests_per_second', 'p50_ms', 'p95_ms', 'p99_ms', 'max_ms', 'created_at',
+        )
+        read_only_fields = fields
+
+
+class WebVitalsResultSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WebVitalsResult
+        fields = (
+            'id', 'application', 'page', 'url', 'lcp_ms', 'cls_score', 'ttfb_ms',
+            'transfer_size_kb', 'performance_score', 'created_at',
+        )
+        read_only_fields = fields

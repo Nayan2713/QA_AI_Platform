@@ -1,5 +1,7 @@
 from celery import shared_task
 from django.utils import timezone
+from django.db import close_old_connections
+from django.conf import settings
 import logging
 
 from core.models import CeleryTask, Application, TestCase
@@ -8,19 +10,30 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, name="tasks.bulk_upload.process_bulk_upload", queue="celery")
-def process_bulk_upload(self, app_id, file_bytes, filename, model_choice='auto', is_preview=False):
+def process_bulk_upload(self, app_id, file_data, filename, model_choice='auto', is_preview=False):
     """
     Runs BulkTestCaseService.process_bulk_file in the background instead of
     blocking the HTTP request. Mirrors the CeleryTask tracking pattern used
     by tasks.discovery.start_discovery.
     """
+    from django.db import connection, close_old_connections
+    from django.conf import settings
+
+    if not getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+        close_old_connections()
+
+    if connection.connection and getattr(connection.connection, 'closed', False):
+        connection.connection = None
+
     task_id = self.request.id or "dummy_task_id"
 
-    task_record, created = CeleryTask.objects.get_or_create(
-        task_id=task_id,
-        defaults={'task_type': 'bulk_upload', 'status': 'progress', 'progress': 10}
-    )
-    if not created:
+    task_record = CeleryTask.objects.filter(task_id=task_id).first()
+    if not task_record:
+        task_record, _ = CeleryTask.objects.get_or_create(
+            task_id=task_id,
+            defaults={'task_type': 'bulk_upload', 'status': 'progress', 'progress': 10}
+        )
+    else:
         task_record.status = 'progress'
         task_record.progress = 10
         task_record.save(update_fields=['status', 'progress'])
@@ -39,6 +52,15 @@ def process_bulk_upload(self, app_id, file_bytes, filename, model_choice='auto',
 
     from services.bulk_test_case_service import BulkTestCaseService
     import io
+    import base64
+
+    if isinstance(file_data, str):
+        try:
+            file_bytes = base64.b64decode(file_data)
+        except Exception:
+            file_bytes = file_data.encode('utf-8')
+    else:
+        file_bytes = file_data
 
     file_like = io.BytesIO(file_bytes)
 

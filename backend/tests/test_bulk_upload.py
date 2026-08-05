@@ -1,6 +1,6 @@
 import io
 import csv
-from django.test import TestCase, override_settings
+from django.test import TransactionTestCase, override_settings
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
@@ -9,7 +9,7 @@ from core.models import Application, TestCase as TestCaseModel
 
 
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
-class BulkUploadAPITests(TestCase):
+class BulkUploadAPITests(TransactionTestCase):
     def setUp(self):
         self.client = APIClient()
         self.user = User.objects.create_user(username='testuser', password='password123')
