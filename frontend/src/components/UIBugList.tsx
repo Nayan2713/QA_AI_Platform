@@ -145,26 +145,61 @@ export const UIBugList: React.FC<UIBugListProps> = ({
           </div>
 
           {appId && (
-            <button
-              onClick={() => setShowReportModal(true)}
-              style={{
-                background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
-                color: '#fff',
-                border: 'none',
-                padding: '10px 20px',
-                borderRadius: '10px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                boxShadow: '0 4px 14px rgba(168, 85, 247, 0.4)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontSize: '0.9rem',
-                transition: 'all 0.2s'
-              }}
-            >
-              ➕ Report UI Bug
-            </button>
+            <>
+              <button
+                onClick={async () => {
+                  setIsSubmitting(true);
+                  try {
+                    await api.post(`applications/${appId}/scan-ui-bugs/`);
+                    if (onRefreshBugs) onRefreshBugs();
+                  } catch (err) {
+                    console.error('Failed to start UI defect scan:', err);
+                  } finally {
+                    setIsSubmitting(false);
+                  }
+                }}
+                disabled={isSubmitting}
+                style={{
+                  background: 'linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  fontWeight: 700,
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 14px rgba(6, 182, 212, 0.4)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '0.9rem',
+                  opacity: isSubmitting ? 0.7 : 1,
+                  transition: 'all 0.2s'
+                }}
+              >
+                {isSubmitting ? '⏳ Scanning UI...' : '🎨 Scan UI Defects'}
+              </button>
+
+              <button
+                onClick={() => setShowReportModal(true)}
+                style={{
+                  background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 14px rgba(168, 85, 247, 0.4)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '0.9rem',
+                  transition: 'all 0.2s'
+                }}
+              >
+                ➕ Report UI Bug
+              </button>
+            </>
           )}
         </div>
       </div>

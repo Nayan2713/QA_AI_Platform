@@ -120,6 +120,11 @@ def run_web_vitals_scan(application: Application, max_pages: int = 5, task_id: s
     playwright = None
     browser = None
     try:
+        import asyncio
+        try:
+            asyncio.set_event_loop(None)
+        except Exception:
+            pass
         playwright = sync_playwright().start()
         browser = playwright.chromium.launch(
             headless=True,

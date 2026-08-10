@@ -243,6 +243,10 @@ def run_async(coro, task_id=None):
                 from tasks.cancellation import unregister_active_handle
                 unregister_active_handle(task_id, loop)
             loop.close()
+            try:
+                asyncio.set_event_loop(None)
+            except Exception:
+                pass
             connection.close()
 
     thread = threading.Thread(target=target, daemon=True)
@@ -596,30 +600,29 @@ def start_discovery(self, app_id, model_choice=None):
                     app.login_status = 'NOT_ATTEMPTED'
                 app.save()
 
-                # Trigger automated UI & input character fuzzing scanner across discovered pages
-                try:
-                    from services.ui_scanner import run_ui_scan
-                    run_ui_scan(app, max_pages=10, task_id=task_id)
-                except Exception as scan_ex:
-                    logger.warning(f"Input validation & UI defect scan during discovery failed: {scan_ex}")
+            # Trigger automated UI & input character fuzzing scanner outside atomic transaction
+            try:
+                from services.ui_scanner import run_ui_scan
+                run_ui_scan(app, max_pages=10, task_id=task_id)
+            except Exception as scan_ex:
+                logger.warning(f"Input validation & UI defect scan during discovery failed: {scan_ex}")
 
-                # Web Vitals scan — called once only (see the note above about
-                # why run_ui_scan is no longer called twice in this task).
-                try:
-                    from services.web_vitals_scanner import run_web_vitals_scan
-                    run_web_vitals_scan(app, max_pages=5, task_id=task_id)
-                except Exception as wv_err:
-                    logger.warning(f"Web Vitals scan during discovery failed: {wv_err}")
+            # Web Vitals scan outside atomic transaction
+            try:
+                from services.web_vitals_scanner import run_web_vitals_scan
+                run_web_vitals_scan(app, max_pages=5, task_id=task_id)
+            except Exception as wv_err:
+                logger.warning(f"Web Vitals scan during discovery failed: {wv_err}")
 
-                task_record.status = 'success'
-                task_record.progress = 100
-                task_record.result = {
-                    "pages_discovered": len(pages_data),
-                    "source": app.discovery_source,
-                    "apis_cataloged": len(api_logs_data)
-                }
-                task_record.completed_at = timezone.now()
-                task_record.save()
+            task_record.status = 'success'
+            task_record.progress = 100
+            task_record.result = {
+                "pages_discovered": len(pages_data),
+                "source": app.discovery_source,
+                "apis_cataloged": len(api_logs_data)
+            }
+            task_record.completed_at = timezone.now()
+            task_record.save()
 
         run_in_thread(save_discovered_pages)
 

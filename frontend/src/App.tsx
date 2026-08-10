@@ -9,6 +9,7 @@ import { ChatbotWidget } from './components/ChatbotWidget';
 import { ToastManager, ToastItem } from './components/ToastManager';
 import { NotificationItem } from './components/NotificationCenter';
 import { playNotificationSound, initAudioUnlock } from './lib/notificationSound';
+import { LandingPage } from './landing/LandingPage';
 import './App.css';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then(module => ({ default: module.Dashboard })));
@@ -39,6 +40,16 @@ function App() {
 
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Enforce scroll to top on page refresh and route navigation
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if ('scrollRestoration' in window.history) {
+        window.history.scrollRestoration = 'manual';
+      }
+      window.scrollTo(0, 0);
+    }
+  }, [location.pathname]);
 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
@@ -394,75 +405,84 @@ function App() {
     }
   };
 
+  const handleLandingAuthSubmit = async (
+    e: React.FormEvent,
+    isLoginMode: boolean,
+    emailInput: string,
+    passInput: string,
+    userInput: string
+  ) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSuccess('');
+    setAuthLoading(true);
+
+    try {
+      if (isLoginMode) {
+        queryClient.clear();
+        const response = await api.post<{ access: string; refresh: string; user: User }>('auth/login/', {
+          email: emailInput,
+          password: passInput
+        });
+        localStorage.setItem('access_token', response.data.access);
+        localStorage.setItem('refresh_token', response.data.refresh);
+        localStorage.setItem('username', response.data.user.username);
+        setToken(response.data.access);
+        setUsername(response.data.user.username);
+        window.location.href = '/dashboard';
+      } else {
+        await api.post<{ access: string; refresh: string; user: User }>('auth/register/', {
+          username: userInput,
+          email: emailInput,
+          password: passInput
+        });
+        setAuthSuccess('Successfully registered! Please log in.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      let msg = 'Authentication failed.';
+      if (err.response?.data) {
+        const data = err.response.data;
+        if (data.detail) {
+          if (typeof data.detail === 'string') {
+            msg = data.detail;
+          } else if (typeof data.detail === 'object') {
+            const firstKey = Object.keys(data.detail)[0];
+            const firstVal = data.detail[firstKey];
+            msg = Array.isArray(firstVal) ? firstVal[0] : (typeof firstVal === 'string' ? firstVal : JSON.stringify(data.detail));
+          }
+        } else if (data.username) {
+          msg = Array.isArray(data.username) ? data.username[0] : data.username;
+        } else if (data.email) {
+          msg = Array.isArray(data.email) ? data.email[0] : data.email;
+        } else if (data.password) {
+          msg = Array.isArray(data.password) ? data.password[0] : data.password;
+        }
+      }
+      setAuthError(msg);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   if (!token) {
+    const landingNode = (
+      <LandingPage
+        authError={authError}
+        authSuccess={authSuccess}
+        authLoading={authLoading}
+        onAuthSubmit={handleLandingAuthSubmit}
+      />
+    );
     return (
-      <div className="auth-container">
-        <div className="glass-card auth-card">
-          <div className="auth-header">
-            <span className="auth-logo">⚡</span>
-            <h2>{isLogin ? 'Welcome Back' : 'Create QA Space'}</h2>
-            <p className="auth-subtitle">
-              {isLogin ? 'Log in to manage your automated test runs' : 'Register your developer space to begin testing'}
-            </p>
-          </div>
-
-          <form onSubmit={handleAuthSubmit} className="auth-form">
-            {authError && <div className="error-alert">{authError}</div>}
-            {authSuccess && <div className="success-alert">{authSuccess}</div>}
-
-            {!isLogin && (
-              <div className="form-group">
-                <label htmlFor="auth-username">Username *</label>
-                <input
-                  id="auth-username"
-                  type="text"
-                  value={authUsername}
-                  onChange={(e) => setAuthUsername(e.target.value)}
-                  required={!isLogin}
-                  className="form-input"
-                  placeholder="qa_engineer"
-                />
-              </div>
-            )}
-
-            <div className="form-group">
-              <label htmlFor="auth-email">Email Address *</label>
-              <input
-                id="auth-email"
-                type="email"
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                required
-                className="form-input"
-                placeholder="name@company.com"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="auth-password">Password *</label>
-              <input
-                id="auth-password"
-                type="password"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                required
-                className="form-input"
-                placeholder="••••••••••••"
-              />
-            </div>
-
-            <button type="submit" className="btn-primary btn-block" disabled={authLoading}>
-              {authLoading ? 'Authenticating...' : isLogin ? 'Log In' : 'Sign Up'}
-            </button>
-          </form>
-
-          <div className="auth-footer">
-            <button className="btn-link" onClick={() => { setIsLogin(!isLogin); setAuthError(''); setAuthSuccess(''); }}>
-              {isLogin ? "Don't have an account? Sign Up" : 'Already have an account? Log In'}
-            </button>
-          </div>
-        </div>
-      </div>
+      <Routes>
+        <Route path="/" element={landingNode} />
+        <Route path="/login" element={landingNode} />
+        <Route path="/signup" element={landingNode} />
+        <Route path="/register" element={landingNode} />
+        <Route path="/dashboard" element={landingNode} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     );
   }
 
@@ -493,6 +513,10 @@ function App() {
           </div>
         }>
           <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/signup" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/register" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route
               path="/scans/:id/:tab?/:runId?"

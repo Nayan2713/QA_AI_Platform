@@ -9,6 +9,8 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+
 logger = logging.getLogger(__name__)
 
 from .models import (
@@ -531,10 +533,15 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             task_id=task_id,
             task_type='ui_scan',
             status='pending',
-            progress=0
+            progress=0,
+            result={"status_text": "Initializing automated UI defect scan..."}
         )
+        from .signals import register_task_user, register_task_app
+        register_task_user(task_id, request.user.id)
+        register_task_app(task_id, app.id)
+
         from tasks.bug_detection import scan_ui_bugs as scan_ui_bugs_task
-        scan_ui_bugs_task.apply_async(args=[app.id], task_id=task_id)
+        scan_ui_bugs_task.apply_async(args=[app.id], task_id=task_id, queue='celery')
         return Response({
             "task_id": task_id,
             "status": "pending",
@@ -908,6 +915,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
         batch_task_id = f"batch-{uuid.uuid4()}"
         first_app = test_cases.first().app
         pending_task_ids = []
+        tasks_to_dispatch = []
 
         runs = []
         for test_case in test_cases:
@@ -933,8 +941,7 @@ class TestRunViewSet(viewsets.ModelViewSet):
                 register_task_user(task_id, request.user.id)
                 register_task_app(task_id, test_case.app_id)
                 
-                from tasks.execution import execute_test
-                execute_test.apply_async(args=[test_run.id, model_choice], task_id=task_id, queue='execution')
+                tasks_to_dispatch.append((test_run.id, task_id))
                 
                 runs.append({
                     "test_run_id": test_run.id,
@@ -961,6 +968,10 @@ class TestRunViewSet(viewsets.ModelViewSet):
             )
             register_task_user(batch_task_id, request.user.id)
             register_task_app(batch_task_id, first_app.id)
+
+            from tasks.execution import execute_test
+            for tr_id, t_id in tasks_to_dispatch:
+                execute_test.apply_async(args=[tr_id, model_choice], task_id=t_id, queue='execution')
 
         return Response({"runs": runs, "batch_task_id": batch_task_id}, status=status.HTTP_202_ACCEPTED)
 
@@ -1424,6 +1435,10 @@ class AgentSessionViewSet(viewsets.ReadOnlyModelViewSet):
         return queryset
 
 
+@extend_schema(
+    summary="Health Check",
+    description="Inspects operational health of Postgres Database, Redis broker, and Celery workers.",
+)
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
 def health_check(request):
@@ -1437,7 +1452,8 @@ def health_check(request):
     # Check Database
     try:
         from django.db import connection
-        connection.ensure_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
         health['database'] = 'healthy'
     except Exception as e:
         health['database'] = f'unhealthy: {str(e)}'
@@ -1543,6 +1559,10 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
+@extend_schema(
+    summary="Query AI Assistant",
+    description="Submits a natural language query to the AI QA assistant to analyze test results, recommend test cases, or inspect app telemetry.",
+)
 class ChatbotQueryView(APIView):
     permission_classes = [IsAuthenticated]
 

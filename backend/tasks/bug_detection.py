@@ -396,7 +396,7 @@ def run_in_thread(func, *args, **kwargs):
 
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, name="tasks.bug_detection.scan_ui_bugs", queue="celery")
 def scan_ui_bugs(self, app_id):
     """
     Celery task to run automated UI/visual defect scanner on an application.

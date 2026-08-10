@@ -14,6 +14,13 @@ const queryClient = new QueryClient({
   },
 });
 
+if (typeof window !== 'undefined') {
+  if ('scrollRestoration' in window.history) {
+    window.history.scrollRestoration = 'manual';
+  }
+  window.scrollTo(0, 0);
+}
+
 const container = document.getElementById('root');
 if (!container) {
   throw new Error("Could not find root element in DOM");

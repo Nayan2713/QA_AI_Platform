@@ -412,14 +412,14 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const taskList: CeleryTask[] = Array.isArray(rawData) ? rawData : (rawData.results || []);
 
         const candidate = taskList.find(
-          t => t.status === 'pending' || t.status === 'progress' || t.status === 'running'
+          t => (t.status === 'pending' || t.status === 'progress' || t.status === 'running') && (t.progress ?? 0) < 100
         );
 
         if (candidate && isMounted) {
           try {
             const statusRes = await api.get(`tasks/${candidate.task_id}/celery-status/`);
             const cStatus = statusRes.data.status;
-            if (cStatus === 'SUCCESS' || cStatus === 'FAILURE' || cStatus === 'REVOKED') {
+            if (cStatus === 'SUCCESS' || cStatus === 'FAILURE' || cStatus === 'REVOKED' || cStatus === 'CANCELLED') {
               if (isMounted) {
                 setActiveTaskId(null);
                 setCurrentTask(null);
@@ -471,7 +471,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
         const celeryStatus = res.data.status;
 
-        if (celeryStatus === 'SUCCESS' || celeryStatus === 'FAILURE') {
+        if (celeryStatus === 'SUCCESS' || celeryStatus === 'FAILURE' || celeryStatus === 'REVOKED' || celeryStatus === 'CANCELLED') {
           refetchAllDebounced();
           clearInterval(pollInterval);
           setTimeout(() => {
@@ -479,12 +479,15 @@ export const AppDetail: React.FC<AppDetailProps> = ({
               setActiveTaskId(null);
               setCurrentTask(null);
             }
-          }, 3000);
+          }, 1000);
         } else {
           try {
             const taskDb = await api.get<CeleryTask>(`tasks/${activeTaskId}/`);
             if (isMounted) {
-              if (taskDb.data.app && taskDb.data.app !== appId) {
+              const dbStatus = (taskDb.data.status || '').toLowerCase();
+              const isFinished = dbStatus === 'completed' || dbStatus === 'success' || dbStatus === 'failed' || dbStatus === 'cancelled' || dbStatus === 'revoked' || (taskDb.data.progress ?? 0) >= 100;
+
+              if ((taskDb.data.app && taskDb.data.app !== appId) || isFinished) {
                 setActiveTaskId(null);
                 setCurrentTask(null);
                 clearInterval(pollInterval);
@@ -1039,7 +1042,10 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       )}
 
       {/* Real-time Task Execution Progress Tracker */}
-      {currentTask && (currentTask.status === 'pending' || currentTask.status === 'progress' || currentTask.status === 'running') && (!currentTask.app || currentTask.app === appId) && (() => {
+      {currentTask && 
+        (currentTask.status === 'pending' || currentTask.status === 'progress' || currentTask.status === 'running') && 
+        (currentTask.progress ?? 0) < 100 && 
+        (!currentTask.app || currentTask.app === appId) && (() => {
         const taskStatus = currentTask.status as string;
         return (
           <div className="glass-card task-progress-tracker animate-slide-up" style={{
@@ -1330,6 +1336,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
           {activeTab === 'bugs' && (
             <BugList
+              appId={appId}
               bugs={bugs}
               isLoading={isBugsLoading}
               onRefreshBugs={refetchAll}

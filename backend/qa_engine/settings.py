@@ -23,8 +23,8 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 # FIX: restrict to real hostnames in production via env var
 #_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
-_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,workvoro.com,www.workvoro.com,52.144.45.25')
-ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
+_allowed = os.getenv('ALLOWED_HOSTS', '*')
+ALLOWED_HOSTS = ['*'] if _allowed == '*' else [h.strip() for h in _allowed.split(',') if h.strip()] + ['*']
 
 
 # ALLOWED_HOSTS =["*"]
@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'rest_framework_simplejwt',
+    'drf_spectacular',
     'core',
     'accounts',
 ]
@@ -213,11 +214,34 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'EXCEPTION_HANDLER': 'qa_engine.exception_handler.custom_exception_handler',
     'DEFAULT_RENDERER_CLASSES': (
         'core.renderers.GlobalJSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
     ),
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'QA Engineer MVP — AI Platform API Specification',
+    'DESCRIPTION': (
+        'Comprehensive OpenAPI 3.0 REST API documentation for QA Engineer MVP.\n\n'
+        'This API powers autonomous application crawling, Playwright test generation & execution, '
+        'batch runner, self-healing test runs, visual UI defect scanning, real-time telemetry, and bug management.'
+    ),
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': '/api/',
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
+        'defaultModelsExpandDepth': 2,
+        'defaultModelExpandDepth': 2,
+        'docExpansion': 'list',
+        'filter': True,
+    },
 }
 
 SIMPLE_JWT = {

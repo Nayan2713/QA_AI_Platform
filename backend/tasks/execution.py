@@ -816,28 +816,51 @@ def execute_test(self, test_run_id, model_choice=None):
 def _check_batch_completion(app_id: int, completed_task_id: str):
     """
     Checks if a task belongs to an active batch_execution CeleryTask.
-    Removes completed_task_id from pending_tasks, and if pending_tasks is empty,
-    marks the parent batch_execution task as 'success' to trigger a single summary notification.
+    Removes completed_task_id from pending_tasks, updates batch progress %, and if pending_tasks is empty,
+    marks the parent batch_execution task as 'success' and progress 100%.
     """
     def _do_check():
         try:
             batch_tasks = CeleryTask.objects.filter(
                 app_id=app_id,
                 task_type='batch_execution',
-                status='pending'
+                status__in=['pending', 'progress', 'running']
             )
             for b_task in batch_tasks:
                 result_data = dict(b_task.result or {})
                 pending = list(result_data.get('pending_tasks', []))
+                
+                # 1. Remove current completed task ID
                 if completed_task_id in pending:
                     pending.remove(completed_task_id)
-                    result_data['pending_tasks'] = pending
-                    result_data['completed_count'] = result_data.get('completed_count', 0) + 1
+
+                # 2. Self-healing check: purge any task IDs from pending if their DB status is already finished
+                if pending:
+                    finished_ids = set(CeleryTask.objects.filter(
+                        task_id__in=pending,
+                        status__in=['success', 'failed', 'completed', 'cancelled', 'revoked']
+                    ).values_list('task_id', flat=True))
+                    if finished_ids:
+                        pending = [tid for tid in pending if tid not in finished_ids]
+
+                result_data['pending_tasks'] = pending
+                batch_total = result_data.get('batch_total') or (len(pending) + result_data.get('completed_count', 0))
+                completed_count = max(0, batch_total - len(pending))
+                result_data['completed_count'] = completed_count
+                
+                if batch_total > 0:
+                    b_task.progress = min(100, int((completed_count / batch_total) * 100))
+                result_data['status_text'] = f"Executed {completed_count}/{batch_total} test case(s) in batch suite..."
+                b_task.result = result_data
+
+                if len(pending) == 0:
+                    b_task.status = 'success'
+                    b_task.progress = 100
+                    b_task.completed_at = timezone.now()
+                    result_data['status_text'] = f"Batch suite completed successfully ({batch_total} test case(s) executed)."
                     b_task.result = result_data
-                    if len(pending) == 0:
-                        b_task.status = 'success'
-                        b_task.completed_at = timezone.now()
-                    b_task.save()
+                
+                b_task.save()
         except Exception as e:
             logger.error(f"Error checking batch completion: {e}")
     run_in_thread(_do_check)

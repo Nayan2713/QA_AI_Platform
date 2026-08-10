@@ -3,6 +3,8 @@ from django.contrib.auth.models import User
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from urllib.parse import urlparse
+from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.types import OpenApiTypes
 from .models import (
     Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint,
     AgentSession, TeamMember, Notification, PerformanceThreshold, LoadTestResult, WebVitalsResult,
@@ -34,9 +36,11 @@ class TeamMemberSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'owner', 'member_user', 'created_at')
 
+    @extend_schema_field(OpenApiTypes.STR)
     def get_owner_username(self, obj):
         return obj.owner.username if obj.owner else None
 
+    @extend_schema_field(OpenApiTypes.STR)
     def get_member_username(self, obj):
         return obj.member_user.username if obj.member_user else None
 
@@ -85,6 +89,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('base_url', 'status', 'discovery_source', 'login_status', 'storage_state', 'login_error')
 
+    @extend_schema_field(OpenApiTypes.INT)
     def get_bug_count(self, obj):
         from django.db.models import Q
         bugs = Bug.objects.filter(
@@ -149,6 +154,7 @@ class TestCaseSerializer(serializers.ModelSerializer):
         fields = ('id', 'app', 'title', 'category', 'steps', 'expected_result', 'ai_generated', 'validation_status', 'model_used', 'generation_context', 'self_healed_count', 'created_at')
         read_only_fields = ()
 
+    @extend_schema_field(OpenApiTypes.STR)
     def get_model_used(self, obj):
         if obj.generation_context and isinstance(obj.generation_context, dict):
             return obj.generation_context.get("model_used")
@@ -251,11 +257,13 @@ class TestRunListSerializer(serializers.ModelSerializer):
         model = TestRun
         fields = ('id', 'test_case', 'test_case_title', 'app_url', 'status', 'bugs_found', 'self_healed_count', 'passed_steps', 'total_steps', 'created_at')
 
+    @extend_schema_field(OpenApiTypes.INT)
     def get_passed_steps(self, obj):
         if hasattr(obj, 'metadata') and isinstance(obj.metadata, dict):
             return obj.metadata.get('passed_steps', 0)
         return 0
 
+    @extend_schema_field(OpenApiTypes.INT)
     def get_total_steps(self, obj):
         if hasattr(obj, 'metadata') and isinstance(obj.metadata, dict):
             return obj.metadata.get('total_steps', 0)
@@ -285,25 +293,31 @@ class BugSerializer(serializers.ModelSerializer):
             'screenshot', 'element_selector', 'status', 'created_at'
         )
 
+    @extend_schema_field(OpenApiTypes.STR)
     def get_test_case_title(self, obj):
         return obj.test_run.test_case.title if obj.test_run and obj.test_run.test_case else None
         
+    @extend_schema_field(OpenApiTypes.INT)
     def get_test_case_id(self, obj):
         return obj.test_run.test_case.id if obj.test_run and obj.test_run.test_case else None
         
+    @extend_schema_field(OpenApiTypes.STR)
     def get_app_url(self, obj):
         if obj.test_run and obj.test_run.test_case and obj.test_run.test_case.app:
             return obj.test_run.test_case.app.url
         return obj.application.url if obj.application else None
         
+    @extend_schema_field(OpenApiTypes.INT)
     def get_app_id(self, obj):
         if obj.test_run and obj.test_run.test_case and obj.test_run.test_case.app:
             return obj.test_run.test_case.app.id
         return obj.application.id if obj.application else None
         
+    @extend_schema_field(serializers.JSONField)
     def get_test_case_steps(self, obj):
         return obj.test_run.test_case.steps if obj.test_run and obj.test_run.test_case else []
         
+    @extend_schema_field(TestResultListSerializer(many=True))
     def get_test_run_results(self, obj):
         if obj.test_run and hasattr(obj.test_run, '_prefetched_objects_cache') and 'step_results' in obj.test_run._prefetched_objects_cache:
             return TestResultListSerializer(obj.test_run.step_results.all(), many=True).data

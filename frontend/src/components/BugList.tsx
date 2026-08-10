@@ -3,20 +3,25 @@ import { Bug } from '../lib/types';
 import api from '../lib/api';
 
 interface BugListProps {
+  appId?: number;
   bugs: Bug[];
   isLoading?: boolean;
   onRefreshBugs?: () => void;
   onRunTestCase?: (testCaseId: number) => void;
+  onScanUiBugs?: () => void;
   activeTaskId?: string | null;
 }
 
 export const BugList: React.FC<BugListProps> = ({
+  appId,
   bugs,
   isLoading,
   onRefreshBugs,
   onRunTestCase,
+  onScanUiBugs,
   activeTaskId
 }) => {
+  const [isScanningUi, setIsScanningUi] = useState(false);
   const [selectedBugId, setSelectedBugId] = useState<number | null>(null);
   const [activeCategoryTab, setActiveCategoryTab] = useState<'all' | 'functional' | 'ui' | 'audit' | 'performance'>('all');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
@@ -355,11 +360,49 @@ export const BugList: React.FC<BugListProps> = ({
           </div>
           <p className="card-subtitle">AI-classified functional and presentation errors discovered during automation</p>
         </div>
-        {onRefreshBugs && (
-          <button onClick={onRefreshBugs} className="btn-secondary btn-refresh">
-            🔄 Refresh Registry
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {appId && (
+            <button
+              onClick={async () => {
+                setIsScanningUi(true);
+                try {
+                  await api.post(`applications/${appId}/scan-ui-bugs/`);
+                  if (onScanUiBugs) onScanUiBugs();
+                  if (onRefreshBugs) onRefreshBugs();
+                } catch (err) {
+                  console.error('Failed to trigger UI defect scan:', err);
+                } finally {
+                  setTimeout(() => setIsScanningUi(false), 2500);
+                }
+              }}
+              disabled={isScanningUi || !!activeTaskId}
+              className="btn-secondary"
+              style={{
+                background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.2) 0%, rgba(79, 70, 229, 0.3) 100%)',
+                border: '1px solid rgba(168, 85, 247, 0.4)',
+                color: '#c084fc',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                padding: '8px 14px',
+                borderRadius: '8px',
+                cursor: (isScanningUi || activeTaskId) ? 'not-allowed' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                opacity: (isScanningUi || activeTaskId) ? 0.6 : 1,
+                transition: 'all 0.2s'
+              }}
+            >
+              {isScanningUi ? '⏳ Scanning UI...' : '🎨 Scan UI Defects'}
+            </button>
+          )}
+
+          {onRefreshBugs && (
+            <button onClick={onRefreshBugs} className="btn-secondary btn-refresh">
+              🔄 Refresh Registry
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Category Sub-Tabs Navigation Bar */}

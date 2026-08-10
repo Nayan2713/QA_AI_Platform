@@ -269,7 +269,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
                 
                 <div className="step-content-col">
                   <div className="step-main">
-                    <span className="step-number">Step {res.step_number}</span>
+                    <span className="step-number">{res.step_number === 0 ? 'Setup' : `Step ${res.step_number}`}</span>
                     <span className="step-result-status">{res.status}</span>
                   </div>
                   

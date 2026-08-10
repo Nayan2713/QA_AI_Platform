@@ -3,8 +3,16 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.models import User
-from .serializers import RegisterSerializer
+from drf_spectacular.utils import extend_schema
+from .serializers import RegisterSerializer, EmailTokenObtainPairSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView
 
+
+@extend_schema(
+    summary="Register new user",
+    description="Registers a new user account and returns JWT access and refresh tokens.",
+    request=RegisterSerializer,
+)
 class RegisterView(generics.CreateAPIView):
     permission_classes = (permissions.AllowAny,)
     authentication_classes = ()
@@ -25,8 +33,11 @@ class RegisterView(generics.CreateAPIView):
             "access": str(refresh.access_token),
         }, status=status.HTTP_201_CREATED)
 
-from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import EmailTokenObtainPairSerializer
 
+@extend_schema(
+    summary="User Login (JWT Token)",
+    description="Obtain JWT access and refresh tokens by providing registered email and password.",
+)
 class EmailTokenObtainPairView(TokenObtainPairView):
-    serializer_class = EmailTokenObtainPairSerializer
+    serializer_class = EmailTokenObtainPairSerializer
+

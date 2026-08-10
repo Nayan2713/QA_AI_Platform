@@ -111,8 +111,8 @@ cd backend
 # Activate your virtual environment
 .\venv\Scripts\activate
 
-# On Windows (force solo execution pool to prevent multiprocessing crashes):
-celery -A qa_engine worker -l info -P solo
+# On Windows (use python -m celery to avoid Application Control policy blocks):
+python -m celery -A qa_engine worker -l info -P threads --concurrency=2 -Q discovery,execution,quality,celery
 
 # On Mac/Linux:
 celery -A qa_engine worker -l info -P threads --concurrency=2 -Q discovery,execution,quality,celery

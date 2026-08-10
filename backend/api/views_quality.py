@@ -376,12 +376,23 @@ class QualityMetricsViewSet(viewsets.ReadOnlyModelViewSet):
             )
 
 
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
+
+
 class QualityDashboardView(viewsets.ViewSet):
     """
     Comprehensive quality dashboard with all metrics.
     """
     permission_classes = [IsAuthenticated]
     
+    @extend_schema(
+        summary="Get Quality Dashboard Metrics",
+        description="Returns overall quality grade, coverage, reliability, accuracy, and API health scores for an application.",
+        parameters=[
+            OpenApiParameter('application_id', OpenApiTypes.INT, location=OpenApiParameter.QUERY, description='Application ID', required=True)
+        ]
+    )
     @action(detail=False, methods=['get'])
     def dashboard(self, request):
         """Get complete quality dashboard"""
