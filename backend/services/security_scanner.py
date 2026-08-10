@@ -9,50 +9,59 @@ from core.models import Bug
 logger = logging.getLogger(__name__)
 
 def capture_security_screenshot(url, ignore_https=True):
-    from playwright.sync_api import sync_playwright
-    import os
-    import uuid
-    
-    screenshot_file = None
-    playwright = None
-    browser = None
-    try:
-        playwright = sync_playwright().start()
-        browser = playwright.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-        )
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            ignore_https_errors=ignore_https,
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=15000)
-        ss_bytes = page.screenshot(full_page=False)
+    from services.sync_helper import run_sync_in_thread
+
+    def _do_screenshot():
+        from playwright.sync_api import sync_playwright
+        import os
+        import uuid
         
-        filename = f"sec_{uuid.uuid4().hex[:12]}.png"
-        media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
-        os.makedirs(media_path, exist_ok=True)
-        full_path = os.path.join(media_path, filename)
-        with open(full_path, 'wb') as f:
-            f.write(ss_bytes)
-        screenshot_file = f"bugs/{filename}"
-        logger.info(f"Successfully captured security screenshot for {url}: {screenshot_file}")
+        screenshot_file = None
+        playwright = None
+        browser = None
+        try:
+            playwright = sync_playwright().start()
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+            )
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 720},
+                ignore_https_errors=ignore_https,
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            ss_bytes = page.screenshot(full_page=False)
+            
+            filename = f"sec_{uuid.uuid4().hex[:12]}.png"
+            media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
+            os.makedirs(media_path, exist_ok=True)
+            full_path = os.path.join(media_path, filename)
+            with open(full_path, 'wb') as f:
+                f.write(ss_bytes)
+            screenshot_file = f"bugs/{filename}"
+            logger.info(f"Successfully captured security screenshot for {url}: {screenshot_file}")
+        except Exception as e:
+            logger.error(f"Failed capturing security screenshot for {url} (ignore_https={ignore_https}): {e}")
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            if playwright:
+                try:
+                    playwright.stop()
+                except Exception:
+                    pass
+        return screenshot_file
+
+    try:
+        return run_sync_in_thread(_do_screenshot)
     except Exception as e:
-        logger.error(f"Failed capturing security screenshot for {url} (ignore_https={ignore_https}): {e}")
-    finally:
-        if browser:
-            try:
-                browser.close()
-            except Exception:
-                pass
-        if playwright:
-            try:
-                playwright.stop()
-            except Exception:
-                pass
-    return screenshot_file
+        logger.error(f"Failed capturing security screenshot for {url} in thread: {e}")
+        return None
 
 def run_security_scan(application):
     """

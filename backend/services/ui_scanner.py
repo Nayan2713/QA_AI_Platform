@@ -220,55 +220,43 @@ _TEXT_TRUNCATION_JS = """
 
 
 def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = None):
-    """
-    Runs automated UI defect and visual issue detection on the application pages using Playwright.
-    Detects:
-    1. Broken Images & Media (naturalWidth === 0 or failed load)
-    2. Viewport Horizontal Layout Overflows (Desktop & Mobile viewports)
-    3. Low Contrast / Invisible / Truncated Text (WCAG 2.1 contrast ratio, opacity, overflow)
-    4. Asset Load Errors (404/500 CSS/Fonts/Scripts/Images)
-    5. Dead / Non-Functional Buttons & Broken Action Links
-    6. Automated Input Character Fuzzing (Phone non-numeric, Email structure, Max-length overflow)
-    """
-    logger.info(f"Starting automated UI scan for Application ID {application.id} ({application.url})")
+    from services.sync_helper import run_sync_in_thread
 
-    from playwright.sync_api import sync_playwright
-    from tasks.cancellation import check_cancelled
+    def _do_ui_scan():
+        logger.info(f"Starting automated UI scan for Application ID {application.id} ({application.url})")
 
-    # Delete previous auto-scanned UI bugs for this app to avoid duplication
-    Bug.objects.filter(application=application, bug_type='ui', test_run__isnull=True).delete()
+        from playwright.sync_api import sync_playwright
+        from tasks.cancellation import check_cancelled
 
-    # Collect target URLs (app.url + top pages discovered)
-    target_urls = [application.url]
-    discovered_pages = Page.objects.filter(app=application).exclude(url=application.url)[:max_pages - 1]
-    for p in discovered_pages:
-        target_urls.append(p.url)
+        # Delete previous auto-scanned UI bugs for this app to avoid duplication
+        Bug.objects.filter(application=application, bug_type='ui', test_run__isnull=True).delete()
 
-    bugs_created = []
-    seen_bug_keys = set()
+        # Collect target URLs (app.url + top pages discovered)
+        target_urls = [application.url]
+        discovered_pages = Page.objects.filter(app=application).exclude(url=application.url)[:max_pages - 1]
+        for p in discovered_pages:
+            target_urls.append(p.url)
 
-    playwright = None
-    browser = None
-    try:
-        import asyncio
+        bugs_created = []
+        seen_bug_keys = set()
+
+        playwright = None
+        browser = None
         try:
-            asyncio.set_event_loop(None)
-        except Exception:
-            pass
-        playwright = sync_playwright().start()
-        browser = playwright.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-        )
+            playwright = sync_playwright().start()
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+            )
 
-        viewports_to_test = [
-            {"name": "Desktop (1280x800)", "viewport": {"width": 1280, "height": 800}},
-            {"name": "Mobile (375x812)", "viewport": {"width": 375, "height": 812}, "is_mobile": True}
-        ]
+            viewports_to_test = [
+                {"name": "Desktop (1280x800)", "viewport": {"width": 1280, "height": 800}},
+                {"name": "Mobile (375x812)", "viewport": {"width": 375, "height": 812}, "is_mobile": True}
+            ]
 
-        for target_url in target_urls:
-            if task_id:
-                check_cancelled(task_id)
+            for target_url in target_urls:
+                if task_id:
+                    check_cancelled(task_id)
 
             for vp_config in viewports_to_test:
                 vp_name = vp_config["name"]
@@ -818,19 +806,25 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
 
                 context.close()
 
-    except Exception as scan_err:
-        logger.error(f"Error in UI scan execution: {scan_err}")
-    finally:
-        if browser:
-            try:
-                browser.close()
-            except Exception:
-                pass
-        if playwright:
-            try:
-                playwright.stop()
-            except Exception:
-                pass
+        except Exception as scan_err:
+            logger.error(f"Error in UI scan execution: {scan_err}")
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            if playwright:
+                try:
+                    playwright.stop()
+                except Exception:
+                    pass
 
-    logger.info(f"UI scan finished for App {application.id}. Created {len(bugs_created)} UI bug entries.")
-    return bugs_created
+        logger.info(f"UI scan finished for App {application.id}. Created {len(bugs_created)} UI bug entries.")
+        return bugs_created
+
+    try:
+        return run_sync_in_thread(_do_ui_scan)
+    except Exception as e:
+        logger.error(f"Error executing run_ui_scan in thread: {e}")
+        return []
