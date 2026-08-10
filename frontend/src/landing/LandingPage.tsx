@@ -30,7 +30,6 @@ import { Hero3DScene } from './Hero3DScene';
 import { FeatureCard } from './FeatureCard';
 import { TimelineSection } from './TimelineSection';
 import { IntegrationsSection } from './IntegrationsSection';
-import { TestimonialsSection } from './TestimonialsSection';
 import { LiveDemoSimulator } from './LiveDemoSimulator';
 import { AutonomousArchitecture3D } from './AutonomousArchitecture3D';
 import { ComparisonSection } from './ComparisonSection';
@@ -56,34 +55,14 @@ export function MagneticButton({
   onClick?: () => void;
   type?: 'button' | 'submit' | 'reset';
 }) {
-  const ref = React.useRef<HTMLButtonElement>(null);
-  const [position, setPosition] = React.useState({ x: 0, y: 0 });
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (!ref.current) return;
-    const { left, top, width, height } = ref.current.getBoundingClientRect();
-    const x = (e.clientX - (left + width / 2)) * 0.35;
-    const y = (e.clientY - (top + height / 2)) * 0.35;
-    setPosition({ x, y });
-  };
-
-  const handleMouseLeave = () => {
-    setPosition({ x: 0, y: 0 });
-  };
-
   return (
-    <motion.button
-      ref={ref}
+    <button
       type={type}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      animate={{ x: position.x, y: position.y }}
-      transition={{ type: 'spring', stiffness: 300, damping: 20, mass: 0.5 }}
       onClick={onClick}
       className={className}
     >
       {children}
-    </motion.button>
+    </button>
   );
 }
 
@@ -200,7 +179,6 @@ export function LandingPage({
             <li><a href="#features" className="nav-link">Features</a></li>
             <li><a href="#how-it-works" className="nav-link">How It Works</a></li>
             <li><a href="#integrations" className="nav-link">Integrations</a></li>
-            <li><a href="#testimonials" className="nav-link">Testimonials</a></li>
             <li>
               <a
                 href={(import.meta as any).env.VITE_API_URL ? `${(import.meta as any).env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/docs/` : "/api/docs/"}
@@ -249,9 +227,6 @@ export function LandingPage({
               <a href="#integrations" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
                 Integrations
               </a>
-              <a href="#testimonials" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
-                Testimonials
-              </a>
               <a
                 href={(import.meta as any).env.VITE_API_URL ? `${(import.meta as any).env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/docs/` : "/api/docs/"}
                 target="_blank"
@@ -295,7 +270,7 @@ export function LandingPage({
 
           <div className="hero-cta-group mb-6">
             <MagneticButton onClick={() => handleOpenAuth('register')} className="btn-gradient px-7 py-3 text-sm font-bold shadow-xl shadow-purple-500/30">
-              Start Free Trial <ArrowRight className="w-4 h-4 ml-1" />
+              Get Started <ArrowRight className="w-4 h-4 ml-1" />
             </MagneticButton>
             <a href="#how-it-works" className="btn-ghost px-6 py-3 text-sm font-semibold">
               See How It Works
@@ -359,7 +334,7 @@ export function LandingPage({
       </section>
 
       {/* TRUST STRIP MARQUEE */}
-      <div className="py-12 border-y border-purple-500/15 bg-slate-950/40 backdrop-blur-md">
+      {/* <div className="py-12 border-y border-purple-500/15 bg-slate-950/40 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 text-center">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-8">
             POWERING HIGH-VELOCITY QA AT TECH LEADERS
@@ -376,7 +351,7 @@ export function LandingPage({
             </div>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {/* FEATURES SECTION WITH VISUAL SNIPPETS */}
       <section id="features" className="landing-section">
@@ -513,9 +488,6 @@ export function LandingPage({
       {/* INTEGRATIONS SECTION */}
       <IntegrationsSection />
 
-      {/* TESTIMONIALS SECTION */}
-      <TestimonialsSection />
-
       {/* FINAL CTA BAND */}
       <section className="px-6">
         <div className="final-cta-section">
@@ -538,7 +510,7 @@ export function LandingPage({
                 onClick={() => handleOpenAuth('register')}
                 className="btn-gradient px-10 py-4.5 text-lg font-extrabold shadow-2xl shadow-purple-500/40 inline-flex items-center gap-2"
               >
-                <span>Start Free Trial Now</span>
+                <span>Get Started</span>
                 <ArrowRight className="w-5 h-5" />
               </MagneticButton>
             </div>
