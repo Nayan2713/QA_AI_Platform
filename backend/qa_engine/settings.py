@@ -10,24 +10,32 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=BASE_DIR / '.env')
 load_dotenv(dotenv_path=BASE_DIR.parent / '.env')
 
-# FIX: No insecure fallback — crash loudly if SECRET_KEY is missing
-# SECRET_KEY = os.environ['SECRET_KEY']
-SECRET_KEY = os.environ.get('SECRET_KEY', 'build-time-placeholder-not-for-prod')
+# No insecure fallback — crash loudly at startup if SECRET_KEY is missing
+try:
+    SECRET_KEY = os.environ['SECRET_KEY']
+except KeyError:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "SECRET_KEY environment variable is not set. Refusing to start with an "
+        "insecure default — set SECRET_KEY in the environment/.env before running."
+    )
 
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
-# FIX: controlled by env var; defaults to False (safe for production)
+# Controlled by env var; defaults to False (safe for production)
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-# FIX: restrict to real hostnames in production via env var
-#_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
-_allowed = os.getenv('ALLOWED_HOSTS', '*')
-ALLOWED_HOSTS = ['*'] if _allowed == '*' else [h.strip() for h in _allowed.split(',') if h.strip()] + ['*']
-
-
-# ALLOWED_HOSTS =["*"]
+# Restrict to real hostnames in production via env var. Only becomes a true
+# wildcard if ALLOWED_HOSTS is explicitly set to '*' — an empty/unset var
+# falls back to localhost only, and an explicit hostname list is never
+# silently widened back to '*'.
+_allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+if _allowed.strip() == '*':
+    ALLOWED_HOSTS = ['*']
+else:
+    ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
 import logging.config
 from qa_engine.logging_config import configure_logging
 configure_logging()

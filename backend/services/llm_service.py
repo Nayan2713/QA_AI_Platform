@@ -580,17 +580,17 @@ Start with {{ and end with }}.
             a.get('url_pattern', '') for a in pages_data.get('api_endpoints', [])
         ).lower()
 
-        if any(w in combined for w in ["candidate", "recruit", "job", "hiring", "applicant", "talent"]):
+        if any(w in combined for w in ["candidate", "recruit", "job", "hiring", "applicant", "talent", "voro"]):
             return "Recruitment"
         if any(w in combined for w in ["employee", "leave", "payroll", "attendance", "hr", "human resource"]):
             return "HR"
-        if any(w in combined for w in ["patient", "doctor", "medical", "appointment", "clinic", "health"]):
+        if any(w in combined for w in ["patient", "doctor", "medical", "appointment", "clinic", "health", "pharma"]):
             return "Healthcare"
-        if any(w in combined for w in ["cart", "checkout", "shop", "product", "store", "price", "buy", "order"]):
+        if any(w in combined for w in ["cart", "checkout", "shop", "product", "store", "buy", "order", "catalog", "sku"]):
             return "E-commerce"
-        if any(w in combined for w in ["bank", "pay", "card", "finance", "transfer", "transaction", "invoice"]):
+        if any(w in combined for w in ["bank", "pay", "card", "finance", "transfer", "transaction", "invoice", "profit", "revenue", "accounting", "money", "wallet", "crypto"]):
             return "FinTech"
-        if any(w in combined for w in ["dashboard", "team", "settings", "project", "manage", "admin", "crm"]):
+        if any(w in combined for w in ["dashboard", "team", "settings", "project", "manage", "admin", "crm", "analytics", "saas", "workspace", "integration", "app"]):
             return "SaaS"
         return "General"
 

@@ -258,78 +258,82 @@ def run_ui_scan(application: Application, max_pages: int = 5, task_id: str = Non
                 if task_id:
                     check_cancelled(task_id)
 
-            for vp_config in viewports_to_test:
-                vp_name = vp_config["name"]
-                logger.info(f"Scanning UI defects on: {target_url} [{vp_name}]")
-                page_bugs_created = 0
-                failed_assets = []
-                dialog_events = []
-                request_log = []
+                for vp_config in viewports_to_test:
+                    vp_name = vp_config["name"]
+                    logger.info(f"Scanning UI defects on: {target_url} [{vp_name}]")
+                    page_bugs_created = 0
+                    failed_assets = []
+                    dialog_events = []
+                    request_log = []
 
-                context_kwargs = {
-                    "viewport": vp_config["viewport"],
-                    "ignore_https_errors": True,
-                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) QA-Platform-UI-Scanner/1.0"
-                }
-                if vp_config.get("is_mobile"):
-                    context_kwargs["is_mobile"] = True
+                    context_kwargs = {
+                        "viewport": vp_config["viewport"],
+                        "ignore_https_errors": True,
+                    }
+                    if vp_config.get("is_mobile"):
+                        context_kwargs["is_mobile"] = True
 
-                if application.storage_state:
-                    try:
-                        import json
-                        if isinstance(application.storage_state, dict):
-                            context_kwargs["storage_state"] = application.storage_state
-                        elif isinstance(application.storage_state, str):
-                            context_kwargs["storage_state"] = json.loads(application.storage_state)
-                    except Exception as err:
-                        logger.warning(f"Could not load session storage for UI scan: {err}")
-
-                context = browser.new_context(**context_kwargs)
-                page = context.new_page()
-
-                def on_response(response):
-                    if response.status >= 400 and response.request.resource_type in ['stylesheet', 'font', 'script', 'image']:
-                        failed_assets.append({
-                            "url": response.url,
-                            "status": response.status,
-                            "type": response.request.resource_type
-                        })
-
-                def on_dialog(dialog):
-                    dialog_events.append(time.time())
-                    try:
-                        dialog.dismiss()
-                    except Exception:
-                        pass
-
-                def on_request(req):
-                    request_log.append((time.time(), req.url))
-
-                page.on("response", on_response)
-                page.on("dialog", on_dialog)
-                page.on("request", on_request)
-
-                try:
-                    # Increased timeout to 30s to allow heavy pages to load smoothly
-                    page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
-                    page.wait_for_timeout(1500)
-
-                    # Auto-login if landing on a protected page with a login form
-                    if application.login_url and application.username and application.password:
+                    if application.storage_state:
                         try:
-                            has_login = page.locator("input[type='password']").first.is_visible(timeout=1000)
-                            if has_login:
-                                logger.info(f"UI Scanner detected login form on {target_url} — performing login...")
-                                from tasks.execution import perform_login
-                                if perform_login(page, context, application):
-                                    page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
-                                    page.wait_for_timeout(1500)
-                        except Exception as l_err:
-                            logger.warning(f"UI Scanner login attempt notice: {l_err}")
-                except Exception as goto_err:
-                    logger.error(f"UI Scanner failed navigating to {target_url} [{vp_name}]: {goto_err}")
-                    context.close()
-                    continue
+                            import json
+                            if isinstance(application.storage_state, dict):
+                                context_kwargs["storage_state"] = application.storage_state
+                            elif isinstance(application.storage_state, str):
+                                context_kwargs["storage_state"] = json.loads(application.storage_state)
+                        except Exception as err:
+                            logger.warning(f"Could not load session storage for UI scan: {err}")
+
+                    context = browser.new_context(**context_kwargs)
+                    page = context.new_page()
+
+                    def on_response(response):
+                        if response.status >= 400 and response.request.resource_type in ['stylesheet', 'font', 'script', 'image']:
+                            failed_assets.append({
+                                "url": response.url,
+                                "status": response.status,
+                                "type": response.request.resource_type
+                            })
+
+                    def on_dialog(dialog):
+                        dialog_events.append(time.time())
+                        try:
+                            dialog.dismiss()
+                        except Exception:
+                            pass
+
+                    def on_request(req):
+                        request_log.append((time.time(), req.url))
+
+                    page.on("response", on_response)
+                    page.on("dialog", on_dialog)
+                    page.on("request", on_request)
+
+                    try:
+                        try:
+                            page.goto(target_url, wait_until="networkidle", timeout=15000)
+                        except Exception:
+                            page.goto(target_url, wait_until="domcontentloaded", timeout=20000)
+                        page.wait_for_timeout(2500)
+
+                        # Auto-login if landing on a protected page with a login form
+                        if application.username and application.password:
+                            try:
+                                has_login = page.locator("input[type='password']").first.is_visible(timeout=1500)
+                                if has_login:
+                                    logger.info(f"UI Scanner detected login form on {target_url} — performing login...")
+                                    from tasks.execution import perform_login
+                                    if perform_login(page, context, application):
+                                        try:
+                                            page.goto(target_url, wait_until="networkidle", timeout=15000)
+                                        except Exception:
+                                            page.goto(target_url, wait_until="domcontentloaded", timeout=20000)
+                                        page.wait_for_timeout(2500)
+                            except Exception as l_err:
+                                logger.warning(f"UI Scanner login attempt notice: {l_err}")
+                    except Exception as goto_err:
+                        logger.error(f"UI Scanner failed navigating to {target_url} [{vp_name}]: {goto_err}")
+                        context.close()
+                        continue
 
                 # -------------------------------------------------------------
                 # Check 1: Broken Images / Media

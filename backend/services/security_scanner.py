@@ -241,24 +241,8 @@ def run_security_scan(application):
         except Exception as e:
             logger.error(f"VirusTotal scan error: {e}")
     elif not vt_key and not is_private_ip:
-        # Simulated warning: VirusTotal scan clean/mock result to demonstrate capability
-        Bug.objects.create(
-            application=application,
-            bug_type='security',
-            severity='low',
-            title='VirusTotal Threat Intel: Clean Reputation (Simulated Audit)',
-            description=(
-                f"VirusTotal API key is not configured. Clean domain reputation was simulated for '{hostname}'. "
-                f"To configure live threat intelligence scans, add VIRUSTOTAL_API_KEY to your .env file."
-            ),
-            steps_to_reproduce=[
-                "Configure VIRUSTOTAL_API_KEY in the root .env file.",
-                "Restart Celery worker and run a discovery task."
-            ],
-            screenshot=base_screenshot,
-            status='open'
-        )
-        
+        logger.info("VIRUSTOTAL_API_KEY not configured — skipping VirusTotal scan (no bug recorded).")
+
     # --- SHODAN SCAN ---
     shodan_key = getattr(settings, 'SHODAN_API_KEY', None)
     if shodan_key and ip_addr and not is_private_ip:
@@ -325,23 +309,6 @@ def run_security_scan(application):
         except Exception as e:
             logger.error(f"Shodan scan error: {e}")
     elif not shodan_key and ip_addr and not is_private_ip:
-        # Simulated warning: Shodan port exposure warning to demonstrate capability
-        Bug.objects.create(
-            application=application,
-            bug_type='security',
-            severity='medium',
-            title='Insecure SSH Configuration (Simulated Audit)',
-            description=(
-                f"Shodan API key is not configured. Simulated check of public IP {ip_addr} resolved from '{hostname}'. "
-                f"Warning: Port 22 (SSH) appears exposed. If SSH authentication allows password login instead of strict pubkey, "
-                f"the host is vulnerable to brute-force exploits. Please add SHODAN_API_KEY to your .env to run real scans."
-            ),
-            steps_to_reproduce=[
-                "Configure SHODAN_API_KEY in the root .env file.",
-                "Restart Celery worker and run a discovery task."
-            ],
-            screenshot=base_screenshot,
-            status='open'
-        )
+        logger.info("SHODAN_API_KEY not configured — skipping Shodan scan (no bug recorded).")
         
     logger.info(f"Finished security scan for application: {application.url}")

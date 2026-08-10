@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from urllib.parse import urlparse
 from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
+from .security_utils import assert_public_host
 from .models import (
     Application, Page, TestCase, TestRun, TestResult, Bug, CeleryTask, APIEndpoint,
     AgentSession, TeamMember, Notification, PerformanceThreshold, LoadTestResult, WebVitalsResult,
@@ -74,6 +75,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class ApplicationSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
     page_count = serializers.IntegerField(source='pages.count', read_only=True)
     api_count = serializers.IntegerField(source='api_endpoints.count', read_only=True)
     test_case_count = serializers.IntegerField(source='test_cases.count', read_only=True)
@@ -107,6 +109,10 @@ class ApplicationSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         url = attrs.get('url')
         if url:
+            try:
+                assert_public_host(url)
+            except DjangoValidationError as e:
+                raise serializers.ValidationError({"url": str(e)})
             # Normalize URL by removing trailing slash
             normalized_url = url.rstrip('/')
             parsed = urlparse(normalized_url)
@@ -116,11 +122,16 @@ class ApplicationSerializer(serializers.ModelSerializer):
         login_url = attrs.get('login_url', getattr(self.instance, 'login_url', None))
         username = attrs.get('username', getattr(self.instance, 'username', None))
         password = attrs.get('password', getattr(self.instance, 'password', None))
-        if login_url and (not username or not password):
-            raise serializers.ValidationError({
-                "username": "Username and password are required if login URL is specified.",
-                "password": "Username and password are required if login URL is specified."
-            })
+        if login_url:
+            try:
+                assert_public_host(login_url)
+            except DjangoValidationError as e:
+                raise serializers.ValidationError({"login_url": str(e)})
+            if not username or not password:
+                raise serializers.ValidationError({
+                    "username": "Username and password are required if login URL is specified.",
+                    "password": "Username and password are required if login URL is specified."
+                })
             
         return attrs
 

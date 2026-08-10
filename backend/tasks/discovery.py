@@ -589,6 +589,29 @@ def start_discovery(self, app_id, model_choice=None):
                 # from launching a second browser this late in the task), both passes net
                 # zero UI bugs instead of falling back to the first pass's output.
 
+                # Auto-classify industry from discovered pages and API endpoints if not manually set
+                if not app.industry or app.industry == 'General':
+                    try:
+                        from services.llm_service import llm_service
+                        pages_dict = [
+                            {
+                                'url': p.url,
+                                'title': p.title or '',
+                                'buttons': p.buttons if isinstance(p.buttons, list) else []
+                            }
+                            for p in Page.objects.filter(app=app)
+                        ]
+                        api_dict = [{'url_pattern': log.endpoint} for log in api_logs_data]
+                        classified_ind = llm_service._classify_industry({
+                            'pages': pages_dict,
+                            'api_endpoints': api_dict
+                        })
+                        if classified_ind and classified_ind != 'General':
+                            app.industry = classified_ind
+                            logger.info(f"Auto-classified industry for App {app.id} ({app.url}): {classified_ind}")
+                    except Exception as ind_err:
+                        logger.warning(f"Industry auto-classification failed for App {app.id}: {ind_err}")
+
                 # Finalize app status
                 app.status = 'DISCOVERED'
                 if app.login_url:
@@ -600,12 +623,31 @@ def start_discovery(self, app_id, model_choice=None):
                     app.login_status = 'NOT_ATTEMPTED'
                 app.save()
 
-            # Trigger automated UI & input character fuzzing scanner outside atomic transaction
+            # Dispatch the UI & input character fuzzing scanner as its own tracked
+            # Celery task rather than running it inline here — it no longer shares
+            # start_discovery's time limit, and a failure in it no longer gets
+            # swallowed by a bare warning log with nothing visible on the app.
             try:
-                from services.ui_scanner import run_ui_scan
-                run_ui_scan(app, max_pages=10, task_id=task_id)
+                import uuid
+                from tasks.bug_detection import scan_ui_bugs
+                ui_scan_task_id = str(uuid.uuid4())
+                CeleryTask.objects.create(
+                    app=app,
+                    task_id=ui_scan_task_id,
+                    task_type='ui_scan',
+                    status='pending',
+                    progress=0,
+                    result={"status_text": "Queued UI defect scan after discovery..."}
+                )
+                try:
+                    from core.signals import register_task_user, register_task_app
+                    register_task_user(ui_scan_task_id, app.user_id)
+                    register_task_app(ui_scan_task_id, app.id)
+                except Exception:
+                    pass
+                scan_ui_bugs.apply_async(args=[app.id], task_id=ui_scan_task_id, queue='quality')
             except Exception as scan_ex:
-                logger.warning(f"Input validation & UI defect scan during discovery failed: {scan_ex}")
+                logger.warning(f"Failed to dispatch UI defect scan after discovery: {scan_ex}")
 
             # Web Vitals scan outside atomic transaction
             try:

@@ -198,7 +198,15 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         username = request.data.get('username')
         password = request.data.get('password')
         run_discovery = request.data.get('run_discovery', False)
-        
+
+        if login_url:
+            from .security_utils import assert_public_host
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                assert_public_host(login_url.strip())
+            except DjangoValidationError as e:
+                return Response({"login_url": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         if login_url is not None:
             app.login_url = login_url.strip() if login_url else None
         if username is not None:
@@ -432,7 +440,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         for bug in bugs:
             norm_title = (bug.title or '').strip().lower()
             norm_type = 'ui' if (bug.bug_type or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'] else (bug.bug_type or '').strip().lower()
-            key = (app.id, norm_title, norm_type)
+            eff_app_id = bug.application_id or (bug.test_run.test_case.app_id if bug.test_run and bug.test_run.test_case else app.id)
+            key = (eff_app_id, norm_title, norm_type)
             if key not in seen:
                 seen.add(key)
                 unique_bugs.append(bug)
@@ -1078,13 +1087,14 @@ class BugViewSet(viewsets.ModelViewSet):
         })
 
     def _paginate_and_response(self, queryset):
-        bug_fields = queryset.values_list('id', 'application_id', 'title', 'bug_type')[:300]
+        bug_fields = queryset.values_list('id', 'application_id', 'test_run__test_case__app_id', 'title', 'bug_type')
         seen = set()
         unique_ids = []
-        for bug_id, app_id, title, bug_type in bug_fields:
+        for bug_id, app_id, test_app_id, title, bug_type in bug_fields:
+            eff_app_id = app_id or test_app_id
             norm_title = (title or '').strip().lower()
             norm_type = 'ui' if (bug_type or '').lower() in ['ui', 'ui_issue', 'ui_bug', 'visual'] else (bug_type or '').strip().lower()
-            key = (app_id, norm_title, norm_type)
+            key = (eff_app_id, norm_title, norm_type)
             if key not in seen:
                 seen.add(key)
                 unique_ids.append(bug_id)
