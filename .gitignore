@@ -53,7 +53,7 @@ yarn-error.log
 dist/
 .env.local
 .env.*.local
-
+frontend/vite.config.ts.timestamp-*.mjs
 # Vite
 .vite/
 
