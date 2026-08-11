@@ -350,6 +350,11 @@ OLLAMA_API_URL = os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/generat
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen2.5:7b')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', None)
 
+# Visual regression: % of changed pixels before marking as FAILED (default 2.0)
+VISUAL_DIFF_THRESHOLD = 2.0
+
+# API test timeout in seconds (default 10)
+API_TEST_TIMEOUT = 10
 
 MCP_SERVER_URL = os.getenv('MCP_SERVER_URL', 'http://localhost:5001')
 

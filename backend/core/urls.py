@@ -13,7 +13,18 @@ from .views import (
     ChatbotQueryView,
     NotificationViewSet,
 )
+
 from .events import RealTimeEventView
+
+
+from .views_new_features import (
+    VisualBaselineViewSet,
+    VisualDiffViewSet,
+    APITestCaseViewSet,
+    APITestRunViewSet,
+    RunAPITestsView,
+    RunVisualRegressionView,
+)
 
 router = DefaultRouter()
 router.register(r'applications', ApplicationViewSet, basename='application')
@@ -27,11 +38,20 @@ router.register(r'agent-sessions', AgentSessionViewSet, basename='agentsession')
 router.register(r'team', TeamMemberViewSet, basename='teammember')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 
+# New feature viewsets
+router.register(r'visual-baselines', VisualBaselineViewSet, basename='visual-baseline')
+router.register(r'visual-diffs', VisualDiffViewSet, basename='visual-diff')
+router.register(r'api-test-cases', APITestCaseViewSet, basename='api-test-case')
+router.register(r'api-test-runs', APITestRunViewSet, basename='api-test-run')
+
 urlpatterns = [
     path('health/', health_check, name='health-check'),
     path('events/', RealTimeEventView.as_view(), name='realtime-events'),
     path('chatbot/query/', ChatbotQueryView.as_view(), name='chatbot-query'),
     path('quality/', include('api.urls')),
+    # New feature views
+    path('applications/<int:app_id>/run-api-tests/', RunAPITestsView.as_view(), name='run-api-tests'),
+    path('applications/<int:app_id>/run-visual-regression/', RunVisualRegressionView.as_view(), name='run-visual-regression'),
     # ViewSets
     path('', include(router.urls)),
 ]

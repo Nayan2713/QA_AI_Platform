@@ -9,6 +9,9 @@ import { TestResults } from './TestResults';
 import { BugList } from './BugList';
 import { CredentialsModal } from './CredentialsModal';
 import QualityDashboard from './QualityDashboard/QualityDashboard';
+import VisualRegression from './VisualRegression';
+import APITesting from './APITesting';
+
 
 interface AppDetailProps {
   appId?: number;
@@ -1042,71 +1045,71 @@ export const AppDetail: React.FC<AppDetailProps> = ({
       )}
 
       {/* Real-time Task Execution Progress Tracker */}
-      {currentTask && 
-        (currentTask.status === 'pending' || currentTask.status === 'progress' || currentTask.status === 'running') && 
-        (currentTask.progress ?? 0) < 100 && 
+      {currentTask &&
+        (currentTask.status === 'pending' || currentTask.status === 'progress' || currentTask.status === 'running') &&
+        (currentTask.progress ?? 0) < 100 &&
         (!currentTask.app || currentTask.app === appId) && (() => {
-        const taskStatus = currentTask.status as string;
-        return (
-          <div className="glass-card task-progress-tracker animate-slide-up" style={{
-            marginBottom: '24px',
-            padding: '18px 20px',
-            border: `1px solid ${taskStatus === 'success' ? 'rgba(16, 185, 129, 0.4)' :
+          const taskStatus = currentTask.status as string;
+          return (
+            <div className="glass-card task-progress-tracker animate-slide-up" style={{
+              marginBottom: '24px',
+              padding: '18px 20px',
+              border: `1px solid ${taskStatus === 'success' ? 'rgba(16, 185, 129, 0.4)' :
                 taskStatus === 'failed' ? 'rgba(239, 68, 68, 0.4)' :
                   'rgba(245, 158, 11, 0.4)'
-              }`,
-            background: 'rgba(18, 14, 33, 0.85)',
-            borderRadius: '12px'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className={`live-pulse-dot ${taskStatus === 'progress' || taskStatus === 'pending' || taskStatus === 'running' ? 'running' : ''}`} />
-                <strong style={{ fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#fff' }}>
-                  {currentTask.task_type.replace('_', ' ')} Workflow
-                </strong>
+                }`,
+              background: 'rgba(18, 14, 33, 0.85)',
+              borderRadius: '12px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span className={`live-pulse-dot ${taskStatus === 'progress' || taskStatus === 'pending' || taskStatus === 'running' ? 'running' : ''}`} />
+                  <strong style={{ fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#fff' }}>
+                    {currentTask.task_type.replace('_', ' ')} Workflow
+                  </strong>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff' }}>{currentTask.progress}%</span>
+                  {(taskStatus === 'pending' || taskStatus === 'progress' || taskStatus === 'running') && (
+                    <button
+                      onClick={handleStopTask}
+                      style={{
+                        backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        color: '#ff8888',
+                        padding: '3px 10px',
+                        borderRadius: '6px',
+                        fontSize: '0.78rem',
+                        cursor: 'pointer',
+                        fontWeight: 600
+                      }}
+                    >
+                      🛑 Cancel Task
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff' }}>{currentTask.progress}%</span>
-                {(taskStatus === 'pending' || taskStatus === 'progress' || taskStatus === 'running') && (
-                  <button
-                    onClick={handleStopTask}
-                    style={{
-                      backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                      border: '1px solid rgba(239, 68, 68, 0.4)',
-                      color: '#ff8888',
-                      padding: '3px 10px',
-                      borderRadius: '6px',
-                      fontSize: '0.78rem',
-                      cursor: 'pointer',
-                      fontWeight: 600
-                    }}
-                  >
-                    🛑 Cancel Task
-                  </button>
+
+              <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255, 255, 255, 0.08)', borderRadius: '4px', overflow: 'hidden', marginBottom: '10px' }}>
+                <div style={{
+                  width: `${currentTask.progress}%`,
+                  height: '100%',
+                  backgroundColor: taskStatus === 'success' ? '#10b981' : taskStatus === 'failed' ? '#ef4444' : '#f59e0b',
+                  transition: 'width 0.4s ease',
+                  borderRadius: '4px'
+                }} />
+              </div>
+
+              <div style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.8)' }}>
+                {taskStatus === 'success' ? (
+                  `Task finished cleanly. ${currentTask.result?.status_text || ''}`
+                ) : (
+                  currentTask.result?.status_text || currentTask.error || 'Executing Playwright automation steps...'
                 )}
               </div>
             </div>
-
-            <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255, 255, 255, 0.08)', borderRadius: '4px', overflow: 'hidden', marginBottom: '10px' }}>
-              <div style={{
-                width: `${currentTask.progress}%`,
-                height: '100%',
-                backgroundColor: taskStatus === 'success' ? '#10b981' : taskStatus === 'failed' ? '#ef4444' : '#f59e0b',
-                transition: 'width 0.4s ease',
-                borderRadius: '4px'
-              }} />
-            </div>
-
-            <div style={{ fontSize: '0.85rem', color: 'rgba(255, 255, 255, 0.8)' }}>
-              {taskStatus === 'success' ? (
-                `Task finished cleanly. ${currentTask.result?.status_text || ''}`
-              ) : (
-                currentTask.result?.status_text || currentTask.error || 'Executing Playwright automation steps...'
-              )}
-            </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
 
       {/* Main Tabs Navigation Bar */}
       <div className="tabs-container">
@@ -1152,6 +1155,20 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
             📊 Quality Dashboard
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'visual' ? 'active' : ''}`}
+            onClick={() => setActiveTab('visual')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
+          >
+            👁️ Visual Regression
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'api-tests' ? 'active' : ''}`}
+            onClick={() => setActiveTab('api-tests')}
+            style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
+          >
+            ⚡ API Testing
           </button>
         </div>
 
@@ -1430,6 +1447,14 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
           {activeTab === 'quality' && (
             <QualityDashboard applicationId={app.id.toString()} />
+          )}
+
+          {activeTab === 'visual' && (
+            <VisualRegression appId={app.id} latestTestRunId={activeTestRunId ?? undefined} />
+          )}
+
+          {activeTab === 'api-tests' && (
+            <APITesting appId={app.id} />
           )}
         </div>
       </div>

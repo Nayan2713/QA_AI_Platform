@@ -23,6 +23,7 @@ app.conf.imports = (
     'tasks.bug_detection',
     'tasks.quality_check',
     'tasks.bulk_upload',
+    'tasks.visual_and_api_tasks',
 )
 
 @app.task(bind=True, ignore_result=True)

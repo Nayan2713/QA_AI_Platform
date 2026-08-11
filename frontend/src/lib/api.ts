@@ -96,4 +96,42 @@ api.interceptors.response.use(
   }
 );
 
+// ── Imports for API function return types ────────────────────
+import { VisualBaseline, VisualDiff, APITestCase, APITestRun } from './types';
+
+// ── Visual Regression ────────────────────────────────────────
+
+export const getVisualBaselines = (appId: number) =>
+    api.get<VisualBaseline[]>(`visual-baselines/?app_id=${appId}`).then(r => r.data);
+
+export const resetVisualBaseline = (baselineId: number) =>
+    api.delete(`visual-baselines/${baselineId}/reset/`).then(r => r.data);
+
+export const getVisualDiffs = (testRunId: number) =>
+    api.get<VisualDiff[]>(`visual-diffs/?test_run_id=${testRunId}`).then(r => r.data);
+
+export const runVisualRegression = (appId: number, testRunId?: number) =>
+    api.post(`applications/${appId}/run-visual-regression/`, testRunId ? { test_run_id: testRunId } : {})
+        .then(r => r.data);
+
+// ── API Testing ──────────────────────────────────────────────
+
+export const getAPITestCases = (appId: number) =>
+    api.get<APITestCase[]>(`api-test-cases/?app_id=${appId}`).then(r => r.data);
+
+export const createAPITestCase = (data: Partial<APITestCase>) =>
+    api.post<APITestCase>('api-test-cases/', data).then(r => r.data);
+
+export const deleteAPITestCase = (id: number) =>
+    api.delete(`api-test-cases/${id}/`).then(r => r.data);
+
+export const runSingleAPITest = (testCaseId: number) =>
+    api.post<APITestRun>(`api-test-cases/${testCaseId}/run/`).then(r => r.data);
+
+export const getAPITestRuns = (appId: number) =>
+    api.get<APITestRun[]>(`api-test-runs/?app_id=${appId}`).then(r => r.data);
+
+export const generateAndRunAPITests = (appId: number, generate = true) =>
+    api.post(`applications/${appId}/run-api-tests/`, { generate }).then(r => r.data);
+
 export default api;

@@ -775,6 +775,10 @@ def execute_test(self, test_run_id, model_choice=None):
         # TestRun.metadata, avoiding a potentially large broker payload.
         run_quality_analysis.apply_async(args=[test_run.id], queue='quality')
 
+        # Auto-trigger visual regression after every completed UI test run
+        from tasks.visual_and_api_tasks import run_visual_regression
+        run_visual_regression.apply_async(args=[test_run.id], countdown=2)
+
     except TaskCancelled:
         logger.info(f"execute_test {task_id} cancelled by user.")
         def handle_cancelled():

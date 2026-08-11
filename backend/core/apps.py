@@ -7,3 +7,4 @@ class CoreConfig(AppConfig):
 
     def ready(self):
         import core.admin
+        import core.signals  # noqa: F401 — register signal receivers
