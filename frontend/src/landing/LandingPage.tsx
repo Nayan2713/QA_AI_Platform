@@ -168,67 +168,69 @@ export function LandingPage({
       </div>
 
       {/* Glass Navbar */}
-      <nav className={`landing-nav ${isScrolled ? 'scrolled' : ''}`}>
-        <div className="nav-content">
-          <a href="#" className="brand-logo">
-            <div className="brand-icon">⚡</div>
-            <span>QA Engineer MVP</span>
-          </a>
+      <header className="landing-nav-header-wrapper">
+        <nav className={`landing-nav ${isScrolled ? 'scrolled' : ''}`}>
+          <div className="nav-content">
+            <a href="#" className="brand-logo">
+              <div className="brand-icon">⚡</div>
+              <span>QA Engineer MVP</span>
+            </a>
 
-          <ul className="nav-links hidden md:flex">
-            <li><a href="#features" className="nav-link">Features</a></li>
-            <li><a href="#how-it-works" className="nav-link">How It Works</a></li>
-            <li><a href="#integrations" className="nav-link">Integrations</a></li>
-          </ul>
+            <ul className="nav-links hidden md:flex">
+              <li><a href="#features" className="nav-link">Features</a></li>
+              <li><a href="#how-it-works" className="nav-link">How It Works</a></li>
+              <li><a href="#integrations" className="nav-link">Integrations</a></li>
+            </ul>
 
-          <div className="nav-actions hidden md:flex">
-            <button onClick={() => handleOpenAuth('login')} className="btn-login">
-              Login
-            </button>
-            <button onClick={() => handleOpenAuth('register')} className="btn-gradient">
-              Get Started
+            <div className="nav-actions hidden md:flex">
+              <button onClick={() => handleOpenAuth('login')} className="btn-login">
+                Login
+              </button>
+              <button onClick={() => handleOpenAuth('register')} className="btn-gradient">
+                Get Started
+              </button>
+            </div>
+
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 rounded-xl text-slate-300 hover:bg-purple-900/30 transition-colors"
+              aria-label="Toggle Menu"
+            >
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
           </div>
 
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-xl text-slate-300 hover:bg-purple-900/30 transition-colors"
-            aria-label="Toggle Menu"
-          >
-            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
-        </div>
-
-        {/* Mobile Slide Drawer */}
-        <AnimatePresence>
-          {mobileMenuOpen && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="md:hidden border-t border-purple-500/20 bg-slate-950/95 backdrop-blur-xl px-6 py-6 space-y-4 overflow-hidden"
-            >
-              <a href="#features" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
-                Features
-              </a>
-              <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
-                How It Works
-              </a>
-              <a href="#integrations" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
-                Integrations
-              </a>
-              <div className="pt-4 border-t border-purple-500/20 flex flex-col gap-3">
-                <button onClick={() => handleOpenAuth('login')} className="w-full py-3 rounded-xl font-bold border border-purple-500/30 text-white hover:bg-purple-900/30">
-                  Login
-                </button>
-                <button onClick={() => handleOpenAuth('register')} className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-md">
-                  Get Started
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </nav>
+          {/* Mobile Slide Drawer */}
+          <AnimatePresence>
+            {mobileMenuOpen && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="md:hidden border-t border-purple-500/20 bg-slate-950/95 backdrop-blur-xl px-6 py-6 space-y-4 overflow-hidden"
+              >
+                <a href="#features" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
+                  Features
+                </a>
+                <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
+                  How It Works
+                </a>
+                <a href="#integrations" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
+                  Integrations
+                </a>
+                <div className="pt-4 border-t border-purple-500/20 flex flex-col gap-3">
+                  <button onClick={() => handleOpenAuth('login')} className="w-full py-3 rounded-xl font-bold border border-purple-500/30 text-white hover:bg-purple-900/30">
+                    Login
+                  </button>
+                  <button onClick={() => handleOpenAuth('register')} className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-md">
+                    Get Started
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </nav>
+      </header>
 
       {/* HERO SECTION WITH 3D CENTERPIECE & LIVE SIMULATOR */}
       <section className="hero-section">
