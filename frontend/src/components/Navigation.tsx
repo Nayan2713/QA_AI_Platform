@@ -22,12 +22,13 @@ export const Navigation: React.FC<NavigationProps> = ({
   const location = useLocation();
 
   return (
-    <nav className="glass-nav">
-      <div className="nav-container">
-        <Link to="/dashboard" className="nav-brand">
-          <span className="brand-icon">⚡</span>
-          <span className="brand-text">QA Engineer MVP</span>
-        </Link>
+    <header className="glass-nav-header-wrapper">
+      <nav className="glass-nav">
+        <div className="nav-container">
+          <Link to="/dashboard" className="nav-brand">
+            <span className="brand-icon">⚡</span>
+            <span className="brand-text">QA Engineer MVP</span>
+          </Link>
         
         {username && (
           <div className="nav-menu">
@@ -94,5 +95,6 @@ export const Navigation: React.FC<NavigationProps> = ({
         )}
       </div>
     </nav>
-  );
+  </header>
+);
 };

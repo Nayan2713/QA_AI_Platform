@@ -127,10 +127,20 @@ def run_web_vitals_scan(application: Application, max_pages: int = 5, task_id: s
                 page = context.new_page()
 
                 try:
-                    page.goto(target_url, wait_until="load", timeout=15000)
-                    metrics = page.evaluate(_WEB_VITALS_SCRIPT)
+                    page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
+                    page.wait_for_timeout(1000)
+                    try:
+                        metrics = page.evaluate(_WEB_VITALS_SCRIPT)
+                    except Exception as eval_err:
+                        if "Execution context was destroyed" in str(eval_err) or "navigation" in str(eval_err).lower():
+                            logger.info(f"Page redirected during Web Vitals scan on {target_url}, retrying evaluation...")
+                            page.wait_for_load_state("domcontentloaded")
+                            page.wait_for_timeout(1000)
+                            metrics = page.evaluate(_WEB_VITALS_SCRIPT)
+                        else:
+                            raise eval_err
                 except Exception as e:
-                    logger.error(f"Web Vitals scan failed navigating to {target_url}: {e}")
+                    logger.warning(f"Web Vitals scan skipped for {target_url} (page redirected or unreachable): {e}")
                     context.close()
                     continue
 

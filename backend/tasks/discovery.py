@@ -592,7 +592,8 @@ def start_discovery(self, app_id, model_choice=None):
                 # Auto-classify industry from discovered pages and API endpoints if not manually set
                 if not app.industry or app.industry == 'General':
                     try:
-                        from services.llm_service import llm_service
+                        from services.llm_service import LLMService
+                        llm_inst = LLMService()
                         pages_dict = [
                             {
                                 'url': p.url,
@@ -602,7 +603,7 @@ def start_discovery(self, app_id, model_choice=None):
                             for p in Page.objects.filter(app=app)
                         ]
                         api_dict = [{'url_pattern': log.endpoint} for log in api_logs_data]
-                        classified_ind = llm_service._classify_industry({
+                        classified_ind = llm_inst._classify_industry({
                             'pages': pages_dict,
                             'api_endpoints': api_dict
                         })
