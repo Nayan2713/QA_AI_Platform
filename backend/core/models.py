@@ -164,7 +164,8 @@ class APIEndpoint(models.Model):
     request_schema = models.JSONField(default=dict, blank=True)
     response_schema = models.JSONField(default=dict, blank=True)
     auth_type = models.CharField(max_length=100, blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True,
+     db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

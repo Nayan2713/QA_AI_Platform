@@ -1,200 +1,254 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Eye, RefreshCw, CheckCircle, XCircle, AlertCircle, Trash2 } from 'lucide-react';
-import { getVisualBaselines, getVisualDiffs, runVisualRegression, resetVisualBaseline } from '../lib/api';
-import { VisualBaseline, VisualDiff } from '../lib/types';
+import { Eye, Sparkles, Layers, ShieldCheck, Bell, CheckCircle2, Lock } from 'lucide-react';
 
 interface Props {
     appId: number;
     latestTestRunId?: number;
 }
 
-const MEDIA_URL = (import.meta as any).env.VITE_MEDIA_URL || '/media/';
-
-function statusBadge(status: VisualDiff['status']) {
-    if (status === 'PASSED') return (
-        <span className="flex items-center gap-1 text-green-400 text-xs font-semibold">
-            <CheckCircle size={13} /> Passed
-        </span>
-    );
-    if (status === 'FAILED') return (
-        <span className="flex items-center gap-1 text-red-400 text-xs font-semibold">
-            <XCircle size={13} /> Failed
-        </span>
-    );
-    return (
-        <span className="flex items-center gap-1 text-yellow-400 text-xs font-semibold">
-            <AlertCircle size={13} /> No Baseline
-        </span>
-    );
-}
-
-export default function VisualRegression({ appId, latestTestRunId }: Props) {
-    const qc = useQueryClient();
-    const [selectedDiffRunId, setSelectedDiffRunId] = useState<number | undefined>(latestTestRunId);
-    const [expandedDiff, setExpandedDiff] = useState<number | null>(null);
-
-    const { data: baselines = [], isLoading: loadingBaselines } = useQuery({
-        queryKey: ['visual-baselines', appId],
-        queryFn: () => getVisualBaselines(appId),
-    });
-
-    const { data: diffs = [], isLoading: loadingDiffs } = useQuery({
-        queryKey: ['visual-diffs', selectedDiffRunId],
-        queryFn: () => selectedDiffRunId ? getVisualDiffs(selectedDiffRunId) : Promise.resolve([]),
-        enabled: !!selectedDiffRunId,
-    });
-
-    const runMutation = useMutation({
-        mutationFn: () => runVisualRegression(appId, selectedDiffRunId),
-        onSuccess: () => {
-            qc.invalidateQueries({ queryKey: ['visual-diffs'] });
-        },
-    });
-
-    const resetMutation = useMutation({
-        mutationFn: (baselineId: number) => resetVisualBaseline(baselineId),
-        onSuccess: () => {
-            qc.invalidateQueries({ queryKey: ['visual-baselines', appId] });
-        },
-    });
-
-    const failedDiffs = diffs.filter(d => d.status === 'FAILED');
-    const passedDiffs = diffs.filter(d => d.status === 'PASSED');
+export default function VisualRegression({ appId }: Props) {
+    const [subscribed, setSubscribed] = useState(false);
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <Eye size={18} className="text-purple-400" />
-                    <h2 className="text-white font-semibold text-lg">Visual Regression</h2>
-                </div>
-                <button
-                    onClick={() => runMutation.mutate()}
-                    disabled={runMutation.isPending}
-                    className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition-colors"
-                >
-                    <RefreshCw size={14} className={runMutation.isPending ? 'animate-spin' : ''} />
-                    {runMutation.isPending ? 'Checking…' : 'Run Visual Check'}
-                </button>
-            </div>
+        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '24px', paddingBottom: '60px', gap: '48px' }}>
+            {/* Main Centered Coming Soon Hero Card */}
+            <div style={{
+                position: 'relative',
+                width: '100%',
+                borderRadius: '24px',
+                border: '1px solid rgba(168, 85, 247, 0.3)',
+                background: 'linear-gradient(180deg, rgba(28, 18, 59, 0.95) 0%, rgba(18, 13, 41, 0.95) 50%, rgba(11, 8, 24, 0.95) 100%)',
+                padding: '48px 32px',
+                textAlign: 'center',
+                boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center'
+            }}>
+                {/* Background Ambient Glow Orbs */}
+                <div style={{
+                    position: 'absolute',
+                    top: '-60px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: '350px',
+                    height: '350px',
+                    borderRadius: '50%',
+                    background: 'rgba(168, 85, 247, 0.12)',
+                    filter: 'blur(70px)',
+                    pointerEvents: 'none'
+                }} />
 
-            {/* Error banner */}
-            {runMutation.isError && (
-                <div className="bg-red-950/40 border border-red-800 rounded-xl p-4 flex items-center justify-between text-red-300 text-sm">
-                    <div className="flex items-center gap-2">
-                        <AlertCircle size={16} className="text-red-400 shrink-0" />
-                        <span>
-                            {(runMutation.error as any)?.response?.data?.error ||
-                             (runMutation.error as any)?.response?.data?.detail ||
-                             'Failed to run visual check. Please ensure a test run exists.'}
-                        </span>
+                <div style={{ position: 'relative', zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: '640px', margin: '0 auto', gap: '20px' }}>
+                    {/* Top Status Pill */}
+                    <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: 'linear-gradient(90deg, rgba(168, 85, 247, 0.18), rgba(244, 63, 94, 0.18))',
+                        border: '1px solid rgba(168, 85, 247, 0.4)',
+                        padding: '6px 16px',
+                        borderRadius: '9999px',
+                        color: '#e9d5ff',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        boxShadow: '0 0 15px rgba(168, 85, 247, 0.25)'
+                    }}>
+                        <Sparkles size={14} className="text-purple-400 animate-pulse" />
+                        <span>NEXT-GEN FEATURE · COMING SOON</span>
                     </div>
-                    <button
-                        onClick={() => runMutation.reset()}
-                        className="text-xs text-red-400 hover:text-red-300 underline ml-4"
-                    >
-                        Dismiss
-                    </button>
-                </div>
-            )}
 
-            {/* Summary cards */}
-            {diffs.length > 0 && (
-                <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-zinc-800 rounded-xl p-4 border border-zinc-700">
-                        <p className="text-zinc-400 text-xs mb-1">Steps Checked</p>
-                        <p className="text-white text-2xl font-bold">{diffs.length}</p>
+                    {/* Icon Halo */}
+                    <div style={{
+                        padding: '20px',
+                        background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(244, 63, 94, 0.2))',
+                        border: '1px solid rgba(168, 85, 247, 0.4)',
+                        borderRadius: '24px',
+                        color: '#e9d5ff',
+                        boxShadow: '0 0 40px rgba(168, 85, 247, 0.35)',
+                        margin: '8px 0'
+                    }}>
+                        <Eye size={44} />
                     </div>
-                    <div className="bg-zinc-800 rounded-xl p-4 border border-zinc-700">
-                        <p className="text-green-400 text-xs mb-1">Passed</p>
-                        <p className="text-white text-2xl font-bold">{passedDiffs.length}</p>
-                    </div>
-                    <div className="bg-zinc-800 rounded-xl p-4 border border-zinc-700">
-                        <p className="text-red-400 text-xs mb-1">Regressions</p>
-                        <p className="text-white text-2xl font-bold">{failedDiffs.length}</p>
-                    </div>
-                </div>
-            )}
 
-            {/* Diff results */}
-            {loadingDiffs ? (
-                <p className="text-zinc-500 text-sm">Loading diffs…</p>
-            ) : diffs.length > 0 ? (
-                <div className="space-y-3">
-                    <h3 className="text-zinc-300 text-sm font-medium">Step Results</h3>
-                    {diffs.map(diff => (
-                        <div
-                            key={diff.id}
-                            className={`rounded-xl border p-4 transition-colors cursor-pointer
-                ${diff.status === 'FAILED' ? 'border-red-700 bg-red-950/20' :
-                                    diff.status === 'PASSED' ? 'border-zinc-700 bg-zinc-800' :
-                                        'border-yellow-700 bg-yellow-950/20'}`}
-                            onClick={() => setExpandedDiff(expandedDiff === diff.id ? null : diff.id)}
-                        >
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    {statusBadge(diff.status)}
-                                    <span className="text-zinc-300 text-sm">Step {diff.step_number}</span>
-                                    {diff.status === 'FAILED' && (
-                                        <span className="text-red-300 text-xs bg-red-900/40 px-2 py-0.5 rounded">
-                                            {diff.diff_percentage.toFixed(1)}% changed
-                                        </span>
-                                    )}
-                                </div>
-                                <span className="text-zinc-600 text-xs">{new Date(diff.created_at).toLocaleTimeString()}</span>
+                    {/* Title */}
+                    <h2 style={{
+                        fontSize: '2.2rem',
+                        fontWeight: 800,
+                        color: '#ffffff',
+                        letterSpacing: '-0.5px',
+                        lineHeight: 1.2,
+                        margin: 0
+                    }}>
+                        Visual Regression & Layout Intelligence
+                    </h2>
+
+                    {/* Description */}
+                    <p style={{
+                        fontSize: '0.88rem',
+                        color: 'rgba(255, 255, 255, 0.75)',
+                        lineHeight: 1.6,
+                        margin: 0,
+                        maxWidth: '520px'
+                    }}>
+                        Pixel-perfect automated screenshot comparisons, CSS breakage detection, and visual heatmap overlays are currently in private beta testing.
+                    </p>
+
+                    {/* Notification Form / Status */}
+                    <div style={{ marginTop: '16px', width: '100%', maxWidth: '440px' }}>
+                        {subscribed ? (
+                            <div style={{
+                                width: '100%',
+                                background: 'rgba(6, 78, 59, 0.6)',
+                                border: '1px solid rgba(16, 185, 129, 0.4)',
+                                borderRadius: '16px',
+                                padding: '16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px',
+                                color: '#6ee7b7',
+                                fontSize: '0.82rem',
+                                fontWeight: 600,
+                                boxShadow: '0 0 20px rgba(16, 185, 129, 0.25)'
+                            }}>
+                                <CheckCircle2 size={16} />
+                                <span>You are registered for Early Beta Access!</span>
                             </div>
-
-                            {/* Expanded diff image */}
-                            {expandedDiff === diff.id && diff.diff_screenshot_path && (
-                                <div className="mt-4">
-                                    <p className="text-zinc-400 text-xs mb-2">Pixel diff (white = changed pixels)</p>
-                                    <img
-                                        src={`${MEDIA_URL}${diff.diff_screenshot_path}`}
-                                        alt="Visual diff"
-                                        className="rounded-lg border border-zinc-600 max-w-full"
-                                    />
-                                </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
-            ) : selectedDiffRunId ? (
-                <p className="text-zinc-500 text-sm">No visual diff data yet. Click "Run Visual Check" to compare screenshots.</p>
-            ) : (
-                <p className="text-zinc-500 text-sm">Select a test run above to view visual diffs.</p>
-            )}
-
-            {/* Baselines */}
-            <div>
-                <h3 className="text-zinc-300 text-sm font-medium mb-3">
-                    Stored Baselines ({baselines.length})
-                </h3>
-                {loadingBaselines ? (
-                    <p className="text-zinc-500 text-sm">Loading…</p>
-                ) : baselines.length === 0 ? (
-                    <p className="text-zinc-500 text-sm">No baselines yet. Run a test to create the first baseline.</p>
-                ) : (
-                    <div className="space-y-2">
-                        {baselines.map((b: VisualBaseline) => (
-                            <div key={b.id} className="flex items-center justify-between bg-zinc-800 rounded-lg px-4 py-3 border border-zinc-700">
-                                <div>
-                                    <p className="text-zinc-200 text-sm">Page {b.page} · Step {b.step_number}</p>
-                                    <p className="text-zinc-500 text-xs">{b.width}×{b.height} · Updated {new Date(b.updated_at).toLocaleDateString()}</p>
+                        ) : (
+                            <div style={{
+                                width: '100%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '10px',
+                                background: 'rgba(2, 6, 23, 0.85)',
+                                padding: '8px 12px',
+                                borderRadius: '16px',
+                                border: '1px solid rgba(168, 85, 247, 0.3)'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px', color: '#94a3b8', fontSize: '0.8rem', fontFamily: 'var(--font-mono)' }}>
+                                    <Lock size={14} style={{ color: '#c084fc' }} />
+                                    <span>Early Access — Releasing in Q3</span>
                                 </div>
                                 <button
-                                    onClick={() => resetMutation.mutate(b.id)}
-                                    disabled={resetMutation.isPending}
-                                    title="Reset baseline"
-                                    className="text-zinc-500 hover:text-red-400 transition-colors p-1"
+                                    onClick={() => setSubscribed(true)}
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        background: 'linear-gradient(90deg, #9333ea, #db2777)',
+                                        color: '#ffffff',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 700,
+                                        padding: '10px 20px',
+                                        borderRadius: '12px',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 0 15px rgba(168, 85, 247, 0.35)',
+                                        whiteSpace: 'nowrap'
+                                    }}
                                 >
-                                    <Trash2 size={14} />
+                                    <Bell size={14} />
+                                    <span>Notify Me</span>
                                 </button>
                             </div>
-                        ))}
+                        )}
                     </div>
-                )}
+                </div>
+            </div>
+
+            {/* Upcoming Roadmap Feature Cards Grid */}
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px' }}>
+                <div style={{ textAlign: 'center' }}>
+                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1.5px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
+                        <Layers size={16} style={{ color: '#c084fc' }} />
+                        <span>What's Arriving in Visual Regression v2</span>
+                    </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', width: '100%' }}>
+                    {/* Feature 1 */}
+                    <div style={{
+                        background: 'linear-gradient(180deg, rgba(24, 18, 48, 0.9) 0%, rgba(14, 10, 31, 0.9) 100%)',
+                        borderRadius: '16px',
+                        border: '1px solid rgba(168, 85, 247, 0.2)',
+                        padding: '24px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px',
+                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+                    }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(168, 85, 247, 0.1)', border: '1px solid rgba(168, 85, 247, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c084fc' }}>
+                            <Eye size={20} />
+                        </div>
+                        <h4 style={{ color: '#ffffff', fontWeight: 700, fontSize: '0.95rem', margin: 0 }}>Automated Baseline Capture</h4>
+                        <p style={{ color: '#94a3b8', fontSize: '0.82rem', lineHeight: 1.5, margin: 0 }}>
+                            Captures golden-master screenshots across desktop, tablet, and mobile viewports on every test execution step automatically.
+                        </p>
+                    </div>
+
+                    {/* Feature 2 */}
+                    <div style={{
+                        background: 'linear-gradient(180deg, rgba(24, 18, 48, 0.9) 0%, rgba(14, 10, 31, 0.9) 100%)',
+                        borderRadius: '16px',
+                        border: '1px solid rgba(168, 85, 247, 0.2)',
+                        padding: '24px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px',
+                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+                    }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(244, 63, 94, 0.1)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fb7185' }}>
+                            <Layers size={20} />
+                        </div>
+                        <h4 style={{ color: '#ffffff', fontWeight: 700, fontSize: '0.95rem', margin: 0 }}>Pixel-by-Pixel Diff Heatmap</h4>
+                        <p style={{ color: '#94a3b8', fontSize: '0.82rem', lineHeight: 1.5, margin: 0 }}>
+                            OpenCV-powered pixel comparison engine highlights alignment shifts, text overflows, and missing elements in magenta.
+                        </p>
+                    </div>
+
+                    {/* Feature 3 */}
+                    <div style={{
+                        background: 'linear-gradient(180deg, rgba(24, 18, 48, 0.9) 0%, rgba(14, 10, 31, 0.9) 100%)',
+                        borderRadius: '16px',
+                        border: '1px solid rgba(168, 85, 247, 0.2)',
+                        padding: '24px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px',
+                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+                    }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#22d3ee' }}>
+                            <Sparkles size={20} />
+                        </div>
+                        <h4 style={{ color: '#ffffff', fontWeight: 700, fontSize: '0.95rem', margin: 0 }}>AI Dynamic Element Masking</h4>
+                        <p style={{ color: '#94a3b8', fontSize: '0.82rem', lineHeight: 1.5, margin: 0 }}>
+                            Smart AI filters ignore dynamic timestamps, avatars, and ads to prevent false positive regression alerts.
+                        </p>
+                    </div>
+
+                    {/* Feature 4 */}
+                    <div style={{
+                        background: 'linear-gradient(180deg, rgba(24, 18, 48, 0.9) 0%, rgba(14, 10, 31, 0.9) 100%)',
+                        borderRadius: '16px',
+                        border: '1px solid rgba(168, 85, 247, 0.2)',
+                        padding: '24px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px',
+                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+                    }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
+                            <ShieldCheck size={20} />
+                        </div>
+                        <h4 style={{ color: '#ffffff', fontWeight: 700, fontSize: '0.95rem', margin: 0 }}>One-Click Suite Approvals</h4>
+                        <p style={{ color: '#94a3b8', fontSize: '0.82rem', lineHeight: 1.5, margin: 0 }}>
+                            Approve intended UI redesigns with one click to instantly update visual reference baselines across all pages.
+                        </p>
+                    </div>
+                </div>
             </div>
         </div>
     );

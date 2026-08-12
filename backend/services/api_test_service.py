@@ -19,6 +19,32 @@ logger = logging.getLogger(__name__)
 REQUEST_TIMEOUT_SECONDS = int(getattr(settings, 'API_TEST_TIMEOUT', 10))
 
 
+import re
+
+def _build_full_url(base_url: str, url_pattern: str) -> str:
+    """
+    Builds a valid full URL from application base_url and APIEndpoint url_pattern.
+    Handles:
+      - Full URLs ("https://...")
+      - Bracketed hosts ("[sub.example.com]/api/v1/...")
+      - Relative paths ("/api/v1/...")
+      - Placeholder replacements ({id}, :id, <id> -> 1)
+    """
+    url_pattern = url_pattern.replace('{id}', '1').replace(':id', '1').replace('<id>', '1')
+
+    if url_pattern.startswith('http://') or url_pattern.startswith('https://'):
+        return url_pattern
+
+    bracketed = re.match(r'^\[([^\]]+)\](.*)$', url_pattern)
+    if bracketed:
+        host, path = bracketed.group(1), bracketed.group(2) or '/'
+        scheme = 'https' if base_url.startswith('https://') else 'http'
+        return f"{scheme}://{host}{path if path.startswith('/') else '/' + path}"
+
+    base = base_url.rstrip('/')
+    return base + url_pattern if url_pattern.startswith('/') else base + '/' + url_pattern
+
+
 # ─────────────────────────────────────────────────────────────
 # Generation
 # ─────────────────────────────────────────────────────────────
@@ -82,10 +108,15 @@ class APITestGenerator:
 
     def _llm_generate(self, application, endpoint) -> list:
         """Ask the LLM for test cases in JSON format."""
+        from config.llm_config import get_llm, llm_predict
+
+        model_choice = getattr(self.llm, 'model_choice', None) if self.llm else None
+        llm = get_llm(model_choice=model_choice)
+
         prompt = f"""
 You are a QA engineer. Generate API test cases for this endpoint.
 
-Application URL: {application.url}
+Application Base URL: {application.base_url}
 Endpoint: [{endpoint.method}] {endpoint.url_pattern}
 Auth type: {endpoint.auth_type or 'unknown'}
 Request schema: {json.dumps(endpoint.request_schema)}
@@ -94,7 +125,7 @@ Response schema: {json.dumps(endpoint.response_schema)}
 Return ONLY a JSON array. Each element must have:
 - title: string
 - method: string (GET/POST/PUT/DELETE)
-- url: string (full URL using {application.base_url} as base)
+- url: string (full URL path for the endpoint)
 - headers: object (include Content-Type if needed)
 - body: object (request body if POST/PUT)
 - expected_status: integer
@@ -104,28 +135,23 @@ Return ONLY a JSON array. Each element must have:
 Return 2-3 test cases covering: happy path, unauthorized access (if auth_required), and one edge case.
 Return ONLY the JSON array. No explanation.
 """
-        response = self.llm.client.chat(
-            model=self.llm.model,
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-        text = response.get('message', {}).get('content', '') or ''
-        # Strip markdown fences
-        text = text.strip().lstrip('```json').lstrip('```').rstrip('```').strip()
+        raw_text = llm_predict(llm, prompt, model_choice=model_choice).strip()
+
+        # Clean markdown code fences
+        text = re.sub(r'^```(?:json)?\s*', '', raw_text, flags=re.MULTILINE)
+        text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE).strip()
+
         data = json.loads(text)
         for item in data:
             item['ai_generated'] = True
+            item['url'] = _build_full_url(application.base_url, item.get('url', endpoint.url_pattern))
         return data
 
     def _template_generate(self, application, endpoint) -> list:
         """Deterministic fallback — creates sensible tests without LLM."""
         method = endpoint.method.upper()
         url = endpoint.url_pattern
-
-        # Build a full URL from the application base URL + endpoint pattern
-        base = application.base_url.rstrip('/')
-        # Replace common path param placeholders like {id} or :id with '1'
-        clean_url = url.replace('{id}', '1').replace(':id', '1').replace('<id>', '1')
-        full_url = base + clean_url if clean_url.startswith('/') else base + '/' + clean_url
+        full_url = _build_full_url(application.base_url, url)
 
         cases = []
 

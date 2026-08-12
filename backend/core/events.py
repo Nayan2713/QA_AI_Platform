@@ -39,8 +39,15 @@ class RealTimeEventView(View):
         def event_generator():
             from qa_engine.redis_client import get_redis_client
             r = get_redis_client()
-            pubsub = r.pubsub()
-            pubsub.subscribe('qa_platform_events')
+            pubsub = None
+
+            try:
+                pubsub = r.pubsub()
+                pubsub.subscribe('qa_platform_events')
+            except (redis.ConnectionError, redis.TimeoutError) as err:
+                logger.warning(f"SSE failed initial Redis connection: {err}")
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Real-time event service temporarily unavailable (Redis connection refused)'})}\n\n"
+                return
 
             # Send initial connection status
             yield f"data: {json.dumps({'type': 'connected', 'user_id': user_id})}\n\n"
@@ -82,8 +89,9 @@ class RealTimeEventView(View):
                 logger.info(f"SSE stream generator exit for user {user_id}")
             finally:
                 try:
-                    pubsub.unsubscribe('qa_platform_events')
-                    pubsub.close()
+                    if pubsub:
+                        pubsub.unsubscribe('qa_platform_events')
+                        pubsub.close()
                 except Exception:
                     pass
 

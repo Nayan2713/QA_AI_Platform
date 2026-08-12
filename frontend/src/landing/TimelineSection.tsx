@@ -20,7 +20,7 @@ const steps = [
   {
     number: '03',
     title: 'AI Generates & Runs Tests',
-    description: 'Self-hosted Ollama models construct multi-step test cases, execute headless browser steps, and auto-heal selectors.',
+    description: 'Autonomous AI models construct multi-step test cases, execute headless browser steps, and auto-heal selectors.',
     icon: <Cpu className="w-7 h-7 text-indigo-400" />,
 
   },

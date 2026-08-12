@@ -17,7 +17,7 @@ const comparisonRows = [
   {
     feature: 'AI LLM Running Costs',
     traditional: 'Expensive per-token API charges (OpenAI/Claude)',
-    qaPlatform: '$0 API costs using self-hosted local Ollama LLMs',
+    qaPlatform: 'Self-hosted local AI models with 0 per-token charges',
     highlight: true,
   },
   {

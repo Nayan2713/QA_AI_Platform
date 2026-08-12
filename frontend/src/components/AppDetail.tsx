@@ -1161,7 +1161,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
             onClick={() => setActiveTab('visual')}
             style={{ padding: '12px 18px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
           >
-            👁️ Visual Regression
+            👁️ Visual Regression <span style={{ fontSize: '0.7rem', background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(168, 85, 247, 0.4)', marginLeft: '4px' }}>Coming Soon</span>
           </button>
           <button
             className={`tab-btn ${activeTab === 'api-tests' ? 'active' : ''}`}

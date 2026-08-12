@@ -179,16 +179,6 @@ export function LandingPage({
             <li><a href="#features" className="nav-link">Features</a></li>
             <li><a href="#how-it-works" className="nav-link">How It Works</a></li>
             <li><a href="#integrations" className="nav-link">Integrations</a></li>
-            <li>
-              <a
-                href={(import.meta as any).env.VITE_API_URL ? `${(import.meta as any).env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/docs/` : "/api/docs/"}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="nav-link"
-              >
-                API Docs
-              </a>
-            </li>
           </ul>
 
           <div className="nav-actions hidden md:flex">
@@ -226,15 +216,6 @@ export function LandingPage({
               </a>
               <a href="#integrations" onClick={() => setMobileMenuOpen(false)} className="block font-semibold text-slate-300 hover:text-purple-400 py-1">
                 Integrations
-              </a>
-              <a
-                href={(import.meta as any).env.VITE_API_URL ? `${(import.meta as any).env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/docs/` : "/api/docs/"}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setMobileMenuOpen(false)}
-                className="block font-semibold text-slate-300 hover:text-purple-400 py-1"
-              >
-                API Docs
               </a>
               <div className="pt-4 border-t border-purple-500/20 flex flex-col gap-3">
                 <button onClick={() => handleOpenAuth('login')} className="w-full py-3 rounded-xl font-bold border border-purple-500/30 text-white hover:bg-purple-900/30">
@@ -384,14 +365,14 @@ export function LandingPage({
           />
           <FeatureCard
             title="AI Test Suite Gen"
-            description="Self-hosted Ollama LLM converts DOM structures into realistic multi-step user scenarios and edge case tests."
+            description="Autonomous AI models convert DOM structures into realistic multi-step user scenarios and edge case tests."
             icon={<Bot className="w-6 h-6" />}
             // badge="AI Powered"
             animationType="sparkle"
             interactiveSnippet={
               <div className="text-[11px] font-mono text-slate-300 bg-slate-950/80 p-2.5 rounded-lg border border-purple-500/20 flex items-center justify-between">
                 <span>test_user_signup_flow.py</span>
-                <span className="text-emerald-400 font-bold">Ollama Qwen</span>
+                <span className="text-emerald-400 font-bold">Autonomous AI</span>
               </div>
             }
           />
@@ -558,23 +539,17 @@ export function LandingPage({
             <ul className="space-y-2.5 text-sm text-slate-300 font-medium">
               <li>
                 <a
-                  href={(import.meta as any).env.VITE_API_URL ? `${(import.meta as any).env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/docs/` : "/api/docs/"}
+                  href={(import.meta as any).env.VITE_API_URL ? `${(import.meta as any).env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/redoc/` : "/api/redoc/"}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="hover:text-purple-300 transition-colors"
-                  title="Open Interactive OpenAPI 3.0 Documentation"
+                  title="Open ReDoc API Documentation"
                 >
-                  Documentation
+                  Documentation & Features
                 </a>
               </li>
               <li>
-                <a
-                  href={(import.meta as any).env.VITE_API_URL ? `${(import.meta as any).env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/docs/` : "/api/docs/"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-purple-300 transition-colors"
-                  title="Open Interactive OpenAPI 3.0 Documentation"
-                >
+                <a href="#how-it-works" className="hover:text-purple-300 transition-colors">
                   Playwright Integration
                 </a>
               </li>
@@ -584,20 +559,14 @@ export function LandingPage({
                   target="_blank"
                   rel="noopener noreferrer"
                   className="hover:text-purple-300 transition-colors"
-                  title="Open Interactive OpenAPI 3.0 Documentation"
+                  title="Open Swagger API Docs"
                 >
-                  API Reference
+                  API Reference & Specs
                 </a>
               </li>
               <li>
-                <a
-                  href={(import.meta as any).env.VITE_API_URL ? `${(import.meta as any).env.VITE_API_URL.replace(/\/api\/?$/, '')}/api/docs/` : "/api/docs/"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-purple-300 transition-colors"
-                  title="Open Interactive OpenAPI 3.0 Documentation"
-                >
-                  Community Discord
+                <a href="#features" className="hover:text-purple-300 transition-colors">
+                  Platform Guides
                 </a>
               </li>
             </ul>

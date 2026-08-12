@@ -6,6 +6,7 @@ interface NavigationProps {
   username?: string;
   onLogout: () => void;
   onOpenTeamModal?: () => void;
+  onOpenProfileModal?: () => void;
   notifications?: NotificationItem[];
   onRefreshNotifications?: () => void;
 }
@@ -14,6 +15,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   username, 
   onLogout,
   onOpenTeamModal,
+  onOpenProfileModal,
   notifications = [],
   onRefreshNotifications = () => {}
 }) => {
@@ -62,10 +64,28 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             <div className="nav-divider"></div>
             
-            <div className="nav-user">
+            <button
+              onClick={onOpenProfileModal}
+              className="nav-user"
+              style={{
+                background: 'rgba(6, 182, 212, 0.12)',
+                border: '1px solid rgba(6, 182, 212, 0.3)',
+                padding: '5px 12px',
+                borderRadius: '10px',
+                color: '#22d3ee',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s',
+                fontSize: '0.85rem',
+                fontWeight: 600
+              }}
+              title="Click to view & edit profile"
+            >
               <span className="user-avatar">👤</span>
-              <span className="user-name">{username}</span>
-            </div>
+              <span className="user-name" style={{ color: '#22d3ee' }}>{username}</span>
+            </button>
             
             <button className="btn-logout" onClick={onLogout}>
               Logout ➡️

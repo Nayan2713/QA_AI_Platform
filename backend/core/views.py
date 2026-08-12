@@ -160,16 +160,21 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             pass
 
     def perform_destroy(self, instance):
-        check_team_permission(self.request.user, instance.user, 'destroy')
+        if hasattr(self, 'request') and self.request and hasattr(self.request, 'user'):
+            check_team_permission(self.request.user, instance.user, 'destroy')
         app_id = instance.id
         from django.db import transaction
         from .models import (
             TestCase, TestRun, TestResult, Bug, Page, CeleryTask, APIEndpoint,
             AgentSession, WebVitalsResult, LoadTestResult, PerformanceThreshold,
-            QualityMetricsSnapshot,
+            QualityMetricsSnapshot, VisualBaseline, VisualDiff, APITestCase, APITestRun,
         )
         with transaction.atomic():
             db = 'default'
+            VisualDiff.objects.filter(test_run__test_case__app_id=app_id)._raw_delete(using=db)
+            VisualBaseline.objects.filter(page__app_id=app_id)._raw_delete(using=db)
+            APITestRun.objects.filter(api_test_case__application_id=app_id)._raw_delete(using=db)
+            APITestCase.objects.filter(application_id=app_id)._raw_delete(using=db)
             Bug.objects.filter(application_id=app_id)._raw_delete(using=db)
             TestResult.objects.filter(test_run__test_case__app_id=app_id)._raw_delete(using=db)
             TestRun.objects.filter(test_case__app_id=app_id)._raw_delete(using=db)
@@ -182,7 +187,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             LoadTestResult.objects.filter(application_id=app_id)._raw_delete(using=db)
             PerformanceThreshold.objects.filter(application_id=app_id)._raw_delete(using=db)
             QualityMetricsSnapshot.objects.filter(application_id=app_id)._raw_delete(using=db)
-            Application.objects.filter(id=app_id)._raw_delete(using=db)
+            instance.delete()
 
     # Helper query order
     def get_queryset(self):

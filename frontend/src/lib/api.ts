@@ -114,6 +114,9 @@ export const runVisualRegression = (appId: number, testRunId?: number) =>
     api.post(`applications/${appId}/run-visual-regression/`, testRunId ? { test_run_id: testRunId } : {})
         .then(r => r.data);
 
+export const getTestRuns = (appId: number) =>
+    api.get<any[]>(`test-runs/?app=${appId}`).then(r => r.data);
+
 // ── API Testing ──────────────────────────────────────────────
 
 export const getAPITestCases = (appId: number) =>
@@ -133,5 +136,12 @@ export const getAPITestRuns = (appId: number) =>
 
 export const generateAndRunAPITests = (appId: number, generate = true) =>
     api.post(`applications/${appId}/run-api-tests/`, { generate }).then(r => r.data);
+
+// ── Profile API ──────────────────────────────────────────────
+export const getUserProfile = () =>
+    api.get('auth/me/').then(r => r.data);
+
+export const updateUserProfile = (data: any) =>
+    api.patch('auth/me/', data).then(r => r.data);
 
 export default api;

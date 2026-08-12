@@ -5,6 +5,7 @@ import { User, Bug } from './lib/types';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigation } from './components/Navigation';
 import { TeamModal } from './components/TeamModal';
+import UserProfileModal from './components/UserProfileModal';
 import { ChatbotWidget } from './components/ChatbotWidget';
 import { ToastManager, ToastItem } from './components/ToastManager';
 import { NotificationItem } from './components/NotificationCenter';
@@ -487,6 +488,7 @@ function App() {
   }
 
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   return (
     <div className="app-layout">
@@ -495,6 +497,7 @@ function App() {
         username={username}
         onLogout={handleLogout}
         onOpenTeamModal={() => setIsTeamModalOpen(true)}
+        onOpenProfileModal={() => setIsProfileModalOpen(true)}
         notifications={notifications}
         onRefreshNotifications={refetchNotifications}
       />
@@ -503,6 +506,12 @@ function App() {
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
         currentUser={username}
+      />
+
+      <UserProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        onProfileUpdated={(newUsername) => setUsername(newUsername)}
       />
 
       <main className="main-content">
@@ -545,7 +554,7 @@ function App() {
       </main>
 
       <footer className="app-footer">
-        <p>© 2026 QA Engineer MVP. Built with Django, Playwright, Ollama, and React.</p>
+        <p>© 2026 QA Engineer MVP. Built with Django, Playwright, Autonomous AI Engine, and React.</p>
       </footer>
 
       {/* Permission Denied UI Popup Notification */}

@@ -7,7 +7,7 @@ const integrations = [
   { name: 'Playwright', category: 'Browser Automation', icon: <Terminal className="w-9 h-9 text-blue-300" /> },
   { name: 'Docker', category: 'Container Infra', icon: <Server className="w-9 h-9 text-cyan-300" /> },
   { name: 'Jira', category: 'Issue Tracking', icon: <Layers className="w-9 h-9 text-indigo-300" /> },
-  { name: 'Ollama LLM', category: 'Self-Hosted AI', icon: <Cpu className="w-9 h-9 text-violet-300" /> },
+  { name: 'Autonomous LLM', category: 'Self-Hosted AI', icon: <Cpu className="w-9 h-9 text-violet-300" /> },
   { name: 'PostgreSQL', category: 'Database Storage', icon: <Database className="w-9 h-9 text-blue-300" /> },
   { name: 'Vercel', category: 'Deployment Webhooks', icon: <Zap className="w-9 h-9 text-purple-300" /> },
 ];

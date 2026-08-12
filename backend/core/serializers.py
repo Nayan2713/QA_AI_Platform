@@ -75,7 +75,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class ApplicationSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
     page_count = serializers.IntegerField(source='pages.count', read_only=True)
     api_count = serializers.IntegerField(source='api_endpoints.count', read_only=True)
     test_case_count = serializers.IntegerField(source='test_cases.count', read_only=True)

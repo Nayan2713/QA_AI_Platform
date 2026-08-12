@@ -44,7 +44,7 @@ export function AutonomousArchitecture3D() {
     },
     {
       id: 2,
-      title: 'Ollama AI Test Gen',
+      title: 'Autonomous AI Test Gen',
       status: 'Scenarios Secured',
       icon: <Cpu className="w-5 h-5 text-blue-400" />,
       color: 'blue',

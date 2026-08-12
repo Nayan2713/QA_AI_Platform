@@ -132,7 +132,7 @@ export function LiveDemoSimulator() {
               </span>
             </div>
 
-            {/* Step 2: Ollama AI Test Gen */}
+            {/* Step 2: Autonomous AI Test Gen */}
             {scanStep >= 2 && (
               <motion.div
                 initial={{ opacity: 0, y: 5 }}
@@ -145,7 +145,7 @@ export function LiveDemoSimulator() {
                   ) : (
                     <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5 text-purple-400 animate-spin shrink-0" />
                   )}
-                  <span>2. Ollama AI Test Case Generator</span>
+                  <span>2. Autonomous AI Test Case Generator</span>
                 </div>
                 <span className="text-slate-300 font-medium pl-6 sm:pl-0 text-[11px] sm:text-sm">
                   {scanStep > 2 ? '5 end-to-end scenarios' : 'Constructing tests...'}
