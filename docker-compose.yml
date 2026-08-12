@@ -81,11 +81,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/health/" ]
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/')\" || exit 1" ]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 90s
 
   # --- Celery Worker ---
   celery_worker:
