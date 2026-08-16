@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { User, Mail, Shield, Key, Calendar, Check, AlertCircle, X, Sparkles, Save, UserCheck, Lock } from 'lucide-react';
 import { getUserProfile, updateUserProfile } from '../lib/api';
+import { changePassword } from '../lib/authApi';
+
 
 interface Props {
     isOpen: boolean;
@@ -83,24 +85,32 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
         }
 
         try {
-            const payload: any = {
-                username,
-                email,
-                first_name: firstName,
-                last_name: lastName,
-            };
+            if (activeTab === 'security' && newPassword && currentPassword) {
+                await changePassword({
+                    current_password: currentPassword,
+                    new_password: newPassword,
+                });
+                setSuccessMessage('Password changed successfully!');
+            } else {
+                const payload: any = {
+                    username,
+                    email,
+                    first_name: firstName,
+                    last_name: lastName,
+                };
 
-            if (newPassword && currentPassword) {
-                payload.current_password = currentPassword;
-                payload.new_password = newPassword;
-            }
+                if (newPassword && currentPassword) {
+                    payload.current_password = currentPassword;
+                    payload.new_password = newPassword;
+                }
 
-            const res = await updateUserProfile(payload);
-            setSuccessMessage('Profile information updated successfully!');
+                const res = await updateUserProfile(payload);
+                setSuccessMessage('Profile information updated successfully!');
 
-            if (res?.user?.username) {
-                localStorage.setItem('username', res.user.username);
-                if (onProfileUpdated) onProfileUpdated(res.user.username);
+                if (res?.user?.username) {
+                    localStorage.setItem('username', res.user.username);
+                    if (onProfileUpdated) onProfileUpdated(res.user.username);
+                }
             }
 
             // Clear password fields
@@ -118,6 +128,7 @@ export default function UserProfileModal({ isOpen, onClose, onProfileUpdated }: 
             setSaving(false);
         }
     };
+
 
     if (!isOpen) return null;
 

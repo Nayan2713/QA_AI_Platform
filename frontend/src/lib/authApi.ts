@@ -16,3 +16,26 @@ export const loginUser = (
   `${API}/login/`,
   data
 );
+
+export const changePassword = (
+  data: { current_password: string; new_password: string }
+) => {
+  const token = localStorage.getItem('access_token');
+  return axios.post(`${API}/change-password/`, data, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+};
+
+export const forgotPassword = (
+  data: { email: string }
+) => axios.post(
+  `${API}/forgot-password/`,
+  data
+);
+
+export const resetPassword = (
+  data: { email: string; token: string; new_password: string; confirm_password: string }
+) => axios.post(
+  `${API}/reset-password/`,
+  data
+);

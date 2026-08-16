@@ -42,6 +42,7 @@ interface LandingPageProps {
   authSuccess?: string;
   authLoading?: boolean;
   onAuthSubmit?: (e: React.FormEvent, isLogin: boolean, email: string, pass: string, user: string) => void;
+  onOpenForgotPassword?: () => void;
 }
 
 export function MagneticButton({
@@ -75,7 +76,9 @@ export function LandingPage({
   authSuccess,
   authLoading,
   onAuthSubmit,
+  onOpenForgotPassword,
 }: LandingPageProps) {
+
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -714,9 +717,24 @@ export function LandingPage({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-200 uppercase tracking-wider mb-2">
-                    Password *
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-xs font-bold text-slate-200 uppercase tracking-wider">
+                      Password *
+                    </label>
+                    {isLoginMode && onOpenForgotPassword && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAuthModal(false);
+                          onOpenForgotPassword();
+                        }}
+                        className="text-xs font-semibold text-purple-400 hover:text-purple-300 hover:underline transition-colors cursor-pointer"
+                        style={{ background: 'none', border: 'none', padding: 0 }}
+                      >
+                        Forgot Password?
+                      </button>
+                    )}
+                  </div>
                   <div className="auth-input-group">
                     <Lock className="auth-input-icon" />
                     <input
@@ -735,6 +753,8 @@ export function LandingPage({
                     </button>
                   </div>
                 </div>
+
+
 
                 <button
                   type="submit"

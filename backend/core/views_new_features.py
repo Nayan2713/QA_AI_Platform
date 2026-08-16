@@ -23,6 +23,7 @@ from django.shortcuts import get_object_or_404
 from core.models import (
     Application, VisualBaseline, VisualDiff, APITestCase, APITestRun, TestRun
 )
+from core.views import get_user_and_team_user_ids
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +77,13 @@ class VisualBaselineViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        qs = VisualBaseline.objects.select_related('page__app')
+        user_ids = get_user_and_team_user_ids(self.request.user)
+        qs = VisualBaseline.objects.select_related('page__app').filter(
+            page__app__user_id__in=user_ids
+        )
         app_id = self.request.query_params.get('app_id')
         if app_id:
-            qs = qs.filter(page__app_id=app_id, page__app__user=self.request.user)
+            qs = qs.filter(page__app_id=app_id)
         return qs
 
     @action(detail=True, methods=['delete'])
@@ -102,7 +106,10 @@ class VisualDiffViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        qs = VisualDiff.objects.select_related('test_run', 'baseline')
+        user_ids = get_user_and_team_user_ids(self.request.user)
+        qs = VisualDiff.objects.select_related('test_run', 'baseline').filter(
+            test_run__test_case__app__user_id__in=user_ids
+        )
         test_run_id = self.request.query_params.get('test_run_id')
         app_id = self.request.query_params.get('app_id')
         if test_run_id:
@@ -143,12 +150,14 @@ class APITestRunViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        qs = APITestRun.objects.select_related('api_test_case__application')
+        user_ids = get_user_and_team_user_ids(self.request.user)
+        qs = APITestRun.objects.select_related('api_test_case__application').filter(
+            api_test_case__application__user_id__in=user_ids
+        )
         app_id = self.request.query_params.get('app_id')
         test_case_id = self.request.query_params.get('api_test_case_id')
         if app_id:
-            qs = qs.filter(api_test_case__application_id=app_id,
-                           api_test_case__application__user=self.request.user)
+            qs = qs.filter(api_test_case__application_id=app_id)
         if test_case_id:
             qs = qs.filter(api_test_case_id=test_case_id)
         return qs

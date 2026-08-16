@@ -6,6 +6,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigation } from './components/Navigation';
 import { TeamModal } from './components/TeamModal';
 import UserProfileModal from './components/UserProfileModal';
+import ForgotPasswordModal from './components/ForgotPasswordModal';
+
 import { ChatbotWidget } from './components/ChatbotWidget';
 import { ToastManager, ToastItem } from './components/ToastManager';
 import { NotificationItem } from './components/NotificationCenter';
@@ -38,6 +40,8 @@ function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('access_token'));
   const [username, setUsername] = useState<string>(localStorage.getItem('username') || '');
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
+
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -468,12 +472,19 @@ function App() {
 
   if (!token) {
     const landingNode = (
-      <LandingPage
-        authError={authError}
-        authSuccess={authSuccess}
-        authLoading={authLoading}
-        onAuthSubmit={handleLandingAuthSubmit}
-      />
+      <>
+        <LandingPage
+          authError={authError}
+          authSuccess={authSuccess}
+          authLoading={authLoading}
+          onAuthSubmit={handleLandingAuthSubmit}
+          onOpenForgotPassword={() => setIsForgotPasswordOpen(true)}
+        />
+        <ForgotPasswordModal
+          isOpen={isForgotPasswordOpen}
+          onClose={() => setIsForgotPasswordOpen(false)}
+        />
+      </>
     );
     return (
       <Routes>
@@ -481,11 +492,13 @@ function App() {
         <Route path="/login" element={landingNode} />
         <Route path="/signup" element={landingNode} />
         <Route path="/register" element={landingNode} />
+        <Route path="/forgot-password" element={landingNode} />
         <Route path="/dashboard" element={landingNode} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
   }
+
 
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);

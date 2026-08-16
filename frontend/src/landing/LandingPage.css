@@ -1137,6 +1137,16 @@
   box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.25);
 }
 
+.auth-input-group input:-webkit-autofill,
+.auth-input-group input:-webkit-autofill:hover, 
+.auth-input-group input:-webkit-autofill:focus, 
+.auth-input-group input:-webkit-autofill:active {
+  -webkit-text-fill-color: #ffffff !important;
+  -webkit-box-shadow: 0 0 0px 1000px #0f172a inset !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+
 /* Footer Styling - High Contrast & Clear Link Hierarchy */
 .landing-footer {
   border-top: 1px solid var(--lp-border-glass);

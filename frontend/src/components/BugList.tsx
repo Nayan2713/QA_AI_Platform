@@ -212,7 +212,12 @@ export const BugList: React.FC<BugListProps> = ({
                               src={(() => {
                                 const ss = stepResult.screenshot;
                                 const origin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
-                                if (ss.length > 500) return `data:image/png;base64,${ss}`;
+                                if (ss.length > 500) {
+                                  // Sniff format: WebP (new, compressed) base64 starts with "UklGR".
+                                  // Older rows saved before compression are plain PNG.
+                                  const mime = ss.startsWith('UklGR') ? 'image/webp' : 'image/png';
+                                  return `data:${mime};base64,${ss}`;
+                                }
                                 if (ss.startsWith('http')) return ss;
                                 if (ss.startsWith('/')) return `${origin}${ss}`;
                                 return `${origin}/media/${ss}`;

@@ -24,7 +24,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
       const response = await api.get<TestRun>(`test-runs/${testRunId}/`);
       setTestRun(response.data);
       setError('');
-      
+
       // If a bug is detected (i.e. bug count increases)
       if (response.data.bugs_found > 0) {
         onBugDetected();
@@ -46,24 +46,24 @@ export const TestResults: React.FC<TestResultsProps> = ({
 
     const startPolling = async () => {
       if (!isMounted) return;
-      
+
       await fetchResults();
-      
+
       intervalId = setInterval(async () => {
         if (!isMounted || pollCount >= MAX_POLLS) {
           clearInterval(intervalId);
           return;
         }
-        
+
         pollCount++;
-        
+
         try {
           const response = await api.get<{ status: string; bugs_found: number; data: TestRun }>(`test-runs/${testRunId}/status/`);
           if (!isMounted) return;
-          
+
           const status = response.data.status;
           setTestRun(response.data.data);
-          
+
           if (status === 'COMPLETED' || status === 'FAILED') {
             clearInterval(intervalId);
             await fetchResults(); // fetch full results one last time
@@ -77,7 +77,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
         }
       }, 2000);
     };
-    
+
     startPolling();
 
     return () => {
@@ -105,7 +105,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
   }
 
   const isExecuting = testRun.status === 'PENDING' || testRun.status === 'RUNNING';
-  
+
   const mediaOrigin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
 
   return (
@@ -161,9 +161,9 @@ export const TestResults: React.FC<TestResultsProps> = ({
       {(testRun.metadata as any)?.video_path && (
         <div className="video-playback-box" style={{ margin: '16px 0', background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px' }}>
           <h4 style={{ margin: '0 0 8px 0' }}>🎥 Execution Video Recording</h4>
-          <video 
-            src={`${mediaOrigin}/media/${(testRun.metadata as any).video_path}`} 
-            controls 
+          <video
+            src={`${mediaOrigin}/media/${(testRun.metadata as any).video_path}`}
+            controls
             style={{ width: '100%', borderRadius: '6px', maxHeight: '240px', background: '#000' }}
           />
         </div>
@@ -172,9 +172,9 @@ export const TestResults: React.FC<TestResultsProps> = ({
       {/* HAR Download Link */}
       {(testRun.metadata as any)?.har_path && (
         <div className="har-download-box" style={{ margin: '12px 0', fontSize: '0.9rem' }}>
-          📥 <a 
-            href={`${mediaOrigin}/media/${(testRun.metadata as any).har_path}`} 
-            download 
+          📥 <a
+            href={`${mediaOrigin}/media/${(testRun.metadata as any).har_path}`}
+            download
             style={{ color: '#60a5fa', textDecoration: 'underline', fontWeight: '500' }}
           >
             Download HAR Network Traffic Trace File
@@ -186,14 +186,14 @@ export const TestResults: React.FC<TestResultsProps> = ({
       {(testRun.metadata as any)?.console_logs && (testRun.metadata as any).console_logs.length > 0 && (
         <div className="console-logs-box" style={{ margin: '16px 0', background: '#111827', padding: '12px', borderRadius: '8px' }}>
           <h4 style={{ margin: '0 0 8px 0', color: '#fbbf24' }}>💻 Browser Console Outputs</h4>
-          <pre style={{ 
-            maxHeight: '120px', 
-            overflowY: 'auto', 
-            margin: 0, 
-            fontSize: '0.75rem', 
-            fontFamily: 'monospace', 
-            whiteSpace: 'pre-wrap', 
-            color: '#f3f4f6' 
+          <pre style={{
+            maxHeight: '120px',
+            overflowY: 'auto',
+            margin: 0,
+            fontSize: '0.75rem',
+            fontFamily: 'monospace',
+            whiteSpace: 'pre-wrap',
+            color: '#f3f4f6'
           }}>
             {(testRun.metadata as any).console_logs.join('\n')}
           </pre>
@@ -248,7 +248,7 @@ export const TestResults: React.FC<TestResultsProps> = ({
 
       <div className="execution-timeline">
         <h4>📋 Step-by-Step Timeline Logs</h4>
-        
+
         {(!testRun.results || testRun.results.length === 0) ? (
           <div className="empty-results-timeline">
             {isExecuting ? (
@@ -266,13 +266,13 @@ export const TestResults: React.FC<TestResultsProps> = ({
                     {res.status === 'PASSED' ? '✓' : '✗'}
                   </span>
                 </div>
-                
+
                 <div className="step-content-col">
                   <div className="step-main">
                     <span className="step-number">{res.step_number === 0 ? 'Setup' : `Step ${res.step_number}`}</span>
                     <span className="step-result-status">{res.status}</span>
                   </div>
-                  
+
                   {res.status === 'FAILED' && res.error && (
                     <div className="step-error-box">
                       <strong>Execution Error:</strong>
@@ -327,13 +327,17 @@ export const TestResults: React.FC<TestResultsProps> = ({
 
                   {res.screenshot && (
                     <div className="step-screenshot-box">
-                      <button 
+                      <button
                         onClick={() => {
                           const ss = res.screenshot;
                           const origin = (api.defaults.baseURL && api.defaults.baseURL.replace('/api/', '')) || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
                           let src: string;
                           if (ss.length > 500) {
-                            src = `data:image/png;base64,${ss}`;
+                            // Base64 payload — sniff the actual format from its signature.
+                            // WebP (new, compressed) starts with "UklGR" (base64 of "RIFF...").
+                            // Older rows saved before compression are plain PNG.
+                            const mime = ss.startsWith('UklGR') ? 'image/webp' : 'image/png';
+                            src = `data:${mime};base64,${ss}`;
                           } else if (ss.startsWith('http')) {
                             src = ss;
                           } else if (ss.startsWith('/')) {
