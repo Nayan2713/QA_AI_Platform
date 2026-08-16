@@ -36,10 +36,12 @@ def get_user_and_team_user_ids(user):
     if not user or not user.is_authenticated:
         return []
     if getattr(user, 'email', None):
-        TeamMember.objects.filter(email__iexact=user.email, member_user__isnull=True).update(
-            member_user=user,
-            status='active'
-        )
+        unlinked = TeamMember.objects.filter(email__iexact=user.email, member_user__isnull=True)
+        if unlinked.exists():
+            unlinked.update(
+                member_user=user,
+                status='active'
+            )
     owned_ids = TeamMember.objects.filter(
         Q(member_user=user) | Q(email__iexact=getattr(user, 'email', '')),
         status='active'
@@ -571,10 +573,11 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user_ids = get_user_and_team_user_ids(self.request.user)
-        queryset = TestCase.objects.filter(app__user_id__in=user_ids).select_related('app').order_by('-created_at')
         app_id = self.request.query_params.get('app')
         if app_id:
-            queryset = queryset.filter(app_id=app_id)
+            queryset = TestCase.objects.filter(app_id=app_id, app__user_id__in=user_ids).select_related('app').order_by('-created_at')
+        else:
+            queryset = TestCase.objects.filter(app__user_id__in=user_ids).select_related('app').order_by('-created_at')
         return queryset
 
     def get_serializer_class(self):

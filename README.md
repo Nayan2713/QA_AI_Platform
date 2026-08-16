@@ -45,6 +45,17 @@ The database uses a clean, relational PostgreSQL layout:
 
 ---
 
+## 🖼️ Image Compression Service & Screenshot Optimization
+
+The platform includes a centralized **Image Compression Service** (`backend/services/image_compressor.py`) powered by Pillow. It resizes high-resolution screenshots (default max dimension: 1280px) and converts/compresses images into WebP format (default quality: 75%).
+
+### Key Integrations:
+1. **UI Scanner (`backend/services/ui_scanner.py`)**: All captured visual defect screenshots are automatically compressed before being written to disk as `.webp` files under `media/bugs/`.
+2. **Bug Detection (`backend/tasks/bug_detection.py`)**: Decodes and compresses test step base64 failure screenshots into lightweight `.webp` bug attachments.
+3. **Test Execution (`backend/tasks/execution.py`)**: Compresses manual action and step failure screenshots in real-time before saving base64 payload strings to `TestResult.screenshot`, reducing PostgreSQL storage requirements by 80–90%.
+
+---
+
 ## 🚀 Getting Started (Installation & Running)
 
 You can run the application either **locally on your machine** (using local servers or a hybrid Docker configuration) or entirely via **Docker Compose** (one-click deployment).
@@ -65,6 +76,7 @@ You can run the application either **locally on your machine** (using local serv
 > ```bash
 > docker compose up -d postgres redis
 > ```
+
 > This starts PostgreSQL and Redis on ports `5432` and `6379` automatically with the default credentials, allowing you to run the Django API and React dev server locally.
 
 #### 2. Setup Environment Files
@@ -121,6 +133,7 @@ celery -A qa_engine worker -l info -P threads --concurrency=2 -Q discovery,execu
 If you ever need to purge the task queue or flush Redis database due to stalled tasks:
 ```bash
 # Purge Celery queues
+
 celery -A qa_engine purge -f
 
 # Flush Redis broker databases

@@ -120,6 +120,9 @@ class TestCase(models.Model):
     )
     generation_context = models.JSONField(default=dict, blank=True, null=True)
     self_healed_count = models.IntegerField(default=0)
+    consecutive_flips = models.IntegerField(default=0)
+    flakiness_score = models.FloatField(default=0.0)
+    is_flaky = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
@@ -136,6 +139,10 @@ class TestRun(models.Model):
     metadata = models.JSONField(default=dict, blank=True)
     bugs_found = models.IntegerField(default=0)
     self_healed_count = models.IntegerField(default=0)
+    execution_duration_ms = models.IntegerField(default=0, null=True, blank=True)
+    execution_mode = models.CharField(max_length=32, default="HEADLESS", null=True, blank=True)
+    js_coverage_pct = models.FloatField(default=0.0, null=True, blank=True)
+    css_coverage_pct = models.FloatField(default=0.0, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):

@@ -186,7 +186,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const data = Array.isArray(rawData) ? rawData : (rawData?.results || []);
         const totalCount = (rawData && typeof rawData === 'object' && rawData.count !== undefined) ? rawData.count : data.length;
         if (active) {
-          setTestCases(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
+          setTestCases(data);
           setTotalTestCasesCount(totalCount);
           setTestCasesError(null);
           setTestCasesInitialLoaded(true);
@@ -257,7 +257,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         ];
 
         if (active) {
-          setBugs(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
+          setBugs(data);
         }
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
@@ -289,7 +289,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const epRes = await api.get(`api-endpoints/?app=${appId}&all=true`, { signal });
         const rawData = epRes.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
-        if (active) setApiEndpoints(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
+        if (active) setApiEndpoints(data);
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch API endpoints:', err);
@@ -303,7 +303,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
 
       try {
         const graphRes = await api.get(`applications/${appId}/api-dependency-graph/`, { signal });
-        if (active) setApiGraph(prev => JSON.stringify(prev) === JSON.stringify(graphRes.data) ? prev : graphRes.data);
+        if (active) setApiGraph(graphRes.data);
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch API graph:', err);
@@ -331,7 +331,7 @@ export const AppDetail: React.FC<AppDetailProps> = ({
         const res = await api.get(`agent-sessions/?app=${appId}`, { signal });
         const rawData = res.data;
         const data = Array.isArray(rawData) ? rawData : (rawData.results || []);
-        if (active) setAgentSessions(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : (data as any));
+        if (active) setAgentSessions(data as any);
       } catch (err: any) {
         if (active && err.name !== 'CanceledError' && err.name !== 'AbortError') {
           console.error('Failed to fetch agent sessions:', err);

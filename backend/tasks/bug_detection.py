@@ -11,26 +11,31 @@ from django.db import transaction
 from core.models import TestRun, TestResult, Bug, APIEndpoint
 from tasks.discovery import get_url_pattern
 from tasks.cancellation import check_cancelled, clear_stop_flag, TaskCancelled
+from services.image_compressor import ImageCompressor
 
 logger = logging.getLogger(__name__)
 
 
 def save_screenshot_to_file(screenshot_b64, prefix="bug"):
     """
-    Decodes a base64 screenshot string and saves it as a PNG file under
-    MEDIA_ROOT/bugs/. Returns the relative path (e.g. 'bugs/bug_1234.png')
-    suitable for storing in an ImageField, or None on failure.
+    Decodes a base64 screenshot string, compresses it using ImageCompressor,
+    and saves it as a WebP file under MEDIA_ROOT/bugs/.
+    Returns relative path suitable for storing in Bug.screenshot, or None on failure.
     """
     if not screenshot_b64:
         return None
     try:
         media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
         os.makedirs(media_path, exist_ok=True)
-        filename = f"{prefix}_{int(time.time() * 1000)}.png"
+        filename = f"{prefix}_{int(time.time() * 1000)}.webp"
         filepath = os.path.join(media_path, filename)
-        image_data = base64.b64decode(screenshot_b64)
+        
+        raw_b64 = screenshot_b64.split(',', 1)[1] if ',' in screenshot_b64 else screenshot_b64
+        image_data = base64.b64decode(raw_b64)
+        compressed_data = ImageCompressor.compress_bytes(image_data, max_dim=1280, quality=75, format='WEBP')
+
         with open(filepath, 'wb') as f:
-            f.write(image_data)
+            f.write(compressed_data)
         return f"bugs/{filename}"
     except Exception as err:
         logger.error(f"Failed to save bug screenshot to file: {err}")

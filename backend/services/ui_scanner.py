@@ -7,6 +7,7 @@ import logging
 from urllib.parse import urlparse
 from django.conf import settings
 from core.models import Application, Page, Bug, BugSeverity
+from services.image_compressor import ImageCompressor
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,8 @@ def _is_probably_destructive(text: str) -> bool:
 
 def save_ui_screenshot(page, selector=None, prefix="ui_bug"):
     """
-    Captures a screenshot of the page or a specific DOM element in memory and returns a base64 encoded string suitable for Bug.screenshot.
+    Captures a screenshot of the page or a specific DOM element in memory,
+    compresses it using ImageCompressor, and saves it as a WebP image.
     """
     try:
         ss_bytes = None
@@ -47,12 +49,14 @@ def save_ui_screenshot(page, selector=None, prefix="ui_bug"):
             ss_bytes = page.screenshot(full_page=False)
 
         if ss_bytes:
+            # Compress screenshot before saving
+            compressed_bytes = ImageCompressor.compress_bytes(ss_bytes, max_dim=1280, quality=75, format='WEBP')
             media_path = os.path.join(settings.MEDIA_ROOT, 'bugs')
             os.makedirs(media_path, exist_ok=True)
-            filename = f"{prefix}_{int(time.time() * 1000)}.png"
+            filename = f"{prefix}_{int(time.time() * 1000)}.webp"
             filepath = os.path.join(media_path, filename)
             with open(filepath, 'wb') as f:
-                f.write(ss_bytes)
+                f.write(compressed_bytes)
             return f"bugs/{filename}"
         return None
     except Exception as e:

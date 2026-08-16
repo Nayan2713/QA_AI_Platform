@@ -34,6 +34,77 @@ class CustomUserAdmin(BaseUserAdmin):
         return obj.applications.count()
     registered_applications_count.short_description = 'Apps Registered'
 
+    def get_deleted_objects(self, objs, request):
+        """
+        Provides a fast summary for the delete confirmation page, avoiding
+        30s+ recursive ORM object collection across thousands of test results.
+        """
+        deleted_objects = [
+            f"User '{obj.username}' ({obj.email or 'no email'}) — including all associated applications, test runs, test results & bugs"
+            for obj in objs
+        ]
+        model_count = {User._meta.verbose_name_plural: len(objs)}
+        perms_needed = set()
+        protected = set()
+        return deleted_objects, model_count, perms_needed, protected
+
+    def delete_model(self, request, obj):
+        """Fast bulk deletion for a single user."""
+        self._fast_delete_users([obj])
+
+    def delete_queryset(self, request, queryset):
+        """Fast bulk deletion for selected users in admin list action."""
+        self._fast_delete_users(list(queryset))
+
+    def _fast_delete_users(self, users):
+        """Perform fast cascading raw DB deletion of user resources."""
+        from django.db import transaction
+        from django.db.models import Q
+
+        user_ids = [u.id for u in users if u and u.id]
+        if not user_ids:
+            return
+
+        with transaction.atomic():
+            app_ids = list(Application.objects.filter(user_id__in=user_ids).values_list('id', flat=True))
+            if app_ids:
+                from .models import (
+                    VisualDiff, VisualBaseline, APITestRun, APITestCase, Bug,
+                    TestResult, TestRun, TestCase, Page, CeleryTask, APIEndpoint,
+                    AgentSession, WebVitalsResult, LoadTestResult, PerformanceThreshold,
+                    QualityMetricsSnapshot, QualityMetrics, CoverageReport, FlakinessReport,
+                    TestValidation, BugValidation, Notification, TeamMember
+                )
+                db = 'default'
+                VisualDiff.objects.filter(test_run__test_case__app_id__in=app_ids)._raw_delete(using=db)
+                VisualBaseline.objects.filter(page__app_id__in=app_ids)._raw_delete(using=db)
+                APITestRun.objects.filter(api_test_case__application_id__in=app_ids)._raw_delete(using=db)
+                APITestCase.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                BugValidation.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                Bug.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                TestResult.objects.filter(test_run__test_case__app_id__in=app_ids)._raw_delete(using=db)
+                TestRun.objects.filter(test_case__app_id__in=app_ids)._raw_delete(using=db)
+                TestValidation.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                TestValidation.objects.filter(test_case__app_id__in=app_ids)._raw_delete(using=db)
+                TestCase.objects.filter(app_id__in=app_ids)._raw_delete(using=db)
+                Page.objects.filter(app_id__in=app_ids)._raw_delete(using=db)
+                CeleryTask.objects.filter(app_id__in=app_ids)._raw_delete(using=db)
+                APIEndpoint.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                AgentSession.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                WebVitalsResult.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                LoadTestResult.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                PerformanceThreshold.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                QualityMetricsSnapshot.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                QualityMetrics.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                CoverageReport.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                FlakinessReport.objects.filter(application_id__in=app_ids)._raw_delete(using=db)
+                Application.objects.filter(id__in=app_ids)._raw_delete(using=db)
+
+            from .models import TeamMember, Notification
+            TeamMember.objects.filter(Q(owner_id__in=user_ids) | Q(member_user_id__in=user_ids))._raw_delete(using='default')
+            Notification.objects.filter(user_id__in=user_ids)._raw_delete(using='default')
+            User.objects.filter(id__in=user_ids)._raw_delete(using='default')
+
 # ----------------------------------------------------------------------
 # Inlines for Application Admin
 # ----------------------------------------------------------------------

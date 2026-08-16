@@ -13,6 +13,7 @@ from playwright.sync_api import sync_playwright, Browser, BrowserContext
 from core.models import TestRun, TestResult, TestCase, CeleryTask
 from tasks.cancellation import check_cancelled, is_cancelled, clear_stop_flag, TaskCancelled, register_active_handle, unregister_active_handle
 from services.self_healing_service import SelfHealingService
+from services.image_compressor import ImageCompressor
 
 logger = logging.getLogger(__name__)
 
@@ -558,9 +559,9 @@ def execute_test(self, test_run_id, model_choice=None):
 
                         elif action == "screenshot":
                             try:
-                                screenshot_b64 = base64.b64encode(
-                                    page.screenshot(type="png", full_page=False)
-                                ).decode('utf-8')
+                                raw_ss = page.screenshot(type="png", full_page=False)
+                                raw_b64 = base64.b64encode(raw_ss).decode('utf-8')
+                                screenshot_b64 = ImageCompressor.compress_base64(raw_b64, max_dim=1280, quality=75, format='WEBP')
                             except Exception as se:
                                 logger.error(f"Manual screenshot failed: {se}")
 
@@ -625,9 +626,9 @@ def execute_test(self, test_run_id, model_choice=None):
                             run_failed = True
                             logger.error(f"Step {step_num} final failure: {error_msg}")
                             try:
-                                screenshot_b64 = base64.b64encode(
-                                    page.screenshot(type="png", full_page=False)
-                                ).decode('utf-8')
+                                raw_ss = page.screenshot(type="png", full_page=False)
+                                raw_b64 = base64.b64encode(raw_ss).decode('utf-8')
+                                screenshot_b64 = ImageCompressor.compress_base64(raw_b64, max_dim=1280, quality=75, format='WEBP')
                             except Exception:
                                 pass
 
