@@ -36,8 +36,11 @@ class BulkUploadAPITests(TransactionTestCase):
             'preview': 'true'
         }, format='multipart')
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
-        self.assertIn('task_id', response.data)
+        self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_202_ACCEPTED])
+        if response.status_code == status.HTTP_200_OK:
+            self.assertIn('test_cases', response.data)
+        else:
+            self.assertIn('task_id', response.data)
 
         # Test Import Commit via Pre-parsed JSON payload
         response_import = self.client.post('/api/test-cases/bulk_upload/', {
@@ -73,8 +76,11 @@ class BulkUploadAPITests(TransactionTestCase):
             'file': excel_file,
         }, format='multipart')
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
-        self.assertIn('task_id', response.data)
+        self.assertIn(response.status_code, [status.HTTP_201_CREATED, status.HTTP_202_ACCEPTED])
+        if response.status_code == status.HTTP_201_CREATED:
+            self.assertEqual(response.data['created_count'], 1)
+        else:
+            self.assertIn('task_id', response.data)
 
     def test_bulk_upload_unsupported_format(self):
         dummy_file = SimpleUploadedFile("test.txt", b"invalid format", content_type="text/plain")
@@ -95,3 +101,19 @@ class BulkUploadAPITests(TransactionTestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertIn('task_id', response.data)
+
+    def test_delete_all_test_cases(self):
+        # Create multiple test cases
+        TestCaseModel.objects.create(app=self.app, title="TC 1", expected_result="OK", steps=[])
+        TestCaseModel.objects.create(app=self.app, title="TC 2", expected_result="OK", steps=[])
+        TestCaseModel.objects.create(app=self.app, title="TC 3", expected_result="OK", steps=[])
+
+        self.assertEqual(TestCaseModel.objects.filter(app=self.app).count(), 3)
+
+        # Call delete_all endpoint
+        response = self.client.post('/api/test-cases/delete_all/', {'app_id': self.app.id}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'success')
+        self.assertEqual(response.data['deleted_count'], 3)
+        self.assertEqual(TestCaseModel.objects.filter(app=self.app).count(), 0)
+

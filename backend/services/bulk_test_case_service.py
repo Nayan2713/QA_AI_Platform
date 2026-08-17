@@ -277,6 +277,27 @@ class BulkTestCaseService:
         Parses bulk file and generates structured test case dictionaries.
         Returns a dict containing column info, count, candidate test cases, and truncation status.
         """
+        ext = filename.lower().split('.')[-1]
+        if ext == 'csv':
+            try:
+                from services.manual_test_import import convert_manual_cases_to_playwright_test_cases
+                if hasattr(file_obj, 'seek'):
+                    file_obj.seek(0)
+                manual_cases = convert_manual_cases_to_playwright_test_cases(file_obj, app)
+                if manual_cases and len(manual_cases) > 0:
+                    return {
+                        "columns": ["Test ID", "Title", "Steps", "Expected Result", "Category"],
+                        "count": len(manual_cases),
+                        "format_type": "csv",
+                        "truncated": False,
+                        "parse_warning": None,
+                        "test_cases": manual_cases
+                    }
+            except Exception as e:
+                logger.warning(f"[BULK_UPLOAD] manual_test_import fallback: {e}")
+                if hasattr(file_obj, 'seek'):
+                    file_obj.seek(0)
+
         columns, rows, format_type, truncated = BulkTestCaseService.parse_file(file_obj, filename)
         
         parse_warning = None

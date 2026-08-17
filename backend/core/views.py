@@ -640,6 +640,28 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             "task_id": task_id
         }, status=status.HTTP_202_ACCEPTED)
 
+    @action(detail=False, methods=['post', 'delete'], url_path='delete_all')
+    def delete_all(self, request):
+        app_id = request.data.get('app_id') or request.query_params.get('app_id')
+        if not app_id:
+            return Response({"error": "app_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_ids = get_user_and_team_user_ids(request.user)
+        try:
+            app = Application.objects.get(id=app_id, user_id__in=user_ids)
+            check_team_permission(request.user, app.user, 'destroy')
+        except Application.DoesNotExist:
+            return Response({"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        deleted_count, _ = TestCase.objects.filter(app=app).delete()
+        logger.info(f"Deleted all {deleted_count} test cases for app {app_id} by user {request.user.username}")
+
+        return Response({
+            "status": "success",
+            "message": f"Successfully deleted {deleted_count} test cases.",
+            "deleted_count": deleted_count
+        }, status=status.HTTP_200_OK)
+
     @action(detail=False, methods=['post'], url_path='bulk_upload')
 
     def bulk_upload(self, request):
@@ -680,8 +702,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 "test_cases": TestCaseSerializer(created, many=True).data
             }, status=status.HTTP_201_CREATED)
 
-        # File upload path (CSV/XLSX/PDF) — this is the slow one. Hand it
-        # off to Celery instead of parsing inline on the request thread.
+        # File upload path (CSV/XLSX/PDF)
         file_obj = request.FILES.get('file')
         if not file_obj:
             return Response({"error": "No file provided. Upload a .csv, .xlsx, .xls, or .pdf file."}, status=status.HTTP_400_BAD_REQUEST)
@@ -691,6 +712,52 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             return Response({"error": f"Unsupported file format '.{ext}'. Supported formats: .csv, .xlsx, .xls, .pdf"}, status=status.HTTP_400_BAD_REQUEST)
 
         model_choice = request.data.get('model_choice', 'auto')
+
+        # Fast inline processing for tabular files (CSV, Excel < 10MB)
+        if ext in ['csv', 'xlsx', 'xls'] and file_obj.size < 10 * 1024 * 1024:
+            from services.bulk_test_case_service import BulkTestCaseService
+            try:
+                result = BulkTestCaseService.process_bulk_file(file_obj, file_obj.name, app, model_choice=model_choice)
+                if is_preview:
+                    return Response({
+                        "status": "preview",
+                        "filename": file_obj.name,
+                        "columns": result.get("columns", []),
+                        "format_type": result.get("format_type", ext),
+                        "truncated": result.get("truncated", False),
+                        "parse_warning": result.get("parse_warning"),
+                        "count": result.get("count", 0),
+                        "test_cases": result.get("test_cases", []),
+                    }, status=status.HTTP_200_OK)
+
+                objs_to_create = []
+                for item in result.get("test_cases", []):
+                    objs_to_create.append(TestCase(
+                        app=app,
+                        title=str(item.get('title', 'Imported Test Case'))[:255],
+                        category=item.get('category', 'Generic') if item.get('category') in ['Generic', 'Industry Flow', 'Access Control'] else 'Generic',
+                        expected_result=str(item.get('expected_result', 'Verification successful')),
+                        steps=item.get('steps', []),
+                        ai_generated=False,
+                        generation_context=item.get('generation_context', {})
+                    ))
+                created = TestCase.objects.bulk_create(objs_to_create)
+                return Response({
+                    "status": "success",
+                    "message": f"Successfully imported {len(created)} test cases from {file_obj.name}.",
+                    "created_count": len(created),
+                    "columns": result.get("columns", []),
+                    "format_type": result.get("format_type", ext),
+                    "truncated": result.get("truncated", False),
+                    "parse_warning": result.get("parse_warning"),
+                    "test_cases": TestCaseSerializer(created, many=True).data
+                }, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                logger.warning(f"Inline bulk upload processing fallback to Celery: {e}")
+                if hasattr(file_obj, 'seek'):
+                    file_obj.seek(0)
+
+        # Async background processing for PDF or large files
         file_bytes = file_obj.read()
         import base64
         file_b64 = base64.b64encode(file_bytes).decode('ascii')
